@@ -56,7 +56,6 @@ program
   .option("--stdin <text>", "stdin content to pass to the command")
   .option("--stdin-file <path>", "Read stdin content from a UTF-8 file")
   .option("--timeout-ms <ms>", "Execution timeout in milliseconds")
-  .option("--inline-output-max-bytes <bytes>", "Inline stdout/stderr up to this many bytes")
   .action(mcpRunCommand);
 
 program

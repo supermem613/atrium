@@ -69,7 +69,6 @@ try {
             tool: selected.tool,
             args: selected.args,
             cwd,
-            inlineOutputMaxBytes: 128,
           },
         });
         const payload = JSON.parse(response.content[0].text);

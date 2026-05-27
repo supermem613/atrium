@@ -15,13 +15,13 @@ export interface RunOutput {
   stderr?: OutputValue;
 }
 
-export async function materializeRunOutput(stdout: Buffer, stderr: Buffer, inlineOutputMaxBytes: number): Promise<RunOutput> {
+export async function materializeRunOutput(stdout: Buffer, stderr: Buffer, inlineOutputLimitBytes: number): Promise<RunOutput> {
   const directory = join(tmpdir(), "atrium", "runs", randomUUID());
   const output: RunOutput = {};
   const writes: Array<Promise<void>> = [];
 
   if (stdout.byteLength > 0) {
-    if (stdout.byteLength <= inlineOutputMaxBytes) {
+    if (stdout.byteLength <= inlineOutputLimitBytes) {
       output.stdout = stdout.toString("utf8");
     } else {
       await mkdir(directory, { recursive: true });
@@ -32,7 +32,7 @@ export async function materializeRunOutput(stdout: Buffer, stderr: Buffer, inlin
   }
 
   if (stderr.byteLength > 0) {
-    if (stderr.byteLength <= inlineOutputMaxBytes) {
+    if (stderr.byteLength <= inlineOutputLimitBytes) {
       output.stderr = stderr.toString("utf8");
     } else {
       await mkdir(directory, { recursive: true });

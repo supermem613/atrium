@@ -19,7 +19,6 @@ export interface RunExecutableInput {
   cwd?: string;
   stdin?: StdinValue;
   timeoutMs?: number;
-  inlineOutputMaxBytes?: number;
 }
 
 export interface RunExecutableResult {
@@ -88,7 +87,7 @@ export async function runExecutable(input: RunExecutableInput): Promise<RunExecu
 
   const stdout = attempt.stdout;
   const stderr = attempt.stderr;
-  const output = await materializeRunOutput(stdout, stderr, input.inlineOutputMaxBytes ?? defaultInlineOutputMaxBytes);
+  const output = await materializeRunOutput(stdout, stderr, defaultInlineOutputMaxBytes);
 
   const result: RunExecutableResult = {
     ok: attempt.exitCode === 0 && !attempt.timedOut,

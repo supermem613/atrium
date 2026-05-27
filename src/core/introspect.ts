@@ -16,7 +16,6 @@ export interface IntrospectToolResult {
   };
 }
 
-const introspectionPreviewBytes = 12_000;
 const introspectionTimeoutMs = 30_000;
 const helpInlineBytes = 4_000;
 
@@ -25,7 +24,6 @@ export async function introspectTool(tool: string): Promise<IntrospectToolResult
     tool,
     args: ["schema"],
     timeoutMs: introspectionTimeoutMs,
-    inlineOutputMaxBytes: introspectionPreviewBytes,
   });
 
   const schemaText = await readOutputText(schemaResult.stdout);
@@ -47,7 +45,6 @@ export async function introspectTool(tool: string): Promise<IntrospectToolResult
     tool,
     args: ["--help"],
     timeoutMs: introspectionTimeoutMs,
-    inlineOutputMaxBytes: introspectionPreviewBytes,
   });
 
   const helpText = await readOutputText(helpResult.stdout);

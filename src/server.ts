@@ -12,7 +12,7 @@ import { toolTextResult } from "./mcp/format.js";
 export function createAtriumServer(): McpServer {
   const server = new McpServer({
     name: "atrium",
-    version: "0.2.0",
+    version: "0.3.0",
   });
 
   server.registerTool(
@@ -40,7 +40,6 @@ export function createAtriumServer(): McpServer {
         cwd: z.string().optional().describe("Working directory for the process."),
         stdin: z.union([z.string(), z.object({ file: z.string().min(1) })]).optional().describe("Optional stdin content. Use {file} to read UTF-8 stdin content from a file."),
         timeoutMs: z.number().int().positive().max(3_600_000).optional().describe("Execution timeout in milliseconds. Defaults to 120000."),
-        inlineOutputMaxBytes: z.number().int().min(0).max(65_536).optional().describe("Inline stdout/stderr up to this many bytes. Larger output is returned as {file, bytes}. Defaults to 128."),
       },
     },
     async (input) => toolTextResult(await runExecutable(input)),

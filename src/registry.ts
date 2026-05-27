@@ -134,11 +134,6 @@ export const commandSpecs: CommandSpec[] = [
           type: "number",
           summary: "Execution timeout in milliseconds.",
         },
-        {
-          name: "--inline-output-max-bytes",
-          type: "number",
-          summary: "Inline stdout/stderr up to this many bytes.",
-        },
       ],
     },
     output: {

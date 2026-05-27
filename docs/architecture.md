@@ -45,6 +45,7 @@ Output semantics:
 - Small stdout/stderr values are returned as inline strings.
 - Large stdout/stderr values are returned as `{ "file": "C:\\path\\output.txt", "bytes": n }`.
 - Empty streams are omitted.
+- The inline threshold is fixed at 128 bytes. There is no caller-controlled output-size knob.
 
 Initial input support covers `args[]` and `stdin`.
 
@@ -126,8 +127,7 @@ Input shape:
   "args": ["search", "tdd", "--root", "C:\\Users\\marcusm\\.copilot"],
   "cwd": "C:\\Users\\marcusm",
   "stdin": { "file": "C:\\temp\\stdin.txt" },
-  "timeoutMs": 120000,
-  "inlineOutputMaxBytes": 128
+  "timeoutMs": 120000
 }
 ```
 
@@ -157,7 +157,7 @@ Flow:
 8. Materialize each non-empty output stream:
 
    - Omit empty streams.
-   - Inline streams up to `inlineOutputMaxBytes`, default 128 bytes.
+   - Inline streams up to 128 bytes.
    - Write larger streams under `%TEMP%\atrium\runs\<uuid>\` and return `{ "file": "...", "bytes": n }`.
 
 9. Return a compact result:

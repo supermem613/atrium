@@ -18,7 +18,7 @@ Copilot CLI on Windows often wraps simple CLI calls in PowerShell. That adds pro
 - runs the executable directly from structured args
 - resolves Windows npm shims like `xray.cmd` to their underlying Node entrypoint where possible
 - supports `{ "file": "..." }` input values for UTF-8 file content in `args[]` and `stdin`
-- returns small stdout/stderr inline and large stdout/stderr as `{ "file": "...", "bytes": n }`
+- returns stdout/stderr with a fixed heuristic: empty omitted, 1-128 bytes inline, larger output as `{ "file": "...", "bytes": n }`
 - trims agent-facing results to the fields needed for routing: `ok`, `tool`, `timingMs`, stdout/stderr, and errors
 - discovers tool schemas by trying `<tool> schema`, then falls back to `<tool> --help`
 - keeps PowerShell available only for real scripting, control flow, pipelines, interactive commands, and long-running processes
