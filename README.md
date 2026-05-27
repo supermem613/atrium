@@ -1,6 +1,6 @@
 # atrium
 
-> Agent-friendly MCP wrapper for running CLIs and executables with structured JSON results.
+> Agent-first MCP wrapper for running CLIs and executables with structured JSON results.
 
 Atrium is an MCP server for agents. It exposes a tiny surface:
 
