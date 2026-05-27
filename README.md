@@ -51,9 +51,9 @@ atrium doctor          # health check (use --json for machine output)
 atrium schema          # machine-readable command catalog
 atrium schema --summary
 atrium mcp-config      # MCP config JSON for Copilot CLI
+atrium mcp-server      # stdio MCP server entrypoint
 atrium mcp-schema reflux # debug MCP schema through a local MCP client
 atrium mcp-run node -- --version
-atrium-mcp             # stdio MCP server entrypoint
 atrium update          # git pull, install dependencies, and rebuild
 ```
 
@@ -68,7 +68,8 @@ npm run build
 Register globally:
 
 ```powershell
-copilot mcp add atrium node C:\Users\marcusm\repos\atrium\dist\server.js
+npm link
+copilot mcp add atrium -- atrium mcp-server
 ```
 
 Or inspect the JSON config Atrium emits:

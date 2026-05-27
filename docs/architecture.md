@@ -12,10 +12,11 @@ PowerShell remains the right tool for ad-hoc scripting, variables, loops, pipeli
 Copilot CLI starts Atrium from the user MCP configuration:
 
 ```powershell
-copilot mcp add atrium node C:\Users\marcusm\repos\atrium\dist\server.js
+npm link
+copilot mcp add atrium -- atrium mcp-server
 ```
 
-At session start, Copilot launches `dist\server.js` as a stdio MCP server. Atrium registers its tool schemas through `@modelcontextprotocol/sdk`, then waits for MCP calls.
+At session start, Copilot launches the linked `atrium mcp-server` command as a stdio MCP server. Atrium registers its tool schemas through `@modelcontextprotocol/sdk`, then waits for MCP calls.
 
 The local debug commands use the same path:
 

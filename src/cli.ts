@@ -8,6 +8,7 @@ import { doctorCommand } from "./commands/doctor.js";
 import { mcpRunCommand, mcpSchemaCommand } from "./commands/mcpDebug.js";
 import { mcpConfigCommand } from "./commands/mcpConfig.js";
 import { schemaCommand } from "./commands/schema.js";
+import { startAtriumServer } from "./server.js";
 import { updateCommand } from "./commands/update.js";
 
 // Read version from package.json so it stays in sync with the published version.
@@ -37,6 +38,11 @@ program
   .command("mcp-config")
   .description("Emit MCP config JSON for registering Atrium with Copilot CLI")
   .action(mcpConfigCommand);
+
+program
+  .command("mcp-server")
+  .description("Start the Atrium stdio MCP server")
+  .action(startAtriumServer);
 
 program
   .command("mcp-schema <tool>")

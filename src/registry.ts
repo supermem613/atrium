@@ -67,7 +67,7 @@ export const commandSpecs: CommandSpec[] = [
   },
   {
     path: ["mcp-config"],
-    summary: "Emit MCP config JSON for registering Atrium with Copilot CLI.",
+    summary: "Emit MCP config JSON for registering linked Atrium with Copilot CLI.",
     effect: "read",
     input: {
       positionals: [],
@@ -78,6 +78,20 @@ export const commandSpecs: CommandSpec[] = [
       schema: "McpConfig",
     },
     examples: ["mcp-config"],
+  },
+  {
+    path: ["mcp-server"],
+    summary: "Start the Atrium stdio MCP server.",
+    effect: "local",
+    input: {
+      positionals: [],
+      flags: [],
+    },
+    output: {
+      documented: false,
+      schema: "MCP stdio transport",
+    },
+    examples: ["mcp-server"],
   },
   {
     path: ["mcp-schema"],

@@ -9,6 +9,7 @@ describe("schema", () => {
       ["doctor"],
       ["schema"],
       ["mcp-config"],
+      ["mcp-server"],
       ["mcp-schema"],
       ["mcp-run"],
       ["update"],

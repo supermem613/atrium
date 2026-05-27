@@ -1,14 +1,11 @@
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
-
 export function buildMcpConfig() {
-  const serverPath = join(dirname(fileURLToPath(import.meta.url)), "..", "server.js");
   return {
-    servers: {
+    mcpServers: {
       atrium: {
-        type: "stdio",
-        command: "node",
-        args: [serverPath],
+        type: "local",
+        command: "atrium",
+        args: ["mcp-server"],
+        tools: ["*"],
       },
     },
   };
