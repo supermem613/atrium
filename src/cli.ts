@@ -54,8 +54,9 @@ program
   .description("Debug Atrium MCP by calling the run tool through a local MCP client")
   .option("--cwd <path>", "Working directory for the command")
   .option("--stdin <text>", "stdin content to pass to the command")
+  .option("--stdin-file <path>", "Read stdin content from a UTF-8 file")
   .option("--timeout-ms <ms>", "Execution timeout in milliseconds")
-  .option("--max-preview-bytes <bytes>", "Max stdout/stderr preview bytes")
+  .option("--inline-output-max-bytes <bytes>", "Inline stdout/stderr up to this many bytes")
   .action(mcpRunCommand);
 
 program

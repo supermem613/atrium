@@ -1,3 +1,5 @@
+import { readFile } from "node:fs/promises";
+import { FileRef } from "./artifacts.js";
 import { runExecutable, RunExecutableResult } from "./runner.js";
 
 export interface IntrospectToolResult {
@@ -6,7 +8,8 @@ export interface IntrospectToolResult {
   source: "schema" | "help" | "none";
   data?: unknown;
   text?: string;
-  artifacts?: RunExecutableResult["artifacts"];
+  stdout?: RunExecutableResult["stdout"];
+  stderr?: RunExecutableResult["stderr"];
   error?: {
     code: string;
     message: string;
@@ -22,18 +25,20 @@ export async function introspectTool(tool: string): Promise<IntrospectToolResult
     tool,
     args: ["schema"],
     timeoutMs: introspectionTimeoutMs,
-    maxPreviewBytes: introspectionPreviewBytes,
+    inlineOutputMaxBytes: introspectionPreviewBytes,
   });
 
-  if (schemaResult.ok && schemaResult.stdoutPreview !== undefined) {
-    const parsed = tryParseJson(schemaResult.stdoutPreview);
+  const schemaText = await readOutputText(schemaResult.stdout);
+  if (schemaResult.ok && schemaText !== undefined) {
+    const parsed = tryParseJson(schemaText);
     if (parsed.ok) {
       return {
         ok: true,
         tool,
         source: "schema",
         data: parsed.value,
-        artifacts: schemaResult.artifacts,
+        stdout: schemaResult.stdout,
+        stderr: schemaResult.stderr,
       };
     }
   }
@@ -42,16 +47,18 @@ export async function introspectTool(tool: string): Promise<IntrospectToolResult
     tool,
     args: ["--help"],
     timeoutMs: introspectionTimeoutMs,
-    maxPreviewBytes: introspectionPreviewBytes,
+    inlineOutputMaxBytes: introspectionPreviewBytes,
   });
 
-  if (helpResult.ok && helpResult.stdoutPreview !== undefined) {
+  const helpText = await readOutputText(helpResult.stdout);
+  if (helpResult.ok && helpText !== undefined) {
     return {
       ok: true,
       tool,
       source: "help",
-      text: trimHelp(helpResult.stdoutPreview),
-      artifacts: helpResult.artifacts,
+      text: trimHelp(helpText),
+      stdout: helpResult.stdout,
+      stderr: helpResult.stderr,
     };
   }
 
@@ -64,6 +71,18 @@ export async function introspectTool(tool: string): Promise<IntrospectToolResult
       message: "Tool did not return JSON from `schema` or help from `--help`.",
     },
   };
+}
+
+async function readOutputText(output: RunExecutableResult["stdout"]): Promise<string | undefined> {
+  if (output === undefined) {
+    return undefined;
+  }
+
+  if (typeof output === "string") {
+    return output;
+  }
+
+  return readFile((output as FileRef).file, "utf8");
 }
 
 function tryParseJson(text: string): { ok: true; value: unknown } | { ok: false } {
@@ -84,5 +103,5 @@ function trimHelp(helpText: string): string {
     return helpText;
   }
 
-  return `${helpText.slice(0, helpInlineBytes)}\n[help truncated. Full output is in artifacts.stdoutPath]`;
+  return `${helpText.slice(0, helpInlineBytes)}\n[help truncated. Full output is in stdout.file]`;
 }

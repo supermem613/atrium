@@ -3,36 +3,45 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 
-export interface OutputArtifact {
-  stdoutPath?: string;
-  stderrPath?: string;
-  stdoutBytes?: number;
-  stderrBytes?: number;
+export interface FileRef {
+  file: string;
+  bytes: number;
 }
 
-export async function writeRunArtifacts(stdout: Buffer, stderr: Buffer): Promise<OutputArtifact> {
+export type OutputValue = string | FileRef;
+
+export interface RunOutput {
+  stdout?: OutputValue;
+  stderr?: OutputValue;
+}
+
+export async function materializeRunOutput(stdout: Buffer, stderr: Buffer, inlineOutputMaxBytes: number): Promise<RunOutput> {
   const directory = join(tmpdir(), "atrium", "runs", randomUUID());
-  const artifact: OutputArtifact = {};
+  const output: RunOutput = {};
   const writes: Array<Promise<void>> = [];
 
   if (stdout.byteLength > 0) {
-    await mkdir(directory, { recursive: true });
-    artifact.stdoutPath = join(directory, "stdout.txt");
-    artifact.stdoutBytes = stdout.byteLength;
-    writes.push(writeFile(artifact.stdoutPath, stdout));
+    if (stdout.byteLength <= inlineOutputMaxBytes) {
+      output.stdout = stdout.toString("utf8");
+    } else {
+      await mkdir(directory, { recursive: true });
+      const file = join(directory, "stdout.txt");
+      output.stdout = { file, bytes: stdout.byteLength };
+      writes.push(writeFile(file, stdout));
+    }
   }
 
   if (stderr.byteLength > 0) {
-    await mkdir(directory, { recursive: true });
-    artifact.stderrPath = join(directory, "stderr.txt");
-    artifact.stderrBytes = stderr.byteLength;
-    writes.push(writeFile(artifact.stderrPath, stderr));
+    if (stderr.byteLength <= inlineOutputMaxBytes) {
+      output.stderr = stderr.toString("utf8");
+    } else {
+      await mkdir(directory, { recursive: true });
+      const file = join(directory, "stderr.txt");
+      output.stderr = { file, bytes: stderr.byteLength };
+      writes.push(writeFile(file, stderr));
+    }
   }
 
   await Promise.all(writes);
-  return artifact;
-}
-
-export function previewBuffer(buffer: Buffer, maxBytes: number): string {
-  return buffer.subarray(0, Math.max(0, maxBytes)).toString("utf8");
+  return output;
 }

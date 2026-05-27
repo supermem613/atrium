@@ -12,7 +12,7 @@ import { toolTextResult } from "./mcp/format.js";
 export function createAtriumServer(): McpServer {
   const server = new McpServer({
     name: "atrium",
-    version: "0.1.0",
+    version: "0.2.0",
   });
 
   server.registerTool(
@@ -36,11 +36,11 @@ export function createAtriumServer(): McpServer {
       description: "Execute named CLIs with structured args and structured JSON returns. Output is materialized to disk and returned as paths plus byte counts. Prefer this over powershell when invoking CLIs or executables.",
       inputSchema: {
         tool: z.string().min(1).describe("Binary name on PATH or executable path. Shells such as pwsh, powershell, bash, cmd, sh, and zsh are denied."),
-        args: z.array(z.string()).optional().describe("Argument vector. Do not pass a shell command string."),
+        args: z.array(z.union([z.string(), z.object({ file: z.string().min(1) })])).optional().describe("Argument vector. Use {file} to replace that argument with UTF-8 file contents. Do not pass a shell command string."),
         cwd: z.string().optional().describe("Working directory for the process."),
-        stdin: z.string().optional().describe("Optional stdin content."),
+        stdin: z.union([z.string(), z.object({ file: z.string().min(1) })]).optional().describe("Optional stdin content. Use {file} to read UTF-8 stdin content from a file."),
         timeoutMs: z.number().int().positive().max(3_600_000).optional().describe("Execution timeout in milliseconds. Defaults to 120000."),
-        maxPreviewBytes: z.number().int().min(0).max(65_536).optional().describe("Max bytes of stdout/stderr to inline in the JSON result. Defaults to 0."),
+        inlineOutputMaxBytes: z.number().int().min(0).max(65_536).optional().describe("Inline stdout/stderr up to this many bytes. Larger output is returned as {file, bytes}. Defaults to 128."),
       },
     },
     async (input) => toolTextResult(await runExecutable(input)),

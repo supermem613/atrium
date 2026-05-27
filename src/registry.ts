@@ -125,20 +125,25 @@ export const commandSpecs: CommandSpec[] = [
           summary: "stdin content to pass to the command.",
         },
         {
+          name: "--stdin-file",
+          type: "string",
+          summary: "Read stdin content from a UTF-8 file.",
+        },
+        {
           name: "--timeout-ms",
           type: "number",
           summary: "Execution timeout in milliseconds.",
         },
         {
-          name: "--max-preview-bytes",
+          name: "--inline-output-max-bytes",
           type: "number",
-          summary: "Max stdout/stderr preview bytes.",
+          summary: "Inline stdout/stderr up to this many bytes.",
         },
       ],
     },
     output: {
       documented: true,
-      schema: "AtriumRunResult",
+      schema: "AtriumRunResultV2",
     },
     examples: ["mcp-run node -- --version", "mcp-run xray -- search tdd --root C:\\Users\\marcusm\\.copilot --glob skills/**"],
   },

@@ -17,8 +17,9 @@ Copilot CLI on Windows often wraps simple CLI calls in PowerShell. That adds pro
 
 - runs the executable directly from structured args
 - resolves Windows npm shims like `xray.cmd` to their underlying Node entrypoint where possible
-- writes full stdout/stderr to temp files and returns paths plus byte counts
-- trims agent-facing results to the fields needed for routing: `ok`, `tool`, `timingMs`, artifact paths and byte counts, and errors
+- supports `{ "file": "..." }` input values for UTF-8 file content in `args[]` and `stdin`
+- returns small stdout/stderr inline and large stdout/stderr as `{ "file": "...", "bytes": n }`
+- trims agent-facing results to the fields needed for routing: `ok`, `tool`, `timingMs`, stdout/stderr, and errors
 - discovers tool schemas by trying `<tool> schema`, then falls back to `<tool> --help`
 - keeps PowerShell available only for real scripting, control flow, pipelines, interactive commands, and long-running processes
 
@@ -85,8 +86,21 @@ The `mcp-*` commands call Atrium through a real local MCP client, matching the p
 ```bash
 atrium mcp-schema reflux
 atrium mcp-run node -- --version
+atrium mcp-run node --stdin-file C:\temp\stdin.txt -- -e "process.stdin.pipe(process.stdout)"
 atrium mcp-run xray -- search tdd --root C:\Users\marcusm\.copilot --glob skills/**
 ```
+
+MCP callers can use the same compact file-value contract for inputs and outputs:
+
+```json
+{
+  "tool": "gh",
+  "args": ["issue", "create", "--body", { "file": "C:\\temp\\body.md" }],
+  "stdin": { "file": "C:\\temp\\stdin.txt" }
+}
+```
+
+Small stdout/stderr is returned inline as a string. Larger output is returned as `{ "file": "...", "bytes": n }`.
 
 For performance checks:
 
@@ -148,10 +162,10 @@ src/
   core/               # executable runner, artifacts, schemas, denylist
   mcp/                # MCP result formatting
   commands/           # One file per CLI command
-scripts/
-  benchmark-atrium.mjs # Performance harness for direct vs PowerShell vs Atrium
 docs/
   architecture.md # Internal execution, schema discovery, and artifact flow
+scripts/
+  benchmark-atrium.mjs # Performance harness for direct vs PowerShell vs Atrium
 test/
   run.mjs             # Cross-platform test runner (HOME-sandboxed)
   tsconfig.json       # Test type-check config

@@ -6,13 +6,14 @@ import { fileURLToPath } from "node:url";
 interface McpRunOptions {
   cwd?: string;
   timeoutMs?: string;
-  maxPreviewBytes?: string;
+  inlineOutputMaxBytes?: string;
   stdin?: string;
+  stdinFile?: string;
 }
 
 async function withAtriumClient<T>(callback: (client: Client) => Promise<T>): Promise<T> {
   const serverPath = join(dirname(fileURLToPath(import.meta.url)), "..", "server.js");
-  const client = new Client({ name: "atrium-cli-debug", version: "0.1.0" });
+  const client = new Client({ name: "atrium-cli-debug", version: "0.2.0" });
   const transport = new StdioClientTransport({
     command: "node",
     args: [serverPath],
@@ -39,9 +40,9 @@ export async function mcpRunCommand(tool: string, args: string[] | undefined, op
       tool,
       args: args ?? [],
       cwd: options.cwd,
-      stdin: options.stdin,
+      stdin: options.stdinFile === undefined ? options.stdin : { file: options.stdinFile },
       timeoutMs: parseOptionalNumber(options.timeoutMs, "--timeout-ms"),
-      maxPreviewBytes: parseOptionalNumber(options.maxPreviewBytes, "--max-preview-bytes"),
+      inlineOutputMaxBytes: parseOptionalNumber(options.inlineOutputMaxBytes, "--inline-output-max-bytes"),
     },
   }));
   writeToolResponse(response);

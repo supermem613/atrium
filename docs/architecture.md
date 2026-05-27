@@ -27,6 +27,27 @@ atrium mcp-run node -- --version
 
 Those commands start `dist\server.js` through a real MCP client, call the MCP tool, and print the tool response. They exist to debug the server path without opening a new Copilot session.
 
+## File value contract
+
+Atrium uses one compact file indirection shape anywhere it reads or returns text values:
+
+```ts
+type FileValue = string | { file: string; bytes?: number };
+```
+
+Input semantics:
+
+- A plain string is inline text.
+- `{ "file": "C:\\path\\input.md" }` means read UTF-8 file contents and replace that JSON node with the contents.
+
+Output semantics:
+
+- Small stdout/stderr values are returned as inline strings.
+- Large stdout/stderr values are returned as `{ "file": "C:\\path\\output.txt", "bytes": n }`.
+- Empty streams are omitted.
+
+Initial input support covers `args[]` and `stdin`.
+
 ## `schema` flow
 
 `atrium.schema` answers: "What does this target tool say about its own invocation surface?"
@@ -50,10 +71,7 @@ Flow:
      "tool": "xray",
      "source": "schema",
      "data": { "...": "target tool schema JSON" },
-     "artifacts": {
-       "stdoutPath": "...\\stdout.txt",
-       "stdoutBytes": 2683
-     },
+     "stdout": { "file": "...\\stdout.txt", "bytes": 2683 }
    }
    ```
 
@@ -71,10 +89,7 @@ Flow:
      "tool": "reflux",
      "source": "help",
      "text": "Usage: reflux ...",
-     "artifacts": {
-       "stdoutPath": "...\\stdout.txt",
-       "stdoutBytes": 978
-     },
+     "stdout": { "file": "...\\stdout.txt", "bytes": 978 }
    }
    ```
 
@@ -110,9 +125,16 @@ Input shape:
   "tool": "xray",
   "args": ["search", "tdd", "--root", "C:\\Users\\marcusm\\.copilot"],
   "cwd": "C:\\Users\\marcusm",
-  "stdin": "optional input",
+  "stdin": { "file": "C:\\temp\\stdin.txt" },
   "timeoutMs": 120000,
-  "maxPreviewBytes": 0
+  "inlineOutputMaxBytes": 128
+}
+```
+
+```json
+{
+  "tool": "gh",
+  "args": ["issue", "create", "--body", { "file": "C:\\temp\\body.md" }]
 }
 ```
 
@@ -132,12 +154,11 @@ Flow:
 5. Cache the resolved path for the server process lifetime.
 6. If the resolved target is an npm `.cmd` shim, try to read the shim and execute the underlying JavaScript entrypoint through `process.execPath`. This avoids the slower and noisier `shell: true` path when possible.
 7. Capture stdout and stderr as buffers.
-8. Write full stdout and stderr to a temp artifact directory:
+8. Materialize each non-empty output stream:
 
-   ```text
-   %TEMP%\atrium\runs\<uuid>\stdout.txt
-   %TEMP%\atrium\runs\<uuid>\stderr.txt
-   ```
+   - Omit empty streams.
+   - Inline streams up to `inlineOutputMaxBytes`, default 128 bytes.
+   - Write larger streams under `%TEMP%\atrium\runs\<uuid>\` and return `{ "file": "...", "bytes": n }`.
 
 9. Return a compact result:
 
@@ -146,24 +167,20 @@ Flow:
      "ok": true,
      "tool": "xray",
      "timingMs": 781,
-     "artifacts": {
-       "stdoutPath": "...\\stdout.txt",
-       "stdoutBytes": 737
-     },
-     "warnings": []
+     "stdout": { "file": "...\\stdout.txt", "bytes": 737 }
    }
    ```
 
-Atrium intentionally does not return debug-only fields such as resolved executable path, argv echo, cwd echo, signal, exit code, stdout preview, stderr preview, warnings, or hints by default. Those cost tokens and do not help the agent decide the next step. Callers can opt into previews with `maxPreviewBytes` when they need inline output.
+Atrium intentionally does not return debug-only fields such as resolved executable path, argv echo, cwd echo, signal, exit code, stdout preview, stderr preview, warnings, or hints by default. Those cost tokens and do not help the agent decide the next step.
 
 ## Output and artifact policy
 
-Atrium always captures stdout and stderr for a run. Non-empty streams are written to artifact files. Empty streams are omitted entirely, so zero-byte stderr does not produce a file, path, or byte-count field. Inline previews are omitted by default and only included when `maxPreviewBytes` is greater than zero.
+Atrium always captures stdout and stderr for a run. Empty streams are omitted entirely, so zero-byte stderr does not produce a field. Small streams are complete inline strings. Large streams are `{ "file": "...", "bytes": n }` references.
 
 This is the main context-saving contract:
 
-- The agent sees whether output exists from byte counts.
-- The agent can read the full artifact only if needed.
+- The agent can use small outputs directly.
+- The agent can read large file-backed output only if needed.
 - Large command output does not automatically flood the conversation.
 
 ## Performance model
@@ -193,7 +210,7 @@ npm run benchmark -- --command xray-small --iterations 8 --warmup 2
 | `src\server.ts` | MCP server registration for `schema` and `run`. |
 | `src\core\introspect.ts` | Implements `<tool> schema` then `<tool> --help` discovery. |
 | `src\core\runner.ts` | Process spawning, shell denylist, Windows resolution, npm shim handling, timeout, stdout/stderr capture. |
-| `src\core\artifacts.ts` | Writes full stdout/stderr artifacts under the temp directory. |
+| `src\core\artifacts.ts` | Materializes stdout/stderr as inline strings or `{file, bytes}` values. |
 | `src\commands\mcpDebug.ts` | Local debug CLI commands that call Atrium through an MCP client. |
 | `scripts\benchmark-atrium.mjs` | Performance harness comparing direct, PowerShell-wrapped, and Atrium MCP calls. |
 

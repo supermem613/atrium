@@ -1,27 +1,33 @@
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { access, readFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
-import { writeRunArtifacts, previewBuffer, OutputArtifact } from "./artifacts.js";
+import { dirname, isAbsolute, join, resolve } from "node:path";
+import { materializeRunOutput, OutputValue } from "./artifacts.js";
 import { isDeniedShell, needsWindowsCommandShell } from "./shells.js";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 
+export type FileValue = {
+  file: string;
+};
+
+export type ArgValue = string | FileValue;
+export type StdinValue = string | FileValue;
+
 export interface RunExecutableInput {
   tool: string;
-  args?: string[];
+  args?: ArgValue[];
   cwd?: string;
-  stdin?: string;
+  stdin?: StdinValue;
   timeoutMs?: number;
-  maxPreviewBytes?: number;
+  inlineOutputMaxBytes?: number;
 }
 
 export interface RunExecutableResult {
   ok: boolean;
   tool: string;
   timingMs: number;
-  artifacts?: OutputArtifact;
-  stdoutPreview?: string;
-  stderrPreview?: string;
+  stdout?: OutputValue;
+  stderr?: OutputValue;
   error?: {
     code: string;
     message: string;
@@ -29,7 +35,7 @@ export interface RunExecutableResult {
 }
 
 const defaultTimeoutMs = 120_000;
-const defaultPreviewBytes = 0;
+const defaultInlineOutputMaxBytes = 128;
 const resolvedToolCache = new Map<string, string>();
 
 interface SpawnAttempt {
@@ -49,7 +55,8 @@ interface PreparedSpawn {
 }
 
 export async function runExecutable(input: RunExecutableInput): Promise<RunExecutableResult> {
-  const args = input.args ?? [];
+  const args = await resolveArgValues(input.args ?? [], input.cwd);
+  const stdin = await resolveStdinValue(input.stdin, input.cwd);
   const startedAt = Date.now();
   if (input.tool.trim().length === 0) {
     return failedBeforeSpawn(input, args, startedAt, "InvalidTool", "Tool name is required.");
@@ -66,12 +73,12 @@ export async function runExecutable(input: RunExecutableInput): Promise<RunExecu
   }
 
   const timeoutMs = input.timeoutMs ?? defaultTimeoutMs;
-  let attempt = await spawnOnce(input, input.tool, args, timeoutMs);
+  let attempt = await spawnOnce(input, input.tool, args, stdin, timeoutMs);
 
   if (attempt.spawnError !== undefined && shouldResolveAfterFailure(input.tool, attempt.spawnError)) {
     const resolved = await resolveTool(input.tool);
     if (resolved !== input.tool) {
-      attempt = await spawnOnce(input, resolved, args, timeoutMs);
+      attempt = await spawnOnce(input, resolved, args, stdin, timeoutMs);
     }
   }
 
@@ -81,29 +88,23 @@ export async function runExecutable(input: RunExecutableInput): Promise<RunExecu
 
   const stdout = attempt.stdout;
   const stderr = attempt.stderr;
-  const artifacts = await writeRunArtifacts(stdout, stderr);
-  const maxPreviewBytes = input.maxPreviewBytes ?? defaultPreviewBytes;
+  const output = await materializeRunOutput(stdout, stderr, input.inlineOutputMaxBytes ?? defaultInlineOutputMaxBytes);
 
   const result: RunExecutableResult = {
     ok: attempt.exitCode === 0 && !attempt.timedOut,
     tool: input.tool,
     timingMs: Date.now() - startedAt,
-    artifacts,
+    ...output,
     error: attempt.exitCode === 0 && !attempt.timedOut ? undefined : {
       code: attempt.timedOut ? "Timeout" : "NonZeroExit",
       message: attempt.timedOut ? `Process exceeded timeoutMs=${timeoutMs}.` : `Process exited with code ${String(attempt.exitCode)}.`,
     },
   };
 
-  if (maxPreviewBytes > 0) {
-    result.stdoutPreview = previewBuffer(stdout, maxPreviewBytes);
-    result.stderrPreview = previewBuffer(stderr, maxPreviewBytes);
-  }
-
   return result;
 }
 
-async function spawnOnce(input: RunExecutableInput, tool: string, args: string[], timeoutMs: number): Promise<SpawnAttempt> {
+async function spawnOnce(input: RunExecutableInput, tool: string, args: string[], stdin: string | undefined, timeoutMs: number): Promise<SpawnAttempt> {
   const stdoutChunks: Buffer[] = [];
   const stderrChunks: Buffer[] = [];
   const prepared = await prepareSpawn(tool, args);
@@ -139,8 +140,8 @@ async function spawnOnce(input: RunExecutableInput, tool: string, args: string[]
   child.stdout.on("data", (chunk: Buffer) => stdoutChunks.push(chunk));
   child.stderr.on("data", (chunk: Buffer) => stderrChunks.push(chunk));
 
-  if (input.stdin !== undefined) {
-    child.stdin.end(input.stdin);
+  if (stdin !== undefined) {
+    child.stdin.end(stdin);
   } else {
     child.stdin.end();
   }
@@ -166,6 +167,31 @@ async function spawnOnce(input: RunExecutableInput, tool: string, args: string[]
     timedOut,
     spawnError,
   };
+}
+
+async function resolveArgValues(args: ArgValue[], cwd: string | undefined): Promise<string[]> {
+  return Promise.all(args.map((arg) => resolveArgValue(arg, cwd)));
+}
+
+async function resolveArgValue(arg: ArgValue, cwd: string | undefined): Promise<string> {
+  if (typeof arg === "string") {
+    return arg;
+  }
+
+  return readTextFile(arg.file, cwd);
+}
+
+async function resolveStdinValue(stdin: StdinValue | undefined, cwd: string | undefined): Promise<string | undefined> {
+  if (stdin === undefined || typeof stdin === "string") {
+    return stdin;
+  }
+
+  return readTextFile(stdin.file, cwd);
+}
+
+async function readTextFile(file: string, cwd: string | undefined): Promise<string> {
+  const resolved = isAbsolute(file) ? file : resolve(cwd ?? process.cwd(), file);
+  return readFile(resolved, "utf8");
 }
 
 function failedBeforeSpawn(input: RunExecutableInput, _args: string[], startedAt: number, code: string, message: string): RunExecutableResult {
