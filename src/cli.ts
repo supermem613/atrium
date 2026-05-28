@@ -5,7 +5,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { doctorCommand } from "./commands/doctor.js";
-import { mcpRunCommand, mcpSchemaCommand } from "./commands/mcpDebug.js";
+import { mcpRunCommand, mcpRunStatusCommand, mcpSchemaCommand } from "./commands/mcpDebug.js";
 import { mcpConfigCommand } from "./commands/mcpConfig.js";
 import { schemaCommand } from "./commands/schema.js";
 import { startAtriumServer } from "./server.js";
@@ -57,6 +57,11 @@ program
   .option("--stdin-file <path>", "Read stdin content from a UTF-8 file")
   .option("--timeout-ms <ms>", "Execution timeout in milliseconds")
   .action(mcpRunCommand);
+
+program
+  .command("mcp-run-status <runId>")
+  .description("Inspect a background run created by the MCP run tool")
+  .action(mcpRunStatusCommand);
 
 program
   .command("update")

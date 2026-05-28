@@ -127,7 +127,8 @@ Input shape:
   "args": ["search", "tdd", "--root", "C:\\Users\\marcusm\\.copilot"],
   "cwd": "C:\\Users\\marcusm",
   "stdin": { "file": "C:\\temp\\stdin.txt" },
-  "timeoutMs": 120000
+  "timeoutMs": 120000,
+  "executionMode": "auto"
 }
 ```
 

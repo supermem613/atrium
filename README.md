@@ -55,6 +55,7 @@ atrium mcp-config      # MCP config JSON for Copilot CLI
 atrium mcp-server      # stdio MCP server entrypoint
 atrium mcp-schema reflux # debug MCP schema through a local MCP client
 atrium mcp-run node -- --version
+atrium mcp-run-status <runId>
 atrium update          # git pull, install dependencies, and rebuild
 ```
 
@@ -88,6 +89,7 @@ atrium mcp-schema reflux
 atrium mcp-run node -- --version
 atrium mcp-run node --stdin-file C:\temp\stdin.txt -- -e "process.stdin.pipe(process.stdout)"
 atrium mcp-run xray -- search tdd --root C:\Users\marcusm\.copilot --glob skills/**
+atrium mcp-run-status <runId>
 ```
 
 MCP callers can use the same compact file-value contract for inputs and outputs:
@@ -101,6 +103,8 @@ MCP callers can use the same compact file-value contract for inputs and outputs:
 ```
 
 Small stdout/stderr is returned inline as a string. Larger output is returned as `{ "file": "...", "bytes": n }`.
+
+When `timeoutMs` is high enough to exceed the default MCP request deadline, `atrium.run` defaults to returning a background run handle instead of holding the request open until the client times out. Poll `run-status` with the returned `runId` to retrieve the final run envelope and `resultPath`. Callers that explicitly extend their MCP request timeout can pass `executionMode: "blocking"` to keep the old wait-for-result behavior.
 
 For performance checks:
 

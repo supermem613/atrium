@@ -33,6 +33,7 @@ export async function mcpSchemaCommand(tool: string): Promise<void> {
 }
 
 export async function mcpRunCommand(tool: string, args: string[] | undefined, options: McpRunOptions): Promise<void> {
+  const timeoutMs = parseOptionalNumber(options.timeoutMs, "--timeout-ms");
   const response = await withAtriumClient((client) => client.callTool({
     name: "run",
     arguments: {
@@ -40,7 +41,17 @@ export async function mcpRunCommand(tool: string, args: string[] | undefined, op
       args: args ?? [],
       cwd: options.cwd,
       stdin: options.stdinFile === undefined ? options.stdin : { file: options.stdinFile },
-      timeoutMs: parseOptionalNumber(options.timeoutMs, "--timeout-ms"),
+      timeoutMs,
+    },
+  }));
+  writeToolResponse(response);
+}
+
+export async function mcpRunStatusCommand(runId: string): Promise<void> {
+  const response = await withAtriumClient((client) => client.callTool({
+    name: "run-status",
+    arguments: {
+      runId,
     },
   }));
   writeToolResponse(response);

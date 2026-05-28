@@ -6,8 +6,12 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { introspectTool } from "./core/introspect.js";
+import { getBackgroundRun, startBackgroundRun } from "./core/backgroundRuns.js";
 import { runExecutable } from "./core/runner.js";
 import { toolTextResult } from "./mcp/format.js";
+
+const mcpDefaultRequestTimeoutMs = 60_000;
+const backgroundAutoBufferMs = 5_000;
 
 export function createAtriumServer(): McpServer {
   const server = new McpServer({
@@ -40,12 +44,44 @@ export function createAtriumServer(): McpServer {
         cwd: z.string().optional().describe("Working directory for the process."),
         stdin: z.union([z.string(), z.object({ file: z.string().min(1) })]).optional().describe("Optional stdin content. Use {file} to read UTF-8 stdin content from a file."),
         timeoutMs: z.number().int().positive().max(3_600_000).optional().describe("Execution timeout in milliseconds. Defaults to 120000."),
+        executionMode: z.enum(["auto", "blocking", "background"]).optional().describe("Execution mode. Defaults to auto, which returns a background run handle when timeoutMs may exceed the default MCP request deadline. Use blocking to wait for the final run envelope."),
       },
     },
-    async (input) => toolTextResult(await runExecutable(input)),
+    async (input) => {
+      const { executionMode, ...runInput } = input;
+      if (shouldStartBackgroundRun(executionMode, runInput.timeoutMs)) {
+        return toolTextResult(await startBackgroundRun(runInput));
+      }
+
+      return toolTextResult(await runExecutable(runInput));
+    },
+  );
+
+  server.registerTool(
+    "run-status",
+    {
+      title: "Inspect a background run",
+      description: "Return the current state and final result path for a background run created by the run tool.",
+      inputSchema: {
+        runId: z.string().min(1).describe("Background run id returned by atrium.run."),
+      },
+    },
+    async ({ runId }) => toolTextResult(getBackgroundRun(runId)),
   );
 
   return server;
+}
+
+function shouldStartBackgroundRun(executionMode: "auto" | "blocking" | "background" | undefined, timeoutMs: number | undefined): boolean {
+  if (executionMode === "background") {
+    return true;
+  }
+
+  if (executionMode === "blocking") {
+    return false;
+  }
+
+  return (timeoutMs ?? 120_000) > mcpDefaultRequestTimeoutMs - backgroundAutoBufferMs;
 }
 
 export async function startAtriumServer(): Promise<void> {

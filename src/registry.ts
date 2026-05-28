@@ -143,6 +143,20 @@ export const commandSpecs: CommandSpec[] = [
     examples: ["mcp-run node -- --version", "mcp-run xray -- search tdd --root C:\\Users\\marcusm\\.copilot --glob skills/**"],
   },
   {
+    path: ["mcp-run-status"],
+    summary: "Inspect a background MCP run by run id.",
+    effect: "read",
+    input: {
+      positionals: ["runId"],
+      flags: [],
+    },
+    output: {
+      documented: true,
+      schema: "AtriumBackgroundRunSnapshot",
+    },
+    examples: ["mcp-run-status 00000000-0000-0000-0000-000000000000"],
+  },
+  {
     path: ["update"],
     summary: "Self-update this atrium checkout with git pull, npm install, and rebuild.",
     effect: "write",
