@@ -7,7 +7,7 @@ Atrium is an MCP server for agents. It exposes a tiny surface:
 - `atrium.schema` — discover a tool's invocation shape by asking the tool itself.
 - `atrium.run` — run a named CLI or executable with structured args and JSON results.
 
-Large stdout/stderr is written to temp files and returned as paths plus small previews, so agents do not dump command output into the conversation context.
+Large stdout/stderr is written to temp files and returned as paths, so agents do not dump command output into the conversation context.
 
 Atrium is for **single CLI/executable calls**. It is not a shell replacement and it does not execute arbitrary shell strings. Shell binaries (`pwsh`, `powershell`, `bash`, `cmd`, `sh`, `zsh`) are denied so agents keep structured args instead of falling back to shell command text.
 
@@ -18,7 +18,7 @@ Copilot CLI on Windows often wraps simple CLI calls in PowerShell. That adds pro
 - runs the executable directly from structured args
 - resolves Windows npm shims like `xray.cmd` to their underlying Node entrypoint where possible
 - supports `{ "file": "..." }` input values for UTF-8 file content in `args[]` and `stdin`
-- returns stdout/stderr with a fixed heuristic: empty omitted, 1-128 bytes inline, larger output as `{ "file": "...", "bytes": n }`
+- returns stdout/stderr with a fixed heuristic: empty omitted, 1-8192 bytes inline, larger output as `{ "file": "...", "bytes": n }`
 - trims agent-facing results to the fields needed for routing: `ok`, `tool`, `timingMs`, stdout/stderr, and errors
 - discovers tool schemas by trying `<tool> schema`, then falls back to `<tool> --help`
 - keeps PowerShell available only for real scripting, control flow, pipelines, interactive commands, and long-running processes
@@ -102,9 +102,9 @@ MCP callers can use the same compact file-value contract for inputs and outputs:
 }
 ```
 
-Small stdout/stderr is returned inline as a string. Larger output is returned as `{ "file": "...", "bytes": n }`.
+Small stdout/stderr up to 8192 bytes is returned inline as a string. Larger output is returned as `{ "file": "...", "bytes": n }`.
 
-When `timeoutMs` is high enough to exceed the default MCP request deadline, `atrium.run` defaults to returning a background run handle instead of holding the request open until the client times out. Poll `run-status` with the returned `runId` to retrieve the final run envelope and `resultPath`. Callers that explicitly extend their MCP request timeout can pass `executionMode: "blocking"` to keep the old wait-for-result behavior.
+`atrium.run` defaults to blocking with a 60-second timeout. Use `executionMode: "background"` for long-running commands that should return a run handle immediately, then poll `run-status` with the returned `runId` to retrieve the final run envelope and `resultPath`.
 
 For performance checks:
 

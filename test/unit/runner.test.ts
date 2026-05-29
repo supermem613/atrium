@@ -40,15 +40,25 @@ describe("runner", () => {
   it("writes large stdout as a file value", async () => {
     const result = await runExecutable({
       tool: process.execPath,
-      args: ["-e", "process.stdout.write('x'.repeat(129))"],
+      args: ["-e", "process.stdout.write('x'.repeat(8193))"],
     });
 
     assert.equal(result.ok, true);
     assert.equal(typeof result.stdout, "object");
     assert.ok(result.stdout !== undefined && typeof result.stdout !== "string");
-    assert.equal(result.stdout.bytes, 129);
+    assert.equal(result.stdout.bytes, 8193);
     assert.equal(result.stdout.file.startsWith(atriumTempPath("runs")), true);
-    assert.equal(await readFile(result.stdout.file, "utf8"), "x".repeat(129));
+    assert.equal(await readFile(result.stdout.file, "utf8"), "x".repeat(8193));
+  });
+
+  it("inlines stdout at the default output limit", async () => {
+    const result = await runExecutable({
+      tool: process.execPath,
+      args: ["-e", "process.stdout.write('x'.repeat(8192))"],
+    });
+
+    assert.equal(result.ok, true);
+    assert.equal(result.stdout, "x".repeat(8192));
   });
 
   it("resolves file nodes in args and stdin", async () => {

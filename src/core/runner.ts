@@ -33,8 +33,8 @@ export interface RunExecutableResult {
   };
 }
 
-const defaultTimeoutMs = 120_000;
-const defaultInlineOutputMaxBytes = 128;
+const defaultTimeoutMs = 60_000;
+const defaultInlineOutputMaxBytes = 8192;
 const resolvedToolCache = new Map<string, string>();
 
 interface SpawnAttempt {

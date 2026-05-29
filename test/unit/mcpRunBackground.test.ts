@@ -7,12 +7,12 @@ import { createAtriumServer } from "../../src/server.js";
 import { atriumTempPath } from "../../src/core/tempPaths.js";
 
 describe("MCP run background mode", () => {
-  it("returns a background handle before long auto-mode runs exceed the MCP request deadline", async () => {
+  it("returns a background handle when explicitly requested", async () => {
     await withInMemoryClient(async (client) => {
       const started = await callJson(client, "run", {
         tool: process.execPath,
         args: ["-e", "process.stdout.write('async-ok')"],
-        timeoutMs: 60_000,
+        executionMode: "background",
       });
 
       assert.equal(started.ok, true);
@@ -33,17 +33,29 @@ describe("MCP run background mode", () => {
     });
   });
 
-  it("keeps an explicit blocking kill switch for callers with extended MCP request timeouts", async () => {
+  it("blocks by default", async () => {
     await withInMemoryClient(async (client) => {
       const result = await callJson(client, "run", {
         tool: process.execPath,
         args: ["-e", "process.stdout.write('blocking-ok')"],
-        timeoutMs: 60_000,
-        executionMode: "blocking",
       });
 
       assert.equal(result.ok, true);
       assert.equal(result.stdout, "blocking-ok");
+      assert.equal(result.runId, undefined);
+    });
+  });
+
+  it("keeps an explicit blocking mode for callers that set it", async () => {
+    await withInMemoryClient(async (client) => {
+      const result = await callJson(client, "run", {
+        tool: process.execPath,
+        args: ["-e", "process.stdout.write('explicit-blocking-ok')"],
+        executionMode: "blocking",
+      });
+
+      assert.equal(result.ok, true);
+      assert.equal(result.stdout, "explicit-blocking-ok");
       assert.equal(result.runId, undefined);
     });
   });
