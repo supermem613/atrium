@@ -59,6 +59,41 @@ describe("MCP run background mode", () => {
       assert.equal(result.runId, undefined);
     });
   });
+
+  it("fails fast for blocking timeouts that exceed the default MCP request deadline", async () => {
+    await withInMemoryClient(async (client) => {
+      const result = await callJson(client, "run", {
+        tool: process.execPath,
+        args: ["-e", "setTimeout(() => process.stdout.write('late'), 10)"],
+        timeoutMs: 60_001,
+      });
+
+      assert.equal(result.ok, false);
+      assert.equal(result.runId, undefined);
+      assertRecord(result.error);
+      assert.equal(result.error.code, "BlockingTimeoutTooLarge");
+    });
+  });
+
+  it("allows long timeouts when callers explicitly use background mode", async () => {
+    await withInMemoryClient(async (client) => {
+      const started = await callJson(client, "run", {
+        tool: process.execPath,
+        args: ["-e", "process.stdout.write('long-background-ok')"],
+        timeoutMs: 60_001,
+        executionMode: "background",
+      });
+
+      assert.equal(started.ok, true);
+      assert.equal(started.status, "running");
+      assertString(started.runId);
+      const completed = await waitForCompletion(client, started.runId);
+      const result = completed.result;
+      assertRecord(result);
+      assert.equal(result.ok, true);
+      assert.equal(result.stdout, "long-background-ok");
+    });
+  });
 });
 
 async function withInMemoryClient<T>(callback: (client: Client) => Promise<T>): Promise<T> {

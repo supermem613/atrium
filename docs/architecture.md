@@ -131,6 +131,16 @@ Input shape:
 }
 ```
 
+Blocking calls are capped at `timeoutMs <= 60000` because MCP clients usually
+enforce a 60s request deadline. Longer blocking requests fail fast with a
+structured `BlockingTimeoutTooLarge` envelope instead of letting the client
+surface raw `-32001 Request timed out`. Commands that need more than 60000 ms
+must use `executionMode: "background"` and then poll `run-status`.
+
+The local `atrium mcp-run` debug command also exposes `--request-timeout-ms`
+because it owns its MCP client. That option is only for local debugging. Agents
+calling the MCP server should rely on background mode for longer work.
+
 ```json
 {
   "tool": "gh",

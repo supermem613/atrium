@@ -10,6 +10,8 @@ import { getBackgroundRun, startBackgroundRun } from "./core/backgroundRuns.js";
 import { runExecutable } from "./core/runner.js";
 import { toolTextResult } from "./mcp/format.js";
 
+const defaultMcpRequestTimeoutMs = 60_000;
+
 export function createAtriumServer(): McpServer {
   const server = new McpServer({
     name: "atrium",
@@ -34,20 +36,32 @@ export function createAtriumServer(): McpServer {
     "run",
     {
       title: "Run a CLI or executable",
-      description: "Execute named CLIs with structured args and structured JSON returns. Output is materialized to disk and returned as paths plus byte counts. Prefer this over powershell when invoking CLIs or executables.",
+      description: "Execute named CLIs with structured args and structured JSON returns. Blocking mode is capped at timeoutMs <= 60000 because MCP clients usually enforce a 60s request deadline. Use executionMode=\"background\" for longer commands.",
       inputSchema: {
         tool: z.string().min(1).describe("Binary name on PATH or executable path. Shells such as pwsh, powershell, bash, cmd, sh, and zsh are denied."),
         args: z.array(z.union([z.string(), z.object({ file: z.string().min(1) })])).optional().describe("Argument vector. Use {file} to replace that argument with UTF-8 file contents. Do not pass a shell command string."),
         cwd: z.string().optional().describe("Working directory for the process."),
         stdin: z.union([z.string(), z.object({ file: z.string().min(1) })]).optional().describe("Optional stdin content. Use {file} to read UTF-8 stdin content from a file."),
-        timeoutMs: z.number().int().positive().max(3_600_000).optional().describe("Execution timeout in milliseconds. Defaults to 60000."),
-        executionMode: z.enum(["blocking", "background"]).optional().describe("Execution mode. Defaults to blocking. Use background for long-running commands that should return a run handle immediately."),
+        timeoutMs: z.number().int().positive().max(3_600_000).optional().describe("Execution timeout in milliseconds. Defaults to 60000. Blocking mode rejects values above 60000 with BlockingTimeoutTooLarge because MCP clients usually time out first. Use background mode for longer runs."),
+        executionMode: z.enum(["blocking", "background"]).optional().describe("Execution mode. Defaults to blocking. Use background for timeoutMs > 60000 or any long-running command that should return a run handle immediately."),
       },
     },
     async (input) => {
       const { executionMode, ...runInput } = input;
       if (shouldStartBackgroundRun(executionMode)) {
         return toolTextResult(await startBackgroundRun(runInput));
+      }
+
+      if (wouldExceedDefaultMcpRequestTimeout(runInput.timeoutMs)) {
+        return toolTextResult({
+          ok: false,
+          tool: runInput.tool,
+          timingMs: 0,
+          error: {
+            code: "BlockingTimeoutTooLarge",
+            message: `Blocking atrium.run timeoutMs must be <= ${defaultMcpRequestTimeoutMs}. Use executionMode="background" for longer commands.`,
+          },
+        });
       }
 
       return toolTextResult(await runExecutable(runInput));
@@ -71,6 +85,10 @@ export function createAtriumServer(): McpServer {
 
 function shouldStartBackgroundRun(executionMode: "blocking" | "background" | undefined): boolean {
   return executionMode === "background";
+}
+
+function wouldExceedDefaultMcpRequestTimeout(timeoutMs: number | undefined): boolean {
+  return timeoutMs !== undefined && timeoutMs > defaultMcpRequestTimeoutMs;
 }
 
 export async function startAtriumServer(): Promise<void> {

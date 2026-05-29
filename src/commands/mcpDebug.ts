@@ -1,4 +1,5 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { CallToolResultSchema } from "@modelcontextprotocol/sdk/types.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -6,6 +7,8 @@ import { fileURLToPath } from "node:url";
 interface McpRunOptions {
   cwd?: string;
   timeoutMs?: string;
+  requestTimeoutMs?: string;
+  executionMode?: string;
   stdin?: string;
   stdinFile?: string;
 }
@@ -34,6 +37,8 @@ export async function mcpSchemaCommand(tool: string): Promise<void> {
 
 export async function mcpRunCommand(tool: string, args: string[] | undefined, options: McpRunOptions): Promise<void> {
   const timeoutMs = parseOptionalNumber(options.timeoutMs, "--timeout-ms");
+  const requestTimeoutMs = parseOptionalNumber(options.requestTimeoutMs, "--request-timeout-ms") ?? requestTimeoutForRun(timeoutMs);
+  const executionMode = parseExecutionMode(options.executionMode);
   const response = await withAtriumClient((client) => client.callTool({
     name: "run",
     arguments: {
@@ -42,8 +47,9 @@ export async function mcpRunCommand(tool: string, args: string[] | undefined, op
       cwd: options.cwd,
       stdin: options.stdinFile === undefined ? options.stdin : { file: options.stdinFile },
       timeoutMs,
+      executionMode,
     },
-  }));
+  }, CallToolResultSchema, { timeout: requestTimeoutMs }));
   writeToolResponse(response);
 }
 
@@ -92,4 +98,20 @@ function parseOptionalNumber(value: string | undefined, flag: string): number | 
   }
 
   return parsed;
+}
+
+function parseExecutionMode(value: string | undefined): "blocking" | "background" | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (value === "blocking" || value === "background") {
+    return value;
+  }
+
+  throw new Error("--execution-mode must be blocking or background");
+}
+
+function requestTimeoutForRun(timeoutMs: number | undefined): number {
+  return timeoutMs === undefined ? 60_000 : timeoutMs + 1_000;
 }

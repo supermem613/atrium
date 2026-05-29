@@ -132,7 +132,17 @@ export const commandSpecs: CommandSpec[] = [
         {
           name: "--timeout-ms",
           type: "number",
-          summary: "Execution timeout in milliseconds.",
+          summary: "Execution timeout in milliseconds. Blocking mode supports values up to 60000 because MCP clients usually enforce a 60s request deadline.",
+        },
+        {
+          name: "--request-timeout-ms",
+          type: "number",
+          summary: "MCP client request timeout in milliseconds for the local debug client.",
+        },
+        {
+          name: "--execution-mode",
+          type: "string",
+          summary: "Run execution mode: blocking or background. Use background for timeout-ms above 60000.",
         },
       ],
     },

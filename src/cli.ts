@@ -55,7 +55,9 @@ program
   .option("--cwd <path>", "Working directory for the command")
   .option("--stdin <text>", "stdin content to pass to the command")
   .option("--stdin-file <path>", "Read stdin content from a UTF-8 file")
-  .option("--timeout-ms <ms>", "Execution timeout in milliseconds")
+  .option("--timeout-ms <ms>", "Execution timeout in milliseconds. Blocking mode supports values up to 60000")
+  .option("--request-timeout-ms <ms>", "MCP client request timeout in milliseconds. Debug command only")
+  .option("--execution-mode <mode>", "Run execution mode: blocking or background. Use background for timeout-ms above 60000")
   .action(mcpRunCommand);
 
 program

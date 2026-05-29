@@ -55,6 +55,7 @@ atrium mcp-config      # MCP config JSON for Copilot CLI
 atrium mcp-server      # stdio MCP server entrypoint
 atrium mcp-schema reflux # debug MCP schema through a local MCP client
 atrium mcp-run node -- --version
+atrium mcp-run node --execution-mode background --timeout-ms 120000 -- -e "setTimeout(() => console.log('done'), 90000)"
 atrium mcp-run-status <runId>
 atrium update          # git pull, install dependencies, and rebuild
 ```
@@ -89,6 +90,7 @@ atrium mcp-schema reflux
 atrium mcp-run node -- --version
 atrium mcp-run node --stdin-file C:\temp\stdin.txt -- -e "process.stdin.pipe(process.stdout)"
 atrium mcp-run xray -- search tdd --root C:\Users\marcusm\.copilot --glob skills/**
+atrium mcp-run node --execution-mode background --timeout-ms 120000 -- -e "setTimeout(() => console.log('done'), 90000)"
 atrium mcp-run-status <runId>
 ```
 
@@ -104,7 +106,7 @@ MCP callers can use the same compact file-value contract for inputs and outputs:
 
 Small stdout/stderr up to 8192 bytes is returned inline as a string. Larger output is returned as `{ "file": "...", "bytes": n }`.
 
-`atrium.run` defaults to blocking with a 60-second timeout. Use `executionMode: "background"` for long-running commands that should return a run handle immediately, then poll `run-status` with the returned `runId` to retrieve the final run envelope and `resultPath`.
+`atrium.run` defaults to blocking with a 60-second timeout. Blocking calls reject `timeoutMs` values above 60000 with `BlockingTimeoutTooLarge` because MCP clients usually enforce a 60s request deadline and would otherwise preempt the child result with a raw request timeout. Use `executionMode: "background"` for any command that needs more than 60000 ms, then poll `run-status` with the returned `runId` to retrieve the final run envelope and `resultPath`.
 
 For performance checks:
 
