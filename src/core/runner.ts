@@ -281,6 +281,11 @@ async function readNodeCmdShimScript(cmdPath: string): Promise<string | undefine
     return join(dirname(cmdPath), directScriptMatch[1]);
   }
 
+  const endLocalScriptMatch = content.match(/endLocal\s+&\s+goto\s+#[^\r\n|&]+\s+2>NUL\s+\|\|\s+title\s+%COMSPEC%\s+&\s+"%_prog%"\s+"%dp0%\\([^"]+)"\s+%\*/iu);
+  if (endLocalScriptMatch !== null) {
+    return join(dirname(cmdPath), endLocalScriptMatch[1]);
+  }
+
   const variableInvocationMatch = content.match(/"%[A-Z0-9_]+%"\s+"%([A-Z0-9_]+)%"\s+%\*/iu);
   if (variableInvocationMatch !== null) {
     const variableAssignmentMatch = new RegExp(`SET\\s+"${variableInvocationMatch[1]}=%~dp0\\\\([^"]+)"`, "iu").exec(content);

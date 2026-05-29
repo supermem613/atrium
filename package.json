@@ -1,6 +1,6 @@
 {
   "name": "atrium",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "description": "Agent-only MCP wrapper for running CLIs and executables with structured JSON results.",
   "type": "module",
   "bin": {
