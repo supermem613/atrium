@@ -1,8 +1,8 @@
 import { mkdir, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { runExecutable, RunExecutableInput, RunExecutableResult } from "./runner.js";
+import { atriumTempPath } from "./tempPaths.js";
 
 type BackgroundRunStatus = "running" | "completed" | "failed";
 
@@ -45,7 +45,7 @@ const runs = new Map<string, BackgroundRunRecord>();
 
 export async function startBackgroundRun(input: RunExecutableInput): Promise<BackgroundRunHandle> {
   const runId = randomUUID();
-  const directory = join(tmpdir(), "atrium", "background-runs", runId);
+  const directory = atriumTempPath("background-runs", runId);
   const resultPath = join(directory, "result.json");
   const record: BackgroundRunRecord = {
     runId,

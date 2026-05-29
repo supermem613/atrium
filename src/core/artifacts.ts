@@ -1,7 +1,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
+import { atriumTempPath } from "./tempPaths.js";
 
 export interface FileRef {
   file: string;
@@ -16,7 +16,7 @@ export interface RunOutput {
 }
 
 export async function materializeRunOutput(stdout: Buffer, stderr: Buffer, inlineOutputLimitBytes: number): Promise<RunOutput> {
-  const directory = join(tmpdir(), "atrium", "runs", randomUUID());
+  const directory = atriumTempPath("runs", randomUUID());
   const output: RunOutput = {};
   const writes: Array<Promise<void>> = [];
 

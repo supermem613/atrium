@@ -5,7 +5,7 @@
 // Avoids `node --test` worker subprocesses (their IPC pipe intermittently
 // fails on Windows runners with deserialize errors). Uses node:test auto-start
 // in a single process with a TAP reporter for the aggregate summary.
-import { readdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, readdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { minimatch } from "minimatch";
@@ -22,9 +22,12 @@ if (allFiles.length === 0) {
   process.exit(1);
 }
 
+const testTempRoot = join(tmpdir(), "atrium", "tests");
+mkdirSync(testTempRoot, { recursive: true });
+
 const sandboxHome = process.env.ATRIUM_TEST_REAL_HOME
   ? null
-  : mkdtempSync(join(tmpdir(), "atrium-test-home-"));
+  : mkdtempSync(join(testTempRoot, "home-"));
 
 const env = { ...process.env };
 if (sandboxHome) {

@@ -1,9 +1,9 @@
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runExecutable } from "../../src/core/runner.js";
+import { atriumTempPath } from "../../src/core/tempPaths.js";
 
 describe("runner", () => {
   it("inlines small stdout and omits empty stderr", async () => {
@@ -47,11 +47,12 @@ describe("runner", () => {
     assert.equal(typeof result.stdout, "object");
     assert.ok(result.stdout !== undefined && typeof result.stdout !== "string");
     assert.equal(result.stdout.bytes, 129);
+    assert.equal(result.stdout.file.startsWith(atriumTempPath("runs")), true);
     assert.equal(await readFile(result.stdout.file, "utf8"), "x".repeat(129));
   });
 
   it("resolves file nodes in args and stdin", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "atrium-test-"));
+    const dir = await createTestTempDir("file-nodes-");
     const argFile = join(dir, "arg.txt");
     const stdinFile = join(dir, "stdin.txt");
     await writeFile(argFile, "arg-file");
@@ -68,7 +69,7 @@ describe("runner", () => {
   });
 
   it("runs modern node cmd shims without shell splitting paths with spaces", { skip: process.platform !== "win32" }, async () => {
-    const dir = await mkdtemp(join(tmpdir(), "Program Files atrium-test-"));
+    const dir = await createTestTempDir("Program Files modern-shim-");
     const shimFile = join(dir, "tool.cmd");
     const scriptFile = join(dir, "node_modules", "tool", "bin", "tool-cli.js");
     await mkdir(join(dir, "node_modules", "tool", "bin"), { recursive: true });
@@ -95,7 +96,7 @@ describe("runner", () => {
   });
 
   it("runs legacy node cmd shims without shell splitting paths with spaces", { skip: process.platform !== "win32" }, async () => {
-    const dir = await mkdtemp(join(tmpdir(), "Program Files atrium-test-"));
+    const dir = await createTestTempDir("Program Files legacy-shim-");
     const shimFile = join(dir, "tool.cmd");
     const scriptFile = join(dir, "node_modules", "tool", "bin", "tool-cli.js");
     await mkdir(join(dir, "node_modules", "tool", "bin"), { recursive: true });
@@ -127,3 +128,9 @@ describe("runner", () => {
     assert.equal(result.stdout, "left|right");
   });
 });
+
+async function createTestTempDir(prefix: string): Promise<string> {
+  const root = atriumTempPath("tests");
+  await mkdir(root, { recursive: true });
+  return mkdtemp(join(root, prefix));
+}

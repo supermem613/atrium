@@ -4,6 +4,7 @@ import { setImmediate } from "node:timers/promises";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { createAtriumServer } from "../../src/server.js";
+import { atriumTempPath } from "../../src/core/tempPaths.js";
 
 describe("MCP run background mode", () => {
   it("returns a background handle before long auto-mode runs exceed the MCP request deadline", async () => {
@@ -18,6 +19,8 @@ describe("MCP run background mode", () => {
       assert.equal(started.status, "running");
       assert.equal(typeof started.runId, "string");
       assert.equal(typeof started.resultPath, "string");
+      assertString(started.resultPath);
+      assert.equal(started.resultPath.startsWith(atriumTempPath("background-runs")), true);
 
       const runId = started.runId;
       assertString(runId);
