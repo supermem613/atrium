@@ -252,7 +252,7 @@ async function prepareSpawn(tool: string, args: string[]): Promise<PreparedSpawn
     };
   }
 
-  const nodeScript = await readNpmCmdShimScript(tool);
+  const nodeScript = await readNodeCmdShimScript(tool);
   if (nodeScript === undefined) {
     return {
       command: tool,
@@ -268,7 +268,7 @@ async function prepareSpawn(tool: string, args: string[]): Promise<PreparedSpawn
   };
 }
 
-async function readNpmCmdShimScript(cmdPath: string): Promise<string | undefined> {
+async function readNodeCmdShimScript(cmdPath: string): Promise<string | undefined> {
   let content: string;
   try {
     content = await readFile(cmdPath, "utf8");
@@ -276,12 +276,20 @@ async function readNpmCmdShimScript(cmdPath: string): Promise<string | undefined
     return undefined;
   }
 
-  const match = content.match(/"%_prog%"\s+"%dp0%\\([^"]+)"\s+%\*/u);
-  if (match === null) {
-    return undefined;
+  const directScriptMatch = content.match(/"%_prog%"\s+"%dp0%\\([^"]+)"\s+%\*/u);
+  if (directScriptMatch !== null) {
+    return join(dirname(cmdPath), directScriptMatch[1]);
   }
 
-  return join(dirname(cmdPath), match[1]);
+  const variableInvocationMatch = content.match(/"%[A-Z0-9_]+%"\s+"%([A-Z0-9_]+)%"\s+%\*/iu);
+  if (variableInvocationMatch !== null) {
+    const variableAssignmentMatch = new RegExp(`SET\\s+"${variableInvocationMatch[1]}=%~dp0\\\\([^"]+)"`, "iu").exec(content);
+    if (variableAssignmentMatch !== null) {
+      return join(dirname(cmdPath), variableAssignmentMatch[1]);
+    }
+  }
+
+  return undefined;
 }
 
 async function pathExists(path: string): Promise<boolean> {

@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runExecutable } from "../../src/core/runner.js";
@@ -65,5 +65,65 @@ describe("runner", () => {
 
     assert.equal(result.ok, true);
     assert.equal(result.stdout, "arg-file:stdin-file");
+  });
+
+  it("runs modern node cmd shims without shell splitting paths with spaces", { skip: process.platform !== "win32" }, async () => {
+    const dir = await mkdtemp(join(tmpdir(), "Program Files atrium-test-"));
+    const shimFile = join(dir, "tool.cmd");
+    const scriptFile = join(dir, "node_modules", "tool", "bin", "tool-cli.js");
+    await mkdir(join(dir, "node_modules", "tool", "bin"), { recursive: true });
+    await writeFile(shimFile, [
+      "@ECHO OFF",
+      "SETLOCAL",
+      "SET \"NODE_EXE=%~dp0\\node.exe\"",
+      "IF NOT EXIST \"%NODE_EXE%\" (",
+      "  SET \"NODE_EXE=node\"",
+      ")",
+      "SET \"TOOL_CLI_JS=%~dp0\\node_modules\\tool\\bin\\tool-cli.js\"",
+      "\"%NODE_EXE%\" \"%TOOL_CLI_JS%\" %*",
+      "",
+    ].join("\r\n"));
+    await writeFile(scriptFile, "process.stdout.write(process.argv.slice(2).join('|'))");
+
+    const result = await runExecutable({
+      tool: shimFile,
+      args: ["left value", "quoted \"value\"", "caret^value"],
+    });
+
+    assert.equal(result.ok, true);
+    assert.equal(result.stdout, "left value|quoted \"value\"|caret^value");
+  });
+
+  it("runs legacy node cmd shims without shell splitting paths with spaces", { skip: process.platform !== "win32" }, async () => {
+    const dir = await mkdtemp(join(tmpdir(), "Program Files atrium-test-"));
+    const shimFile = join(dir, "tool.cmd");
+    const scriptFile = join(dir, "node_modules", "tool", "bin", "tool-cli.js");
+    await mkdir(join(dir, "node_modules", "tool", "bin"), { recursive: true });
+    await writeFile(shimFile, [
+      "@ECHO off",
+      "SETLOCAL",
+      "CALL :find_dp0",
+      "IF EXIST \"%dp0%\\node.exe\" (",
+      "  SET \"_prog=%dp0%\\node.exe\"",
+      ") ELSE (",
+      "  SET \"_prog=node\"",
+      ")",
+      "\"%_prog%\" \"%dp0%\\node_modules\\tool\\bin\\tool-cli.js\" %*",
+      "ENDLOCAL",
+      "EXIT /b %errorlevel%",
+      ":find_dp0",
+      "SET dp0=%~dp0",
+      "EXIT /b",
+      "",
+    ].join("\r\n"));
+    await writeFile(scriptFile, "process.stdout.write(process.argv.slice(2).join('|'))");
+
+    const result = await runExecutable({
+      tool: shimFile,
+      args: ["left", "right"],
+    });
+
+    assert.equal(result.ok, true);
+    assert.equal(result.stdout, "left|right");
   });
 });
