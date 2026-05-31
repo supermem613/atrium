@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { once } from "node:events";
 import { access, readFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
@@ -25,12 +26,50 @@ export interface RunExecutableResult {
   ok: boolean;
   tool: string;
   timingMs: number;
+  metrics: RunExecutableMetrics;
   stdout?: OutputValue;
   stderr?: OutputValue;
   error?: {
     code: string;
     message: string;
   };
+}
+
+export interface RunExecutableMetrics {
+  childTool: string;
+  durationMs: number;
+  exitCode: number | null;
+  signal: string | null;
+  timedOut: boolean;
+  stdoutBytes: number;
+  stderrBytes: number;
+  stdinBytes: number;
+  argCount: number;
+  argHash: string;
+  argShape: string[];
+  cwdHash?: string;
+  semantic?: RunSemanticMetrics;
+}
+
+export type RunSemanticMetrics = XraySearchMetrics | GenericCommandMetrics;
+
+export interface XraySearchMetrics {
+  kind: "xray.search";
+  queryHash: string;
+  queryLength: number;
+  regex: boolean;
+  context: number | null;
+  max: number | null;
+  globCount: number;
+  typeCount: number;
+  rootHash?: string;
+  scanScopeHash: string;
+}
+
+export interface GenericCommandMetrics {
+  kind: "generic.command";
+  commandHash: string;
+  commandLength: number;
 }
 
 const defaultTimeoutMs = 60_000;
@@ -58,13 +97,14 @@ export async function runExecutable(input: RunExecutableInput): Promise<RunExecu
   const stdin = await resolveStdinValue(input.stdin, input.cwd);
   const startedAt = Date.now();
   if (input.tool.trim().length === 0) {
-    return failedBeforeSpawn(input, args, startedAt, "InvalidTool", "Tool name is required.");
+    return failedBeforeSpawn(input, args, stdin, startedAt, "InvalidTool", "Tool name is required.");
   }
 
   if (isDeniedShell(input.tool)) {
     return failedBeforeSpawn(
       input,
       args,
+      stdin,
       startedAt,
       "DeniedShell",
       `${input.tool} is denied in Atrium.`,
@@ -82,17 +122,19 @@ export async function runExecutable(input: RunExecutableInput): Promise<RunExecu
   }
 
   if (attempt.spawnError !== undefined) {
-    return failedBeforeSpawn(input, args, startedAt, "SpawnError", attempt.spawnError.message);
+    return failedBeforeSpawn(input, args, stdin, startedAt, "SpawnError", attempt.spawnError.message);
   }
 
   const stdout = attempt.stdout;
   const stderr = attempt.stderr;
   const output = await materializeRunOutput(stdout, stderr, defaultInlineOutputMaxBytes);
+  const timingMs = Date.now() - startedAt;
 
   const result: RunExecutableResult = {
     ok: attempt.exitCode === 0 && !attempt.timedOut,
     tool: input.tool,
-    timingMs: Date.now() - startedAt,
+    timingMs,
+    metrics: buildRunMetrics(input, args, stdin, attempt, timingMs),
     ...output,
     error: attempt.exitCode === 0 && !attempt.timedOut ? undefined : {
       code: attempt.timedOut ? "Timeout" : "NonZeroExit",
@@ -193,11 +235,20 @@ async function readTextFile(file: string, cwd: string | undefined): Promise<stri
   return readFile(resolved, "utf8");
 }
 
-function failedBeforeSpawn(input: RunExecutableInput, _args: string[], startedAt: number, code: string, message: string): RunExecutableResult {
+function failedBeforeSpawn(input: RunExecutableInput, args: string[], stdin: string | undefined, startedAt: number, code: string, message: string): RunExecutableResult {
+  const timingMs = Date.now() - startedAt;
   return {
     ok: false,
     tool: input.tool,
-    timingMs: Date.now() - startedAt,
+    timingMs,
+    metrics: buildRunMetrics(input, args, stdin, {
+      tool: input.tool,
+      stdout: Buffer.alloc(0),
+      stderr: Buffer.alloc(0),
+      exitCode: null,
+      signal: null,
+      timedOut: false,
+    }, timingMs),
     error: {
       code,
       message,
@@ -316,6 +367,152 @@ function toErrnoException(error: unknown): NodeJS.ErrnoException {
   }
 
   return new Error(String(error)) as NodeJS.ErrnoException;
+}
+
+function buildRunMetrics(
+  input: RunExecutableInput,
+  args: string[],
+  stdin: string | undefined,
+  attempt: SpawnAttempt,
+  durationMs: number,
+): RunExecutableMetrics {
+  return {
+    childTool: normalizeToolName(input.tool),
+    durationMs,
+    exitCode: attempt.exitCode,
+    signal: attempt.signal,
+    timedOut: attempt.timedOut,
+    stdoutBytes: attempt.stdout.byteLength,
+    stderrBytes: attempt.stderr.byteLength,
+    stdinBytes: Buffer.byteLength(stdin ?? "", "utf8"),
+    argCount: args.length,
+    argHash: shortHash(JSON.stringify(args)),
+    argShape: args.map((arg, index) => shapeArg(args, arg, index)),
+    ...(input.cwd ? { cwdHash: shortHash(resolve(input.cwd)) } : {}),
+    semantic: buildSemanticMetrics(input.tool, args, input.cwd),
+  };
+}
+
+function buildSemanticMetrics(tool: string, args: string[], cwd: string | undefined): RunSemanticMetrics {
+  const toolName = normalizeToolName(tool);
+  if (toolName === "xray" && args[0] === "search") {
+    return buildXraySearchMetrics(args, cwd);
+  }
+
+  return {
+    kind: "generic.command",
+    commandHash: shortHash(args[0] ?? ""),
+    commandLength: args[0]?.length ?? 0,
+  };
+}
+
+function buildXraySearchMetrics(args: string[], cwd: string | undefined): XraySearchMetrics {
+  const parsed = parseXraySearchArgs(args);
+  const scope = {
+    cwdHash: cwd === undefined ? null : shortHash(resolve(cwd)),
+    rootHash: parsed.root === undefined ? null : shortHash(resolve(cwd ?? process.cwd(), parsed.root)),
+    globs: parsed.globs.slice().sort(),
+    types: parsed.types.slice().sort(),
+    regex: parsed.regex,
+  };
+  return {
+    kind: "xray.search",
+    queryHash: shortHash(parsed.query ?? ""),
+    queryLength: parsed.query?.length ?? 0,
+    regex: parsed.regex,
+    context: parsed.context,
+    max: parsed.max,
+    globCount: parsed.globs.length,
+    typeCount: parsed.types.length,
+    ...(parsed.root === undefined ? {} : { rootHash: shortHash(resolve(cwd ?? process.cwd(), parsed.root)) }),
+    scanScopeHash: shortHash(JSON.stringify(scope)),
+  };
+}
+
+function parseXraySearchArgs(args: string[]): {
+  query: string | undefined;
+  regex: boolean;
+  context: number | null;
+  max: number | null;
+  globs: string[];
+  types: string[];
+  root: string | undefined;
+} {
+  const globs: string[] = [];
+  const types: string[] = [];
+  let query: string | undefined;
+  let context: number | null = null;
+  let max: number | null = null;
+  let root: string | undefined;
+  let expectValueFor: string | null = null;
+
+  for (let index = 1; index < args.length; index++) {
+    const arg = args[index];
+    if (expectValueFor !== null) {
+      if (expectValueFor === "--query") {
+        query = arg;
+      } else if (expectValueFor === "--glob") {
+        globs.push(arg);
+      } else if (expectValueFor === "--type") {
+        types.push(arg);
+      } else if (expectValueFor === "--root") {
+        root = arg;
+      } else if (expectValueFor === "--context") {
+        context = parseNullableInt(arg);
+      } else if (expectValueFor === "--max") {
+        max = parseNullableInt(arg);
+      }
+      expectValueFor = null;
+      continue;
+    }
+
+    if (["--query", "--glob", "--type", "--root", "--context", "--max"].includes(arg)) {
+      expectValueFor = arg;
+      continue;
+    }
+    if (arg === "--regex") {
+      continue;
+    }
+    if (!arg.startsWith("-") && query === undefined) {
+      query = arg;
+    }
+  }
+
+  return {
+    query,
+    regex: args.includes("--regex"),
+    context,
+    max,
+    globs,
+    types,
+    root,
+  };
+}
+
+function parseNullableInt(value: string): number | null {
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function shapeArg(args: string[], arg: string, index: number): string {
+  if (index === 0) {
+    return arg.startsWith("-") ? "flag" : "command";
+  }
+  if (arg.startsWith("--")) {
+    return `flag:${arg}`;
+  }
+  if (args[index - 1]?.startsWith("-")) {
+    return "flag-value";
+  }
+  return "value";
+}
+
+function normalizeToolName(tool: string): string {
+  return (tool.split(/[\\/]/u).pop() ?? tool).replace(/\.(cmd|exe|bat|js)$/iu, "");
+}
+
+function shortHash(value: string): string {
+  return createHash("sha256").update(value).digest("hex").slice(0, 16);
 }
 
 async function runWhere(tool: string): Promise<string[]> {

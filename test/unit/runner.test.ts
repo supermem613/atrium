@@ -15,6 +15,11 @@ describe("runner", () => {
     assert.equal(result.ok, true);
     assert.equal(result.stdout, "atrium-ok");
     assert.equal(result.stderr, undefined);
+    assert.equal(result.metrics.childTool, "node");
+    assert.equal(result.metrics.stdoutBytes, 9);
+    assert.equal(result.metrics.stderrBytes, 0);
+    assert.equal(result.metrics.argCount, 2);
+    assert.equal(result.metrics.argShape[0], "flag");
   });
 
   it("denies shell tools", async () => {
@@ -35,6 +40,41 @@ describe("runner", () => {
     assert.equal(result.ok, false);
     assert.equal(result.stdout, undefined);
     assert.equal(result.stderr, "bad");
+    assert.equal(result.metrics.exitCode, 7);
+    assert.equal(result.metrics.stderrBytes, 3);
+  });
+
+  it("emits redacted xray search metrics for trace analysis", { skip: process.platform !== "win32" }, async () => {
+    const { shimFile } = await createNodeCmdShim("Program Files xray-metrics-", [
+      "@ECHO off",
+      "SETLOCAL",
+      "SET \"NODE_EXE=%~dp0\\node.exe\"",
+      "IF NOT EXIST \"%NODE_EXE%\" (",
+      "  SET \"NODE_EXE=node\"",
+      ")",
+      "SET \"XRAY_CLI_JS=%~dp0\\node_modules\\xray\\bin\\xray.js\"",
+      "\"%NODE_EXE%\" \"%XRAY_CLI_JS%\" %*",
+      "",
+    ], "xray.cmd");
+    const simulated = await runExecutable({
+      tool: shimFile,
+      args: ["search", "secret query text", "--root", "C:\\repo", "--glob", "src\\**", "--context", "2", "--max", "50", "--regex"],
+    });
+
+    assert.equal(simulated.ok, true);
+    assert.equal(simulated.metrics.childTool, "xray");
+    assert.equal(simulated.metrics.argShape.includes("secret query text"), false);
+    assert.equal(simulated.metrics.semantic?.kind, "xray.search");
+    if (simulated.metrics.semantic?.kind !== "xray.search") {
+      assert.fail("expected xray.search semantic metrics");
+    }
+    assert.equal(simulated.metrics.semantic.queryLength, "secret query text".length);
+    assert.equal("query" in simulated.metrics.semantic, false);
+    assert.equal(simulated.metrics.semantic.globCount, 1);
+    assert.equal(simulated.metrics.semantic.context, 2);
+    assert.equal(simulated.metrics.semantic.max, 50);
+    assert.equal(simulated.metrics.semantic.regex, true);
+    assert.equal(typeof simulated.metrics.semantic.scanScopeHash, "string");
   });
 
   it("writes large stdout as a file value", async () => {
@@ -185,13 +225,14 @@ async function createTestTempDir(prefix: string): Promise<string> {
   return mkdtemp(join(root, prefix));
 }
 
-async function createNodeCmdShim(prefix: string, lines: string[]): Promise<{ shimFile: string }> {
+async function createNodeCmdShim(prefix: string, lines: string[], shimName = "tool.cmd"): Promise<{ shimFile: string }> {
   const dir = await createTestTempDir(prefix);
-  const shimFile = join(dir, "tool.cmd");
-  const scriptFile = join(dir, "node_modules", "tool", "bin", "tool-cli.js");
-  await mkdir(join(dir, "node_modules", "tool", "bin"), { recursive: true });
+  const shimFile = join(dir, shimName);
+  const packageName = shimName.replace(/\.cmd$/u, "");
+  await mkdir(join(dir, "node_modules", packageName, "bin"), { recursive: true });
   await writeFile(shimFile, lines.join("\r\n"));
-  await writeFile(scriptFile, "process.stdout.write(JSON.stringify(process.argv.slice(2)))");
+  await writeFile(join(dir, "node_modules", packageName, "bin", `${packageName}.js`), "process.stdout.write(JSON.stringify(process.argv.slice(2)))");
+  await writeFile(join(dir, "node_modules", packageName, "bin", "tool-cli.js"), "process.stdout.write(JSON.stringify(process.argv.slice(2)))");
 
   return { shimFile };
 }
