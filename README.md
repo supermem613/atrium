@@ -6,6 +6,8 @@ Atrium is an MCP server for agents. It exposes a tiny surface:
 
 - `atrium.schema` — discover a tool's invocation shape by asking the tool itself.
 - `atrium.run` — run a named CLI or executable with structured args and JSON results.
+- `atrium.run-status` — inspect a durable background operation by id.
+- `atrium.wait` — wait briefly on a durable operation handle without crossing the MCP request deadline.
 
 Large stdout/stderr is written to temp files and returned as paths, so agents do not dump command output into the conversation context.
 
@@ -21,7 +23,7 @@ Copilot CLI on Windows often wraps simple CLI calls in PowerShell. That adds pro
 - returns stdout/stderr with a fixed heuristic: empty omitted, 1-8192 bytes inline, larger output as `{ "file": "...", "bytes": n }`
 - trims agent-facing results to the fields needed for routing: `ok`, `tool`, `timingMs`, stdout/stderr, and errors
 - discovers tool schemas by trying `<tool> schema`, then falls back to `<tool> --help`
-- keeps PowerShell available only for real scripting, control flow, pipelines, interactive commands, and long-running processes
+- keeps PowerShell available only for real scripting, control flow, pipelines, and interactive commands
 
 Current benchmark signal on Marcus's Windows machine:
 
@@ -55,8 +57,9 @@ atrium mcp-config      # MCP config JSON for Copilot CLI
 atrium mcp-server      # stdio MCP server entrypoint
 atrium mcp-schema reflux # debug MCP schema through a local MCP client
 atrium mcp-run node -- --version
-atrium mcp-run node --execution-mode background --timeout-ms 120000 -- -e "setTimeout(() => console.log('done'), 90000)"
+atrium mcp-run node --execution-mode auto -- -e "setTimeout(() => console.log('done'), 90000)"
 atrium mcp-run-status <runId>
+atrium mcp-wait <operationId>
 atrium update          # git pull, install dependencies, and rebuild
 ```
 
@@ -90,8 +93,9 @@ atrium mcp-schema reflux
 atrium mcp-run node -- --version
 atrium mcp-run node --stdin-file C:\temp\stdin.txt -- -e "process.stdin.pipe(process.stdout)"
 atrium mcp-run xray -- search tdd --root C:\Users\marcusm\.copilot --glob skills/**
-atrium mcp-run node --execution-mode background --timeout-ms 120000 -- -e "setTimeout(() => console.log('done'), 90000)"
+atrium mcp-run node --execution-mode auto -- -e "setTimeout(() => console.log('done'), 90000)"
 atrium mcp-run-status <runId>
+atrium mcp-wait <operationId>
 ```
 
 MCP callers can use the same compact file-value contract for inputs and outputs:
@@ -106,7 +110,9 @@ MCP callers can use the same compact file-value contract for inputs and outputs:
 
 Small stdout/stderr up to 8192 bytes is returned inline as a string. Larger output is returned as `{ "file": "...", "bytes": n }`.
 
-`atrium.run` defaults to blocking with a 60-second timeout. Blocking calls reject `timeoutMs` values above 60000 with `BlockingTimeoutTooLarge` because MCP clients usually enforce a 60s request deadline and would otherwise preempt the child result with a raw request timeout. Use `executionMode: "background"` for any command that needs more than 60000 ms, then poll `run-status` with the returned `runId` to retrieve the final run envelope and `resultPath`.
+`atrium.run` defaults to `executionMode: "auto"`. Auto mode returns the normal result when the command completes inside the safe MCP window. If the command is still running near 45 seconds, Atrium returns a durable `operationId`/`runId`, a `resultPath`, and a `wait` instruction. Call `atrium.wait` with the `operationId`; it waits up to 45 seconds and returns either the terminal snapshot or `status: "continue"` with the same wait instruction so the caller can reissue it safely. Explicit `executionMode: "blocking"` still rejects `timeoutMs` values above 60000 with `BlockingTimeoutTooLarge`.
+
+The local `atrium mcp-run` debug command follows returned handles within the same debug MCP server process until the operation reaches a terminal state or its `--request-timeout-ms` budget expires. Use `atrium mcp-wait` / `atrium mcp-run-status` for handles created by a long-lived MCP server such as Copilot CLI.
 
 For performance checks:
 

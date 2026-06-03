@@ -132,7 +132,7 @@ export const commandSpecs: CommandSpec[] = [
         {
           name: "--timeout-ms",
           type: "number",
-          summary: "Execution timeout in milliseconds. Blocking mode supports values up to 60000 because MCP clients usually enforce a 60s request deadline.",
+          summary: "Execution timeout in milliseconds. Auto and background mode default to 3600000 when omitted. Explicit blocking supports values up to 60000 because MCP clients usually enforce a 60s request deadline.",
         },
         {
           name: "--request-timeout-ms",
@@ -142,7 +142,7 @@ export const commandSpecs: CommandSpec[] = [
         {
           name: "--execution-mode",
           type: "string",
-          summary: "Run execution mode: blocking or background. Use background for timeout-ms above 60000.",
+          summary: "Run execution mode: auto, blocking, or background. Auto returns a durable operationId plus wait instruction when the command is still running near the MCP request deadline.",
         },
       ],
     },
@@ -150,7 +150,7 @@ export const commandSpecs: CommandSpec[] = [
       documented: true,
       schema: "AtriumRunResultV2",
     },
-    examples: ["mcp-run node -- --version", "mcp-run xray -- search tdd --root C:\\Users\\marcusm\\.copilot --glob skills/**"],
+    examples: ["mcp-run node -- --version", "mcp-run xray -- search tdd --root C:\\Users\\marcusm\\.copilot --glob skills/**", "mcp-run node --execution-mode auto -- -e \"setTimeout(() => console.log('done'), 90000)\""],
   },
   {
     path: ["mcp-run-status"],
@@ -165,6 +165,31 @@ export const commandSpecs: CommandSpec[] = [
       schema: "AtriumBackgroundRunSnapshot",
     },
     examples: ["mcp-run-status 00000000-0000-0000-0000-000000000000"],
+  },
+  {
+    path: ["mcp-wait"],
+    summary: "Wait briefly for an MCP run operation id.",
+    effect: "read",
+    input: {
+      positionals: ["operationId"],
+      flags: [
+        {
+          name: "--max-wait-ms",
+          type: "number",
+          summary: "Maximum bounded wait in milliseconds, capped by the MCP wait tool at 45000.",
+        },
+        {
+          name: "--request-timeout-ms",
+          type: "number",
+          summary: "MCP client request timeout in milliseconds for the local debug client.",
+        },
+      ],
+    },
+    output: {
+      documented: true,
+      schema: "AtriumBackgroundRunWaitResult",
+    },
+    examples: ["mcp-wait atrium-mabc1234-00000000-0000-0000-0000-000000000000"],
   },
   {
     path: ["update"],

@@ -1,11 +1,13 @@
 # Atrium Architecture
 
-Atrium is a stdio MCP server that gives agents a structured path for single CLI and executable calls. It is not a shell, not a scripting runtime, and not a curated registry of every tool Marcus Markiewicz uses. It exposes two MCP tools:
+Atrium is a stdio MCP server that gives agents a structured path for single CLI and executable calls. It is not a shell, not a scripting runtime, and not a curated registry of every tool Marcus Markiewicz uses. It exposes four MCP tools:
 
 - `schema` discovers how a target executable wants to be called.
 - `run` executes a target executable with an argument vector and returns a compact JSON result.
+- `run-status` inspects a durable operation handle.
+- `wait` blocks briefly on a durable operation handle and returns `continue` before the MCP request deadline.
 
-PowerShell remains the right tool for ad-hoc scripting, variables, loops, pipelines, interactive commands, and long-running processes.
+PowerShell remains the right tool for ad-hoc scripting, variables, loops, pipelines, and interactive commands. Long-running single executable calls should use Atrium auto/background operation handles.
 
 ## Process model
 
@@ -25,7 +27,7 @@ atrium mcp-schema reflux
 atrium mcp-run node -- --version
 ```
 
-Those commands start `dist\server.js` through a real MCP client, call the MCP tool, and print the tool response. They exist to debug the server path without opening a new Copilot session.
+Those commands start `dist\server.js` through a real MCP client, call the MCP tool, and print the tool response. They exist to debug the server path without opening a new Copilot session. `mcp-run` follows a returned auto/background handle inside that same debug MCP server process until the operation reaches a terminal state or the local debug request timeout expires.
 
 ## File value contract
 
@@ -131,15 +133,28 @@ Input shape:
 }
 ```
 
-Blocking calls are capped at `timeoutMs <= 60000` because MCP clients usually
-enforce a 60s request deadline. Longer blocking requests fail fast with a
-structured `BlockingTimeoutTooLarge` envelope instead of letting the client
-surface raw `-32001 Request timed out`. Commands that need more than 60000 ms
-must use `executionMode: "background"` and then poll `run-status`.
+`run` defaults to `executionMode: "auto"`. Auto mode starts the process once and
+waits inside the safe MCP request window. If the process finishes before the
+handoff threshold, Atrium returns the normal compact result. If the process is
+still running near 45 seconds, Atrium adopts it into the durable background
+operation store and returns an `operationId`/`runId`, `resultPath`, and a `wait`
+instruction.
+
+Explicit blocking calls are still capped at `timeoutMs <= 60000` because MCP
+clients usually enforce a 60s request deadline. Longer explicit blocking
+requests fail fast with a structured `BlockingTimeoutTooLarge` envelope instead
+of letting the client surface raw `-32001 Request timed out`.
+
+`wait` is a bounded long-poll. It waits up to 45000 ms for an `operationId`. If
+the operation reaches a terminal state, `wait` returns the same snapshot shape as
+`run-status`. If it is still running, `wait` returns `status: "continue"` with
+the same `operationId` and a fresh wait instruction. Callers can reissue `wait`
+without ever holding one MCP request past the client deadline.
 
 The local `atrium mcp-run` debug command also exposes `--request-timeout-ms`
-because it owns its MCP client. That option is only for local debugging. Agents
-calling the MCP server should rely on background mode for longer work.
+because it owns its MCP client. That option is only for local debugging.
+Long-lived agent hosts should use auto mode, then call `wait` again when they
+receive `status: "continue"`.
 
 ```json
 {
@@ -217,7 +232,7 @@ npm run benchmark -- --command xray-small --iterations 8 --warmup 2
 
 | File | Responsibility |
 | --- | --- |
-| `src\server.ts` | MCP server registration for `schema` and `run`. |
+| `src\server.ts` | MCP server registration for `schema`, `run`, `run-status`, and `wait`. |
 | `src\core\introspect.ts` | Implements `<tool> schema` then `<tool> --help` discovery. |
 | `src\core\runner.ts` | Process spawning, shell denylist, Windows resolution, npm shim handling, timeout, stdout/stderr capture. |
 | `src\core\artifacts.ts` | Materializes stdout/stderr as inline strings or `{file, bytes}` values. |

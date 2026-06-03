@@ -22,6 +22,15 @@ export interface RunExecutableInput {
   timeoutMs?: number;
 }
 
+export interface RunningExecutable {
+  startedAt: string;
+  result: Promise<RunExecutableResult>;
+}
+
+export interface StartExecutableRunOptions {
+  timeoutMs?: number;
+}
+
 export interface RunExecutableResult {
   ok: boolean;
   tool: string;
@@ -93,56 +102,73 @@ interface PreparedSpawn {
 }
 
 export async function runExecutable(input: RunExecutableInput): Promise<RunExecutableResult> {
+  const running = await startExecutableRun(input);
+  return running.result;
+}
+
+export async function startExecutableRun(input: RunExecutableInput, options: StartExecutableRunOptions = {}): Promise<RunningExecutable> {
   const args = await resolveArgValues(input.args ?? [], input.cwd);
   const stdin = await resolveStdinValue(input.stdin, input.cwd);
   const startedAt = Date.now();
+  const startedAtIso = new Date(startedAt).toISOString();
   if (input.tool.trim().length === 0) {
-    return failedBeforeSpawn(input, args, stdin, startedAt, "InvalidTool", "Tool name is required.");
+    return {
+      startedAt: startedAtIso,
+      result: Promise.resolve(failedBeforeSpawn(input, args, stdin, startedAt, "InvalidTool", "Tool name is required.")),
+    };
   }
 
   if (isDeniedShell(input.tool)) {
-    return failedBeforeSpawn(
-      input,
-      args,
-      stdin,
-      startedAt,
-      "DeniedShell",
-      `${input.tool} is denied in Atrium.`,
-    );
+    return {
+      startedAt: startedAtIso,
+      result: Promise.resolve(failedBeforeSpawn(
+        input,
+        args,
+        stdin,
+        startedAt,
+        "DeniedShell",
+        `${input.tool} is denied in Atrium.`,
+      )),
+    };
   }
 
-  const timeoutMs = input.timeoutMs ?? defaultTimeoutMs;
-  let attempt = await spawnOnce(input, input.tool, args, stdin, timeoutMs);
+  const timeoutMs = options.timeoutMs ?? input.timeoutMs ?? defaultTimeoutMs;
+  const result = (async (): Promise<RunExecutableResult> => {
+    let attempt = await spawnOnce(input, input.tool, args, stdin, timeoutMs);
 
-  if (attempt.spawnError !== undefined && shouldResolveAfterFailure(input.tool, attempt.spawnError)) {
-    const resolved = await resolveTool(input.tool);
-    if (resolved !== input.tool) {
-      attempt = await spawnOnce(input, resolved, args, stdin, timeoutMs);
+    if (attempt.spawnError !== undefined && shouldResolveAfterFailure(input.tool, attempt.spawnError)) {
+      const resolved = await resolveTool(input.tool);
+      if (resolved !== input.tool) {
+        attempt = await spawnOnce(input, resolved, args, stdin, timeoutMs);
+      }
     }
-  }
 
-  if (attempt.spawnError !== undefined) {
-    return failedBeforeSpawn(input, args, stdin, startedAt, "SpawnError", attempt.spawnError.message);
-  }
+    if (attempt.spawnError !== undefined) {
+      return failedBeforeSpawn(input, args, stdin, startedAt, "SpawnError", attempt.spawnError.message);
+    }
 
-  const stdout = attempt.stdout;
-  const stderr = attempt.stderr;
-  const output = await materializeRunOutput(stdout, stderr, defaultInlineOutputMaxBytes);
-  const timingMs = Date.now() - startedAt;
+    const stdout = attempt.stdout;
+    const stderr = attempt.stderr;
+    const output = await materializeRunOutput(stdout, stderr, defaultInlineOutputMaxBytes);
+    const timingMs = Date.now() - startedAt;
 
-  const result: RunExecutableResult = {
-    ok: attempt.exitCode === 0 && !attempt.timedOut,
-    tool: input.tool,
-    timingMs,
-    metrics: buildRunMetrics(input, args, stdin, attempt, timingMs),
-    ...output,
-    error: attempt.exitCode === 0 && !attempt.timedOut ? undefined : {
-      code: attempt.timedOut ? "Timeout" : "NonZeroExit",
-      message: attempt.timedOut ? `Process exceeded timeoutMs=${timeoutMs}.` : `Process exited with code ${String(attempt.exitCode)}.`,
-    },
+    return {
+      ok: attempt.exitCode === 0 && !attempt.timedOut,
+      tool: input.tool,
+      timingMs,
+      metrics: buildRunMetrics(input, args, stdin, attempt, timingMs),
+      ...output,
+      error: attempt.exitCode === 0 && !attempt.timedOut ? undefined : {
+        code: attempt.timedOut ? "Timeout" : "NonZeroExit",
+        message: attempt.timedOut ? `Process exceeded timeoutMs=${timeoutMs}.` : `Process exited with code ${String(attempt.exitCode)}.`,
+      },
+    };
+  })();
+
+  return {
+    startedAt: startedAtIso,
+    result,
   };
-
-  return result;
 }
 
 async function spawnOnce(input: RunExecutableInput, tool: string, args: string[], stdin: string | undefined, timeoutMs: number): Promise<SpawnAttempt> {

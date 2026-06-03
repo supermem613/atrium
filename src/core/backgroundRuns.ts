@@ -1,22 +1,28 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
-import { runExecutable, RunExecutableInput, RunExecutableResult } from "./runner.js";
+import { RunExecutableInput, RunExecutableResult, RunningExecutable, startExecutableRun } from "./runner.js";
 import { atriumTempPath } from "./tempPaths.js";
 
 type BackgroundRunStatus = "running" | "completed" | "failed";
 
+export const defaultLongRunningTimeoutMs = 3_600_000;
+export const defaultWaitTimeoutMs = 45_000;
+
 export interface BackgroundRunHandle {
   ok: true;
   status: "running";
+  operationId: string;
   runId: string;
   resultPath: string;
   startedAt: string;
+  wait: BackgroundRunWaitInstruction;
 }
 
 export interface BackgroundRunSnapshot {
   ok: boolean;
   status: BackgroundRunStatus;
+  operationId: string;
   runId: string;
   resultPath: string;
   startedAt: string;
@@ -28,7 +34,29 @@ export interface BackgroundRunSnapshot {
   };
 }
 
+export interface BackgroundRunWaitInstruction {
+  tool: "atrium.wait";
+  arguments: {
+    operationId: string;
+  };
+  maxWaitMs: number;
+}
+
+export type BackgroundRunWaitResult = BackgroundRunSnapshot | BackgroundRunWaitContinue;
+
+export interface BackgroundRunWaitContinue {
+  ok: true;
+  status: "continue";
+  operationId: string;
+  runId: string;
+  resultPath: string;
+  startedAt: string;
+  nextWaitAfterMs: number;
+  wait: BackgroundRunWaitInstruction;
+}
+
 interface BackgroundRunRecord {
+  operationId: string;
   runId: string;
   resultPath: string;
   startedAt: string;
@@ -39,57 +67,87 @@ interface BackgroundRunRecord {
     code: string;
     message: string;
   };
+  completion: Promise<void>;
 }
 
 const runs = new Map<string, BackgroundRunRecord>();
 
 export async function startBackgroundRun(input: RunExecutableInput): Promise<BackgroundRunHandle> {
-  const runId = randomUUID();
+  const running = await startExecutableRun(withLongRunningDefault(input));
+  return adoptBackgroundRun(running);
+}
+
+export async function adoptBackgroundRun(running: RunningExecutable): Promise<BackgroundRunHandle> {
+  const runId = createOperationId();
   const directory = atriumTempPath("background-runs", runId);
   const resultPath = join(directory, "result.json");
-  const record: BackgroundRunRecord = {
+  const record = {
+    operationId: runId,
     runId,
     resultPath,
-    startedAt: new Date().toISOString(),
+    startedAt: running.startedAt,
     status: "running",
-  };
-
+    completion: Promise.resolve(),
+  } satisfies BackgroundRunRecord;
   await mkdir(directory, { recursive: true });
   runs.set(runId, record);
   await persistSnapshot(record);
-  void executeBackgroundRun(record, input);
+  record.completion = executeBackgroundRun(record, running);
 
-  return {
-    ok: true,
-    status: "running",
-    runId,
-    resultPath,
-    startedAt: record.startedAt,
-  };
+  return toHandle(record);
 }
 
-export function getBackgroundRun(runId: string): BackgroundRunSnapshot {
-  const record = runs.get(runId);
+export async function getBackgroundRun(operationId: string): Promise<BackgroundRunSnapshot> {
+  if (!isSafeOperationId(operationId)) {
+    return unknownRun(operationId, "", "Operation id must be a single safe path segment.");
+  }
+
+  const record = runs.get(operationId);
   if (record === undefined) {
-    return {
-      ok: false,
-      status: "failed",
-      runId,
-      resultPath: "",
-      startedAt: "",
-      error: {
-        code: "UnknownRun",
-        message: `No background run found for runId=${runId}.`,
-      },
-    };
+    return readPersistedSnapshot(operationId);
   }
 
   return toSnapshot(record);
 }
 
-async function executeBackgroundRun(record: BackgroundRunRecord, input: RunExecutableInput): Promise<void> {
+export async function waitForBackgroundRun(operationId: string, maxWaitMs = defaultWaitTimeoutMs): Promise<BackgroundRunWaitResult> {
+  if (!isSafeOperationId(operationId)) {
+    return unknownRun(operationId, "", "Operation id must be a single safe path segment.");
+  }
+
+  const cappedWaitMs = Math.min(maxWaitMs, defaultWaitTimeoutMs);
+  const record = runs.get(operationId);
+  if (record === undefined) {
+    const persisted = await readPersistedSnapshot(operationId);
+    if (persisted.status === "running") {
+      return toContinue(persisted);
+    }
+
+    return persisted;
+  }
+
+  if (record.status !== "running") {
+    return toSnapshot(record);
+  }
+
+  await waitForCompletionOrTimeout(record.completion, cappedWaitMs);
+  if (record.status === "running") {
+    return toContinue(toSnapshot(record));
+  }
+
+  return toSnapshot(record);
+}
+
+export function withLongRunningDefault(input: RunExecutableInput): RunExecutableInput {
+  return {
+    ...input,
+    timeoutMs: input.timeoutMs ?? defaultLongRunningTimeoutMs,
+  };
+}
+
+async function executeBackgroundRun(record: BackgroundRunRecord, running: RunningExecutable): Promise<void> {
   try {
-    record.result = await runExecutable(input);
+    record.result = await running.result;
     record.status = "completed";
   } catch (error) {
     record.status = "failed";
@@ -107,10 +165,23 @@ async function persistSnapshot(record: BackgroundRunRecord): Promise<void> {
   await writeFile(record.resultPath, `${JSON.stringify(toSnapshot(record))}\n`, "utf8");
 }
 
+function toHandle(record: BackgroundRunRecord): BackgroundRunHandle {
+  return {
+    ok: true,
+    status: "running",
+    operationId: record.operationId,
+    runId: record.runId,
+    resultPath: record.resultPath,
+    startedAt: record.startedAt,
+    wait: waitInstruction(record.operationId),
+  };
+}
+
 function toSnapshot(record: BackgroundRunRecord): BackgroundRunSnapshot {
   return {
     ok: record.status !== "failed",
     status: record.status,
+    operationId: record.operationId,
     runId: record.runId,
     resultPath: record.resultPath,
     startedAt: record.startedAt,
@@ -118,4 +189,106 @@ function toSnapshot(record: BackgroundRunRecord): BackgroundRunSnapshot {
     result: record.result,
     error: record.error,
   };
+}
+
+async function readPersistedSnapshot(operationId: string): Promise<BackgroundRunSnapshot> {
+  const resultPath = join(atriumTempPath("background-runs", operationId), "result.json");
+  try {
+    const parsed = JSON.parse(await readFile(resultPath, "utf8")) as Partial<BackgroundRunSnapshot>;
+    const snapshot = normalizePersistedSnapshot(parsed);
+    if (snapshot !== undefined) {
+      return snapshot;
+    }
+
+    return unknownRun(operationId, resultPath, "Persisted background run snapshot is malformed.");
+  } catch (error) {
+    return unknownRun(operationId, resultPath, error instanceof Error ? error.message : String(error));
+  }
+}
+
+function normalizePersistedSnapshot(value: Partial<BackgroundRunSnapshot>): BackgroundRunSnapshot | undefined {
+  if (!isPersistedSnapshotLike(value)) {
+    return undefined;
+  }
+
+  return {
+    ok: value.ok ?? value.status !== "failed",
+    status: value.status,
+    operationId: value.operationId ?? value.runId,
+    runId: value.runId,
+    resultPath: value.resultPath,
+    startedAt: value.startedAt,
+    completedAt: value.completedAt,
+    result: value.result,
+    error: value.error,
+  };
+}
+
+function isPersistedSnapshotLike(value: Partial<BackgroundRunSnapshot>): value is Omit<BackgroundRunSnapshot, "operationId"> & { operationId?: string } {
+  return typeof value === "object"
+    && value !== null
+    && (value.status === "running" || value.status === "completed" || value.status === "failed")
+    && typeof value.runId === "string"
+    && typeof value.resultPath === "string"
+    && typeof value.startedAt === "string";
+}
+
+function toContinue(snapshot: BackgroundRunSnapshot): BackgroundRunWaitContinue {
+  return {
+    ok: true,
+    status: "continue",
+    operationId: snapshot.operationId,
+    runId: snapshot.runId,
+    resultPath: snapshot.resultPath,
+    startedAt: snapshot.startedAt,
+    nextWaitAfterMs: 0,
+    wait: waitInstruction(snapshot.operationId),
+  };
+}
+
+function waitInstruction(operationId: string): BackgroundRunWaitInstruction {
+  return {
+    tool: "atrium.wait",
+    arguments: {
+      operationId,
+    },
+    maxWaitMs: defaultWaitTimeoutMs,
+  };
+}
+
+async function waitForCompletionOrTimeout(completion: Promise<void>, timeoutMs: number): Promise<void> {
+  let timeout: NodeJS.Timeout | undefined;
+  await Promise.race([
+    completion,
+    new Promise<void>((resolve) => {
+      timeout = setTimeout(resolve, timeoutMs);
+      timeout.unref();
+    }),
+  ]);
+  if (timeout !== undefined) {
+    clearTimeout(timeout);
+  }
+}
+
+function unknownRun(operationId: string, resultPath: string, cause: string): BackgroundRunSnapshot {
+  return {
+    ok: false,
+    status: "failed",
+    operationId,
+    runId: operationId,
+    resultPath,
+    startedAt: "",
+    error: {
+      code: "UnknownRun",
+      message: `No background run found for operationId=${operationId}: ${cause}`,
+    },
+  };
+}
+
+function createOperationId(): string {
+  return `atrium-${Date.now().toString(36)}-${randomUUID()}`;
+}
+
+function isSafeOperationId(operationId: string): boolean {
+  return /^[A-Za-z0-9][A-Za-z0-9-]*$/u.test(operationId);
 }
