@@ -217,6 +217,42 @@ describe("runner", () => {
     assert.equal(result.ok, true);
     assert.equal(result.stdout, "fallback:left\r\n");
   });
+
+  it("runs unrecognized cmd files from paths with spaces without truncating the executable path", { skip: process.platform !== "win32" }, async () => {
+    const dir = await createTestTempDir("Program Files fallback-shim-");
+    const shimFile = join(dir, "tool.cmd");
+    await writeFile(shimFile, [
+      "@ECHO off",
+      "ECHO fallback:%~1:%~2",
+      "",
+    ].join("\r\n"));
+
+    const result = await runExecutable({
+      tool: shimFile,
+      args: ["left value", "right"],
+    });
+
+    assert.equal(result.ok, true);
+    assert.equal(result.stdout, "fallback:left value:right\r\n");
+  });
+
+  it("runs unrecognized bat files from paths with spaces without truncating the executable path", { skip: process.platform !== "win32" }, async () => {
+    const dir = await createTestTempDir("Program Files fallback-bat-");
+    const batchFile = join(dir, "tool.bat");
+    await writeFile(batchFile, [
+      "@ECHO off",
+      "ECHO fallback:%~1",
+      "",
+    ].join("\r\n"));
+
+    const result = await runExecutable({
+      tool: batchFile,
+      args: ["left value"],
+    });
+
+    assert.equal(result.ok, true);
+    assert.equal(result.stdout, "fallback:left value\r\n");
+  });
 });
 
 async function createTestTempDir(prefix: string): Promise<string> {

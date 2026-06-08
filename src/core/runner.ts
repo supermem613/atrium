@@ -4,7 +4,7 @@ import { once } from "node:events";
 import { access, readFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { materializeRunOutput, OutputValue } from "./artifacts.js";
-import { isDeniedShell, needsWindowsCommandShell } from "./shells.js";
+import { isDeniedShell } from "./shells.js";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 
 export type FileValue = {
@@ -99,6 +99,7 @@ interface PreparedSpawn {
   command: string;
   args: string[];
   displayTool: string;
+  windowsVerbatimArguments?: boolean;
 }
 
 export async function runExecutable(input: RunExecutableInput): Promise<RunExecutableResult> {
@@ -179,8 +180,8 @@ async function spawnOnce(input: RunExecutableInput, tool: string, args: string[]
   try {
     child = spawn(prepared.command, prepared.args, {
       cwd: input.cwd,
-      shell: needsWindowsCommandShell(prepared.command),
       windowsHide: true,
+      windowsVerbatimArguments: prepared.windowsVerbatimArguments,
     });
   } catch (error) {
     return {
@@ -321,7 +322,7 @@ async function chooseWindowsExecutable(candidates: string[]): Promise<string> {
 }
 
 async function prepareSpawn(tool: string, args: string[]): Promise<PreparedSpawn> {
-  if (process.platform !== "win32" || !/\.cmd$/iu.test(tool)) {
+  if (process.platform !== "win32" || !/\.(cmd|bat)$/iu.test(tool)) {
     return {
       command: tool,
       args,
@@ -332,9 +333,10 @@ async function prepareSpawn(tool: string, args: string[]): Promise<PreparedSpawn
   const nodeScript = await readNodeCmdShimScript(tool);
   if (nodeScript === undefined) {
     return {
-      command: tool,
-      args,
+      command: "cmd.exe",
+      args: ["/d", "/s", "/c", quoteWindowsCommandInvocation(tool, args)],
       displayTool: tool,
+      windowsVerbatimArguments: true,
     };
   }
 
@@ -343,6 +345,20 @@ async function prepareSpawn(tool: string, args: string[]): Promise<PreparedSpawn
     args: [nodeScript, ...args],
     displayTool: nodeScript,
   };
+}
+
+function quoteWindowsCommandInvocation(command: string, args: string[]): string {
+  return `"${[quoteWindowsCommandPart(command), ...args.map(quoteWindowsCommandArgument)].join(" ")}"`;
+}
+
+function quoteWindowsCommandPart(value: string): string {
+  return `"${value.replace(/(["^&|<>()])/gu, "^$1")}"`;
+}
+
+function quoteWindowsCommandArgument(value: string): string {
+  return /[\s"^&|<>()]/u.test(value) || value.length === 0
+    ? quoteWindowsCommandPart(value)
+    : value;
 }
 
 async function readNodeCmdShimScript(cmdPath: string): Promise<string | undefined> {
