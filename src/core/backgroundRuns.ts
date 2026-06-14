@@ -38,8 +38,15 @@ export interface BackgroundRunWaitInstruction {
   tool: "atrium.wait";
   arguments: {
     operationId: string;
+    follow: boolean;
   };
   maxWaitMs: number;
+}
+
+export interface BackgroundRunWaitOptions {
+  maxWaitMs?: number;
+  follow?: boolean;
+  maxTotalWaitMs?: number;
 }
 
 export type BackgroundRunWaitResult = BackgroundRunSnapshot | BackgroundRunWaitContinue;
@@ -52,6 +59,8 @@ export interface BackgroundRunWaitContinue {
   resultPath: string;
   startedAt: string;
   nextWaitAfterMs: number;
+  mustReissueWait: true;
+  message: string;
   wait: BackgroundRunWaitInstruction;
 }
 
@@ -110,17 +119,20 @@ export async function getBackgroundRun(operationId: string): Promise<BackgroundR
   return toSnapshot(record);
 }
 
-export async function waitForBackgroundRun(operationId: string, maxWaitMs = defaultWaitTimeoutMs): Promise<BackgroundRunWaitResult> {
+export async function waitForBackgroundRun(operationId: string, options: BackgroundRunWaitOptions = {}): Promise<BackgroundRunWaitResult> {
   if (!isSafeOperationId(operationId)) {
     return unknownRun(operationId, "", "Operation id must be a single safe path segment.");
   }
 
-  const cappedWaitMs = Math.min(maxWaitMs, defaultWaitTimeoutMs);
+  const cappedWaitMs = Math.min(options.maxWaitMs ?? defaultWaitTimeoutMs, defaultWaitTimeoutMs);
+  const maxTotalWaitMs = Math.max(cappedWaitMs, options.maxTotalWaitMs ?? cappedWaitMs);
+  const deadline = Date.now() + maxTotalWaitMs;
+  let remainingWaitMs = cappedWaitMs;
   const record = runs.get(operationId);
   if (record === undefined) {
     const persisted = await readPersistedSnapshot(operationId);
     if (persisted.status === "running") {
-      return toContinue(persisted);
+      return toContinue(persisted, options.follow ?? false);
     }
 
     return persisted;
@@ -130,12 +142,20 @@ export async function waitForBackgroundRun(operationId: string, maxWaitMs = defa
     return toSnapshot(record);
   }
 
-  await waitForCompletionOrTimeout(record.completion, cappedWaitMs);
-  if (record.status === "running") {
-    return toContinue(toSnapshot(record));
-  }
+  do {
+    await waitForCompletionOrTimeout(record.completion, remainingWaitMs);
+    if (record.status !== "running") {
+      return toSnapshot(record);
+    }
 
-  return toSnapshot(record);
+    if (options.follow !== true) {
+      return toContinue(toSnapshot(record), false);
+    }
+
+    remainingWaitMs = Math.min(cappedWaitMs, deadline - Date.now());
+  } while (remainingWaitMs > 0);
+
+  return toContinue(toSnapshot(record), true);
 }
 
 export function withLongRunningDefault(input: RunExecutableInput): RunExecutableInput {
@@ -233,7 +253,7 @@ function isPersistedSnapshotLike(value: Partial<BackgroundRunSnapshot>): value i
     && typeof value.startedAt === "string";
 }
 
-function toContinue(snapshot: BackgroundRunSnapshot): BackgroundRunWaitContinue {
+function toContinue(snapshot: BackgroundRunSnapshot, follow: boolean): BackgroundRunWaitContinue {
   return {
     ok: true,
     status: "continue",
@@ -242,15 +262,18 @@ function toContinue(snapshot: BackgroundRunSnapshot): BackgroundRunWaitContinue 
     resultPath: snapshot.resultPath,
     startedAt: snapshot.startedAt,
     nextWaitAfterMs: 0,
-    wait: waitInstruction(snapshot.operationId),
+    mustReissueWait: true,
+    message: "Operation is still running. Reissue atrium.wait with this operationId until status is completed or failed.",
+    wait: waitInstruction(snapshot.operationId, follow),
   };
 }
 
-function waitInstruction(operationId: string): BackgroundRunWaitInstruction {
+function waitInstruction(operationId: string, follow = false): BackgroundRunWaitInstruction {
   return {
     tool: "atrium.wait",
     arguments: {
       operationId,
+      follow,
     },
     maxWaitMs: defaultWaitTimeoutMs,
   };

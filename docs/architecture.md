@@ -148,8 +148,15 @@ of letting the client surface raw `-32001 Request timed out`.
 `wait` is a bounded long-poll. It waits up to 45000 ms for an `operationId`. If
 the operation reaches a terminal state, `wait` returns the same snapshot shape as
 `run-status`. If it is still running, `wait` returns `status: "continue"` with
-the same `operationId` and a fresh wait instruction. Callers can reissue `wait`
-without ever holding one MCP request past the client deadline.
+`mustReissueWait: true`, the same `operationId`, and a fresh wait instruction.
+Callers can reissue `wait` without ever holding one MCP request past the client
+deadline.
+
+`wait` also supports `follow: true`. Follow mode repeats those bounded waits
+inside one MCP tool call until the operation reaches a terminal status or
+`maxTotalWaitMs` is reached. If the total budget expires, Atrium still returns
+`status: "continue"` with `mustReissueWait: true` so the caller does not confuse
+a still-running operation with completion.
 
 The local `atrium mcp-run` debug command also exposes `--request-timeout-ms`
 because it owns its MCP client. That option is only for local debugging.

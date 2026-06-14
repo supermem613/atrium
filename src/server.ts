@@ -96,19 +96,28 @@ export function createAtriumServer(options: AtriumServerOptions = {}): McpServer
     "wait",
     {
       title: "Wait briefly for a background run",
-      description: "Wait up to 45000 ms for a durable operationId to reach a terminal state. Returns the terminal snapshot or status=\"continue\" with the same operationId so the caller can reissue wait without exceeding the MCP request deadline.",
+      description: "Wait for a durable operationId to reach a terminal state. By default this is a bounded wait capped at 45000 ms and returns status=\"continue\" with mustReissueWait=true when the operation is still running. Set follow=true to keep re-waiting inside one MCP tool call until the operation finishes or maxTotalWaitMs is reached.",
       inputSchema: {
         operationId: z.string().min(1).describe("Durable operation id returned by atrium.run in auto or background mode."),
         maxWaitMs: z.number().int().positive().max(defaultWaitTimeoutMs).optional().describe("Maximum wait in milliseconds. Defaults to 45000 and is capped at 45000."),
+        follow: z.boolean().optional().describe("When true, keep re-waiting until the operation reaches completed or failed, or until maxTotalWaitMs is reached."),
+        maxTotalWaitMs: z.number().int().positive().max(3_600_000).optional().describe("Total follow budget in milliseconds. Defaults to maxWaitMs when follow is false, and is capped at 3600000."),
       },
     },
-    async ({ operationId, maxWaitMs }) => toolTextResult(await waitForBackgroundRun(operationId, maxWaitMs ?? waitTimeoutMs)),
+    async ({ operationId, maxWaitMs, follow, maxTotalWaitMs }) => toolTextResult(await waitForBackgroundRun(operationId, {
+      maxWaitMs: maxWaitMs ?? waitTimeoutMs,
+      follow,
+      maxTotalWaitMs,
+    })),
   );
 
   return server;
 }
 
-async function runAuto(input: RunExecutableInput, autoBackgroundAfterMs: number): Promise<RunExecutableResult | Awaited<ReturnType<typeof adoptBackgroundRun>>> {
+async function runAuto(
+  input: RunExecutableInput,
+  autoBackgroundAfterMs: number,
+): Promise<RunExecutableResult | Awaited<ReturnType<typeof adoptBackgroundRun>>> {
   const running = await startExecutableRun(withLongRunningDefault(input));
   const result = await waitForResultOrTimeout(running.result, autoBackgroundAfterMs);
   if (result !== undefined) {

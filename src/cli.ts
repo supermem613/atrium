@@ -69,6 +69,8 @@ program
   .command("mcp-wait <operationId>")
   .description("Wait briefly for a background run created by the MCP run tool")
   .option("--max-wait-ms <ms>", "Maximum bounded wait in milliseconds, capped by the MCP wait tool")
+  .option("--follow", "Keep re-waiting until the operation finishes or --max-total-wait-ms is reached")
+  .option("--max-total-wait-ms <ms>", "Total follow budget in milliseconds")
   .option("--request-timeout-ms <ms>", "MCP client request timeout in milliseconds. Debug command only")
   .action(mcpWaitCommand);
 

@@ -179,6 +179,16 @@ export const commandSpecs: CommandSpec[] = [
           summary: "Maximum bounded wait in milliseconds, capped by the MCP wait tool at 45000.",
         },
         {
+          name: "--follow",
+          type: "boolean",
+          summary: "Keep re-waiting until the operation finishes or --max-total-wait-ms is reached.",
+        },
+        {
+          name: "--max-total-wait-ms",
+          type: "number",
+          summary: "Total follow budget in milliseconds.",
+        },
+        {
           name: "--request-timeout-ms",
           type: "number",
           summary: "MCP client request timeout in milliseconds for the local debug client.",

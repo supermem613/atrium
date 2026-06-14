@@ -113,7 +113,7 @@ describe("MCP run background mode", () => {
       assert.equal(started.operationId, started.runId);
       assertString(started.operationId);
       assertRecord(started.wait);
-      assert.deepEqual(started.wait.arguments, { operationId: started.operationId });
+      assert.deepEqual(started.wait.arguments, { operationId: started.operationId, follow: false });
 
       const completed = await callJson(client, "wait", {
         operationId: started.operationId,
@@ -142,8 +142,10 @@ describe("MCP run background mode", () => {
       assert.equal(pending.ok, true);
       assert.equal(pending.status, "continue");
       assert.equal(pending.operationId, started.operationId);
+      assert.equal(pending.mustReissueWait, true);
+      assertString(pending.message);
       assertRecord(pending.wait);
-      assert.deepEqual(pending.wait.arguments, { operationId: started.operationId });
+      assert.deepEqual(pending.wait.arguments, { operationId: started.operationId, follow: false });
 
       const completed = await callJson(client, "wait", {
         operationId: started.operationId,
@@ -154,6 +156,27 @@ describe("MCP run background mode", () => {
       assert.equal(completed.status, "completed");
       assert.equal(result.stdout, "wait-later-ok");
     }, { autoBackgroundAfterMs: 5, waitTimeoutMs: 1_000 });
+  });
+
+  it("wait follow mode keeps re-waiting until the operation completes", async () => {
+    await withInMemoryClient(async (client) => {
+      const started = await callJson(client, "run", {
+        tool: process.execPath,
+        args: ["-e", "setTimeout(() => process.stdout.write('follow-ok'), 100)"],
+      });
+      assertString(started.operationId);
+
+      const completed = await callJson(client, "wait", {
+        operationId: started.operationId,
+        maxWaitMs: 10,
+        maxTotalWaitMs: 1_000,
+        follow: true,
+      });
+      const result = completed.result;
+      assertRecord(result);
+      assert.equal(completed.status, "completed");
+      assert.equal(result.stdout, "follow-ok");
+    }, { autoBackgroundAfterMs: 5, waitTimeoutMs: 10 });
   });
 
   it("run-status recovers a persisted operation snapshot when the run is not in memory", async () => {

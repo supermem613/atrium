@@ -15,7 +15,9 @@ interface McpRunOptions {
 
 interface McpWaitOptions {
   maxWaitMs?: string;
+  maxTotalWaitMs?: string;
   requestTimeoutMs?: string;
+  follow?: boolean;
 }
 
 async function withAtriumClient<T>(callback: (client: Client) => Promise<T>): Promise<T> {
@@ -78,12 +80,15 @@ export async function mcpRunStatusCommand(runId: string): Promise<void> {
 
 export async function mcpWaitCommand(operationId: string, options: McpWaitOptions): Promise<void> {
   const maxWaitMs = parseOptionalNumber(options.maxWaitMs, "--max-wait-ms");
-  const requestTimeoutMs = parseOptionalNumber(options.requestTimeoutMs, "--request-timeout-ms") ?? ((maxWaitMs ?? 45_000) + 5_000);
+  const maxTotalWaitMs = parseOptionalNumber(options.maxTotalWaitMs, "--max-total-wait-ms");
+  const requestTimeoutMs = parseOptionalNumber(options.requestTimeoutMs, "--request-timeout-ms") ?? requestTimeoutForWait(maxWaitMs, maxTotalWaitMs, options.follow ?? false);
   const response = await withAtriumClient((client) => client.callTool({
     name: "wait",
     arguments: {
       operationId,
       maxWaitMs,
+      maxTotalWaitMs,
+      follow: options.follow,
     },
   }, CallToolResultSchema, { timeout: requestTimeoutMs }));
   writeToolResponse(response);
@@ -152,6 +157,10 @@ function parseExecutionMode(value: string | undefined): "auto" | "blocking" | "b
 
 function requestTimeoutForRun(timeoutMs: number | undefined): number {
   return timeoutMs === undefined ? 60_000 : timeoutMs + 1_000;
+}
+
+function requestTimeoutForWait(maxWaitMs: number | undefined, maxTotalWaitMs: number | undefined, follow: boolean): number {
+  return (follow ? maxTotalWaitMs ?? maxWaitMs ?? 45_000 : maxWaitMs ?? 45_000) + 5_000;
 }
 
 async function waitForDebugRun(client: Client, operationId: string, requestTimeoutMs: number): ReturnType<Client["callTool"]> {
