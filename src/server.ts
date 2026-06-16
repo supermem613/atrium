@@ -13,6 +13,28 @@ import { toolTextResult } from "./mcp/format.js";
 const defaultMcpRequestTimeoutMs = 60_000;
 const defaultAutoBackgroundAfterMs = 45_000;
 
+// Advertised to the client at the MCP initialize handshake so the model learns the
+// hard constraints up front instead of discovering them through denied tool calls.
+// Each rule here maps to a denial or contract enforced by the run, wait, and runner code.
+const atriumInstructions = [
+  "Atrium runs named CLIs and executables with structured JSON results. It is not a shell.",
+  "",
+  "Hard rules, enforced by the server:",
+  "1. Shells are denied. Do not pass pwsh, powershell, bash, cmd, sh, or zsh as tool. Call the target binary directly with an args vector. Never pass a single shell command string.",
+  "2. Blocking mode caps timeoutMs at 60000 and rejects larger values with BlockingTimeoutTooLarge. For longer work use executionMode auto or background.",
+  "3. Default executionMode is auto. Auto waits briefly, then returns a durable operationId plus a wait instruction if the command is still running. This is not an error.",
+  "",
+  "Background and wait contract:",
+  "- When run returns status running with an operationId, call the wait tool with that operationId.",
+  "- While wait returns status continue with mustReissueWait true, call wait again with the same operationId. Set follow true to keep re-waiting inside one call.",
+  "- Never report success from a still-running handle. Inspect the terminal result first.",
+  "",
+  "Value contract:",
+  "- A plain string argument or stdin is used literally.",
+  "- An object {file: path} is replaced with the UTF-8 contents of that file.",
+  "- Use the schema tool to discover a CLI invocation shape instead of scraping help through a shell.",
+].join("\n");
+
 export interface AtriumServerOptions {
   autoBackgroundAfterMs?: number;
   waitTimeoutMs?: number;
@@ -21,10 +43,15 @@ export interface AtriumServerOptions {
 export function createAtriumServer(options: AtriumServerOptions = {}): McpServer {
   const autoBackgroundAfterMs = options.autoBackgroundAfterMs ?? defaultAutoBackgroundAfterMs;
   const waitTimeoutMs = options.waitTimeoutMs ?? defaultWaitTimeoutMs;
-  const server = new McpServer({
-    name: "atrium",
-    version: "0.5.0",
-  });
+  const server = new McpServer(
+    {
+      name: "atrium",
+      version: "1.1.0",
+    },
+    {
+      instructions: atriumInstructions,
+    },
+  );
 
   server.registerTool(
     "schema",
