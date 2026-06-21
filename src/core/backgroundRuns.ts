@@ -47,6 +47,7 @@ export interface BackgroundRunWaitOptions {
   maxWaitMs?: number;
   follow?: boolean;
   maxTotalWaitMs?: number;
+  requestSafeWaitMs?: number;
 }
 
 export type BackgroundRunWaitResult = BackgroundRunSnapshot | BackgroundRunWaitContinue;
@@ -124,8 +125,16 @@ export async function waitForBackgroundRun(operationId: string, options: Backgro
     return unknownRun(operationId, "", "Operation id must be a single safe path segment.");
   }
 
-  const cappedWaitMs = Math.min(options.maxWaitMs ?? defaultWaitTimeoutMs, defaultWaitTimeoutMs);
-  const maxTotalWaitMs = Math.max(cappedWaitMs, options.maxTotalWaitMs ?? cappedWaitMs);
+  // A single MCP wait call must never block past the request-safe window. The MCP
+  // client enforces a request deadline (about 60s), so a wait that holds the request
+  // longer surfaces to the caller as transport error -32001 instead of a structured
+  // result. follow and maxTotalWaitMs may ask for a longer budget, but the total a
+  // single call can block is clamped to requestSafeWaitMs so the contract holds for
+  // every caller-supplied combination. Callers reissue bounded waits to keep going.
+  const requestSafeWaitMs = Math.min(options.requestSafeWaitMs ?? defaultWaitTimeoutMs, defaultWaitTimeoutMs);
+  const cappedWaitMs = Math.min(options.maxWaitMs ?? requestSafeWaitMs, requestSafeWaitMs);
+  const requestedTotalWaitMs = Math.max(cappedWaitMs, options.maxTotalWaitMs ?? cappedWaitMs);
+  const maxTotalWaitMs = Math.min(requestedTotalWaitMs, requestSafeWaitMs);
   const deadline = Date.now() + maxTotalWaitMs;
   let remainingWaitMs = cappedWaitMs;
   const record = runs.get(operationId);

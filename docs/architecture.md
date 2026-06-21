@@ -153,10 +153,12 @@ Callers can reissue `wait` without ever holding one MCP request past the client
 deadline.
 
 `wait` also supports `follow: true`. Follow mode repeats those bounded waits
-inside one MCP tool call until the operation reaches a terminal status or
-`maxTotalWaitMs` is reached. If the total budget expires, Atrium still returns
-`status: "continue"` with `mustReissueWait: true` so the caller does not confuse
-a still-running operation with completion.
+inside one MCP tool call until the operation reaches a terminal status. A single
+wait call is always clamped to the 45000 ms request-safe window, so even a large
+`maxTotalWaitMs` cannot make one request outlive the MCP client deadline and fail
+with `-32001`. If the operation is still running when the window closes, Atrium
+returns `status: "continue"` with `mustReissueWait: true` so the caller does not
+confuse a still-running operation with completion and reissues `wait` to continue.
 
 The local `atrium mcp-run` debug command also exposes `--request-timeout-ms`
 because it owns its MCP client. That option is only for local debugging.

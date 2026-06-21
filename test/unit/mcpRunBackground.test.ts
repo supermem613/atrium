@@ -179,6 +179,34 @@ describe("MCP run background mode", () => {
     }, { autoBackgroundAfterMs: 5, waitTimeoutMs: 10 });
   });
 
+  it("wait stays inside the request-safe window even when follow uses a large maxTotalWaitMs", async () => {
+    await withInMemoryClient(async (client) => {
+      const started = await callJson(client, "run", {
+        tool: process.execPath,
+        args: ["-e", "setTimeout(() => process.stdout.write('slow-follow-ok'), 1_500)"],
+      });
+      assertString(started.operationId);
+
+      const startedAt = Date.now();
+      const pending = await callJson(client, "wait", {
+        operationId: started.operationId,
+        maxWaitMs: 60,
+        maxTotalWaitMs: 600_000,
+        follow: true,
+      });
+      const elapsedMs = Date.now() - startedAt;
+
+      assert.equal(pending.ok, true);
+      assert.equal(pending.status, "continue");
+      assert.equal(pending.mustReissueWait, true);
+      assert.equal(
+        elapsedMs < 1_000,
+        true,
+        `single MCP wait blocked ${elapsedMs}ms, past the request-safe window`,
+      );
+    }, { autoBackgroundAfterMs: 5, waitTimeoutMs: 60, requestSafeWaitMs: 60 });
+  });
+
   it("run-status recovers a persisted operation snapshot when the run is not in memory", async () => {
     const operationId = "atrium-test-persisted-operation";
     const directory = atriumTempPath("background-runs", operationId);

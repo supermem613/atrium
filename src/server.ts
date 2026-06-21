@@ -26,7 +26,7 @@ const atriumInstructions = [
   "",
   "Background and wait contract:",
   "- When run returns status running with an operationId, call the wait tool with that operationId.",
-  "- While wait returns status continue with mustReissueWait true, call wait again with the same operationId. Set follow true to keep re-waiting inside one call.",
+  "- While wait returns status continue with mustReissueWait true, call wait again with the same operationId. follow true re-waits inside one call but a single call never blocks past the 45s request-safe window, so it cannot hit the client deadline.",
   "- Never report success from a still-running handle. Inspect the terminal result first.",
   "",
   "Value contract:",
@@ -38,15 +38,17 @@ const atriumInstructions = [
 export interface AtriumServerOptions {
   autoBackgroundAfterMs?: number;
   waitTimeoutMs?: number;
+  requestSafeWaitMs?: number;
 }
 
 export function createAtriumServer(options: AtriumServerOptions = {}): McpServer {
   const autoBackgroundAfterMs = options.autoBackgroundAfterMs ?? defaultAutoBackgroundAfterMs;
   const waitTimeoutMs = options.waitTimeoutMs ?? defaultWaitTimeoutMs;
+  const requestSafeWaitMs = options.requestSafeWaitMs ?? defaultWaitTimeoutMs;
   const server = new McpServer(
     {
       name: "atrium",
-      version: "1.1.0",
+      version: "1.2.0",
     },
     {
       instructions: atriumInstructions,
@@ -123,18 +125,19 @@ export function createAtriumServer(options: AtriumServerOptions = {}): McpServer
     "wait",
     {
       title: "Wait briefly for a background run",
-      description: "Wait for a durable operationId to reach a terminal state. By default this is a bounded wait capped at 45000 ms and returns status=\"continue\" with mustReissueWait=true when the operation is still running. Set follow=true to keep re-waiting inside one MCP tool call until the operation finishes or maxTotalWaitMs is reached.",
+      description: "Wait for a durable operationId to reach a terminal state. By default this is a bounded wait capped at 45000 ms and returns status=\"continue\" with mustReissueWait=true when the operation is still running. follow=true re-waits inside one call, but a single wait call never blocks past the 45000 ms request-safe window even with a large maxTotalWaitMs, so it cannot outlive the MCP client request deadline. Reissue wait with the same operationId until status is completed or failed.",
       inputSchema: {
         operationId: z.string().min(1).describe("Durable operation id returned by atrium.run in auto or background mode."),
         maxWaitMs: z.number().int().positive().max(defaultWaitTimeoutMs).optional().describe("Maximum wait in milliseconds. Defaults to 45000 and is capped at 45000."),
-        follow: z.boolean().optional().describe("When true, keep re-waiting until the operation reaches completed or failed, or until maxTotalWaitMs is reached."),
-        maxTotalWaitMs: z.number().int().positive().max(3_600_000).optional().describe("Total follow budget in milliseconds. Defaults to maxWaitMs when follow is false, and is capped at 3600000."),
+        follow: z.boolean().optional().describe("When true, keep re-waiting until the operation reaches completed or failed, bounded by the request-safe window so one call cannot hit the client deadline."),
+        maxTotalWaitMs: z.number().int().positive().max(3_600_000).optional().describe("Requested follow budget in milliseconds. A single wait call is always clamped to the 45000 ms request-safe window regardless of this value; reissue wait to continue past it."),
       },
     },
     async ({ operationId, maxWaitMs, follow, maxTotalWaitMs }) => toolTextResult(await waitForBackgroundRun(operationId, {
       maxWaitMs: maxWaitMs ?? waitTimeoutMs,
       follow,
       maxTotalWaitMs,
+      requestSafeWaitMs,
     })),
   );
 
