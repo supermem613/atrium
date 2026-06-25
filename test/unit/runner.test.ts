@@ -1,8 +1,10 @@
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { runExecutable } from "../../src/core/runner.js";
+import { setTimeout as waitForPollInterval } from "node:timers/promises";
+import { ExecutionQueue } from "../../src/core/executionQueue.js";
+import { runExecutable, startExecutableRun } from "../../src/core/runner.js";
 import { atriumTempPath } from "../../src/core/tempPaths.js";
 
 describe("runner", () => {
@@ -42,6 +44,66 @@ describe("runner", () => {
     assert.equal(result.stderr, "bad");
     assert.equal(result.metrics.exitCode, 7);
     assert.equal(result.metrics.stderrBytes, 3);
+  });
+
+  it("limits concurrent executable starts and records queue metrics", async () => {
+    const dir = await createTestTempDir("execution-queue-");
+    const queue = new ExecutionQueue(2);
+    const starts = [0, 1, 2, 3].map((index) => join(dir, `started-${index}`));
+    const releases = [0, 1, 2, 3].map((index) => join(dir, `release-${index}`));
+
+    const running = starts.map(async (startFile, index) => startExecutableRun({
+      tool: process.execPath,
+      args: ["-e", waitForReleaseScript(startFile, releases[index], 0)],
+    }, { executionQueue: queue }));
+    const results = (await Promise.all(running)).map((run) => run.result);
+
+    await Promise.all([waitForFile(starts[0]), waitForFile(starts[1])]);
+    await Promise.all([writeFile(releases[0], ""), writeFile(releases[1], "")]);
+    await Promise.all([results[0], results[1]]);
+
+    await Promise.all([waitForFile(starts[2]), waitForFile(starts[3])]);
+    await Promise.all([writeFile(releases[2], ""), writeFile(releases[3], "")]);
+    const queuedResults = await Promise.all([results[2], results[3]]);
+
+    for (const result of queuedResults) {
+      assert.equal(result.ok, true);
+      assert.equal(result.metrics.queueLimit, 2);
+      assert.equal(result.metrics.queueActiveAtStart, 2);
+      assert.ok((result.metrics.queueDepthAtEnqueue ?? 0) >= 1);
+      assert.ok((result.metrics.queueWaitMs ?? 0) > 0);
+    }
+  });
+
+  it("releases queue slots after timeouts", async () => {
+    const dir = await createTestTempDir("execution-queue-timeout-");
+    const queue = new ExecutionQueue(1);
+    const firstStart = join(dir, "started-first");
+    const secondStart = join(dir, "started-second");
+    const secondRelease = join(dir, "release-second");
+
+    const firstRun = await startExecutableRun({
+      tool: process.execPath,
+      args: ["-e", waitForReleaseScript(firstStart, join(dir, "release-first"), 0)],
+      timeoutMs: 1_000,
+    }, { executionQueue: queue });
+    await waitForFile(firstStart);
+
+    const secondRun = await startExecutableRun({
+      tool: process.execPath,
+      args: ["-e", waitForReleaseScript(secondStart, secondRelease, 0)],
+    }, { executionQueue: queue });
+
+    const firstResult = await firstRun.result;
+    await waitForFile(secondStart);
+    await writeFile(secondRelease, "");
+    const secondResult = await secondRun.result;
+
+    assert.equal(firstResult.ok, false);
+    assert.equal(firstResult.error?.code, "Timeout");
+    assert.equal(secondResult.ok, true);
+    assert.equal(secondResult.metrics.queueLimit, 1);
+    assert.ok((secondResult.metrics.queueWaitMs ?? 0) > 0);
   });
 
   it("emits redacted xray search metrics for trace analysis", { skip: process.platform !== "win32" }, async () => {
@@ -259,6 +321,41 @@ async function createTestTempDir(prefix: string): Promise<string> {
   const root = atriumTempPath("tests");
   await mkdir(root, { recursive: true });
   return mkdtemp(join(root, prefix));
+}
+
+async function waitForFile(path: string, timeoutMs = 5_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() <= deadline) {
+    try {
+      await access(path);
+      return;
+    } catch {
+      await waitForPollInterval(10);
+    }
+  }
+  assert.fail(`Timed out waiting for ${path}`);
+}
+
+function waitForReleaseScript(startFile: string, releaseFile: string, exitCode: number): string {
+  return [
+    "const { existsSync, writeFileSync } = require('node:fs');",
+    `const startFile = ${JSON.stringify(startFile)};`,
+    `const releaseFile = ${JSON.stringify(releaseFile)};`,
+    `const exitCode = ${String(exitCode)};`,
+    "writeFileSync(startFile, 'started');",
+    "const deadline = Date.now() + 10_000;",
+    "const interval = setInterval(() => {",
+    "  if (existsSync(releaseFile)) {",
+    "    clearInterval(interval);",
+    "    process.exit(exitCode);",
+    "  }",
+    "  if (Date.now() > deadline) {",
+    "    clearInterval(interval);",
+    "    process.stderr.write('release timeout');",
+    "    process.exit(88);",
+    "  }",
+    "}, 10);",
+  ].join("");
 }
 
 async function createNodeCmdShim(prefix: string, lines: string[], shimName = "tool.cmd"): Promise<{ shimFile: string }> {

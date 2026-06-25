@@ -22,6 +22,7 @@ Copilot CLI on Windows often wraps simple CLI calls in PowerShell. That adds pro
 - supports `{ "file": "..." }` input values for UTF-8 file content in `args[]` and `stdin`
 - returns stdout/stderr with a fixed heuristic: empty omitted, 1-8192 bytes inline, larger output as `{ "file": "...", "bytes": n }`
 - trims agent-facing results to the fields needed for routing: `ok`, `tool`, `timingMs`, stdout/stderr, and errors
+- limits one MCP server process to 4 concurrent child executions and reports queue metrics in run results
 - discovers tool schemas by trying `<tool> schema`, then falls back to `<tool> --help`
 - keeps PowerShell available only for real scripting, control flow, pipelines, and interactive commands
 
@@ -112,6 +113,24 @@ Small stdout/stderr up to 8192 bytes is returned inline as a string. Larger outp
 
 `atrium.run` defaults to `executionMode: "auto"`. Auto mode returns the normal result when the command completes inside the safe MCP window. If the command is still running near 45 seconds, Atrium returns a durable `operationId`/`runId`, a `resultPath`, and a `wait` instruction. Call `atrium.wait` with the `operationId`; it waits up to 45 seconds and returns either the terminal snapshot or `status: "continue"` with `mustReissueWait: true` and the same wait instruction so the caller can reissue it safely. Set `follow: true` on `atrium.wait` to keep re-waiting inside one MCP tool call; a single wait call is always clamped to the 45-second request-safe window even with a large `maxTotalWaitMs`, so it returns `status: "continue"` rather than outliving the client request deadline. Explicit `executionMode: "blocking"` still rejects `timeoutMs` values above 60000 with `BlockingTimeoutTooLarge`.
 
+All target executable calls share one in-memory execution queue per Atrium MCP server process, including `atrium.run` and `atrium.schema` discovery probes. The default queue allows multiple concurrent child executions. Additional calls wait for a slot before spawning the child process. Background runs count against the queue until their child process completes, so background work cannot accumulate unbounded child processes. The queue is intentionally per-process, not machine-wide; separate Copilot tabs can still have separate Atrium server processes.
+
+Run metrics include queue fields for dogfooding and tuning:
+
+```json
+{
+  "metrics": {
+    "queueLimit": 4,
+    "queueWaitMs": 0,
+    "queueDepthAtEnqueue": 0,
+    "queueActiveAtEnqueue": 0,
+    "queueActiveAtStart": 1
+  }
+}
+```
+
+The server and runner accept an `executionQueue` option for tests and local rollback. Passing `executionQueue: false` disables the limiter for that server instance.
+
 The local `atrium mcp-run` debug command follows returned handles within the same debug MCP server process until the operation reaches a terminal state or its `--request-timeout-ms` budget expires. Use `atrium mcp-wait` / `atrium mcp-run-status` for handles created by a long-lived MCP server such as Copilot CLI.
 
 For performance checks:
@@ -171,7 +190,7 @@ src/
   cli.ts              # Entry point — Commander.js program
   server.ts           # stdio MCP server entry point
   registry.ts         # Command catalog for schema/docs/skill parity
-  core/               # executable runner, artifacts, schemas, denylist
+  core/               # executable runner, queue, artifacts, schemas, denylist
   mcp/                # MCP result formatting
   commands/           # One file per CLI command
 docs/

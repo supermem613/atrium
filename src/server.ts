@@ -8,6 +8,7 @@ import { z } from "zod";
 import { introspectTool } from "./core/introspect.js";
 import { adoptBackgroundRun, defaultWaitTimeoutMs, getBackgroundRun, startBackgroundRun, waitForBackgroundRun, withLongRunningDefault } from "./core/backgroundRuns.js";
 import { runExecutable, RunExecutableInput, RunExecutableResult, startExecutableRun } from "./core/runner.js";
+import { ExecutionQueue } from "./core/executionQueue.js";
 import { toolTextResult } from "./mcp/format.js";
 
 const defaultMcpRequestTimeoutMs = 60_000;
@@ -39,16 +40,20 @@ export interface AtriumServerOptions {
   autoBackgroundAfterMs?: number;
   waitTimeoutMs?: number;
   requestSafeWaitMs?: number;
+  executionQueue?: ExecutionQueue | false;
 }
 
 export function createAtriumServer(options: AtriumServerOptions = {}): McpServer {
   const autoBackgroundAfterMs = options.autoBackgroundAfterMs ?? defaultAutoBackgroundAfterMs;
   const waitTimeoutMs = options.waitTimeoutMs ?? defaultWaitTimeoutMs;
   const requestSafeWaitMs = options.requestSafeWaitMs ?? defaultWaitTimeoutMs;
+  const executionOptions = {
+    executionQueue: options.executionQueue,
+  };
   const server = new McpServer(
     {
       name: "atrium",
-      version: "1.2.0",
+      version: "1.3.0",
     },
     {
       instructions: atriumInstructions,
@@ -65,7 +70,7 @@ export function createAtriumServer(options: AtriumServerOptions = {}): McpServer
       },
     },
     async ({ tool }) => {
-      return toolTextResult(await introspectTool(tool));
+      return toolTextResult(await introspectTool(tool, executionOptions));
     },
   );
 
@@ -86,11 +91,11 @@ export function createAtriumServer(options: AtriumServerOptions = {}): McpServer
     async (input) => {
       const { executionMode, ...runInput } = input;
       if (shouldStartBackgroundRun(executionMode)) {
-        return toolTextResult(await startBackgroundRun(runInput));
+        return toolTextResult(await startBackgroundRun(runInput, executionOptions));
       }
 
       if (shouldRunAuto(executionMode)) {
-        return toolTextResult(await runAuto(runInput, autoBackgroundAfterMs));
+        return toolTextResult(await runAuto(runInput, autoBackgroundAfterMs, executionOptions));
       }
 
       if (wouldExceedDefaultMcpRequestTimeout(runInput.timeoutMs)) {
@@ -105,7 +110,7 @@ export function createAtriumServer(options: AtriumServerOptions = {}): McpServer
         });
       }
 
-      return toolTextResult(await runExecutable(runInput));
+      return toolTextResult(await runExecutable(runInput, executionOptions));
     },
   );
 
@@ -147,8 +152,9 @@ export function createAtriumServer(options: AtriumServerOptions = {}): McpServer
 async function runAuto(
   input: RunExecutableInput,
   autoBackgroundAfterMs: number,
+  executionOptions: { executionQueue?: ExecutionQueue | false } = {},
 ): Promise<RunExecutableResult | Awaited<ReturnType<typeof adoptBackgroundRun>>> {
-  const running = await startExecutableRun(withLongRunningDefault(input));
+  const running = await startExecutableRun(withLongRunningDefault(input), executionOptions);
   const result = await waitForResultOrTimeout(running.result, autoBackgroundAfterMs);
   if (result !== undefined) {
     return result;

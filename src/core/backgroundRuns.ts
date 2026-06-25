@@ -1,7 +1,7 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
-import { RunExecutableInput, RunExecutableResult, RunningExecutable, startExecutableRun } from "./runner.js";
+import { RunExecutableInput, RunExecutableResult, RunningExecutable, StartExecutableRunOptions, startExecutableRun } from "./runner.js";
 import { atriumTempPath } from "./tempPaths.js";
 
 type BackgroundRunStatus = "running" | "completed" | "failed";
@@ -82,8 +82,8 @@ interface BackgroundRunRecord {
 
 const runs = new Map<string, BackgroundRunRecord>();
 
-export async function startBackgroundRun(input: RunExecutableInput): Promise<BackgroundRunHandle> {
-  const running = await startExecutableRun(withLongRunningDefault(input));
+export async function startBackgroundRun(input: RunExecutableInput, options: StartExecutableRunOptions = {}): Promise<BackgroundRunHandle> {
+  const running = await startExecutableRun(withLongRunningDefault(input), options);
   return adoptBackgroundRun(running);
 }
 

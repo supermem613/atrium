@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { FileRef } from "./artifacts.js";
-import { runExecutable, RunExecutableResult } from "./runner.js";
+import { runExecutable, RunExecutableResult, StartExecutableRunOptions } from "./runner.js";
 
 export interface IntrospectToolResult {
   ok: boolean;
@@ -19,12 +19,12 @@ export interface IntrospectToolResult {
 const introspectionTimeoutMs = 30_000;
 const helpInlineBytes = 4_000;
 
-export async function introspectTool(tool: string): Promise<IntrospectToolResult> {
+export async function introspectTool(tool: string, options: StartExecutableRunOptions = {}): Promise<IntrospectToolResult> {
   const schemaResult = await runExecutable({
     tool,
     args: ["schema"],
     timeoutMs: introspectionTimeoutMs,
-  });
+  }, options);
 
   const schemaText = await readOutputText(schemaResult.stdout);
   if (schemaResult.ok && schemaText !== undefined) {
@@ -45,7 +45,7 @@ export async function introspectTool(tool: string): Promise<IntrospectToolResult
     tool,
     args: ["--help"],
     timeoutMs: introspectionTimeoutMs,
-  });
+  }, options);
 
   const helpText = await readOutputText(helpResult.stdout);
   if (helpResult.ok && helpText !== undefined) {

@@ -4,6 +4,7 @@ import { once } from "node:events";
 import { access, readFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { materializeRunOutput, OutputValue } from "./artifacts.js";
+import { defaultExecutionQueue, ExecutionQueue, ExecutionQueueMetrics } from "./executionQueue.js";
 import { isDeniedShell } from "./shells.js";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 
@@ -29,6 +30,7 @@ export interface RunningExecutable {
 
 export interface StartExecutableRunOptions {
   timeoutMs?: number;
+  executionQueue?: ExecutionQueue | false;
 }
 
 export interface RunExecutableResult {
@@ -57,6 +59,11 @@ export interface RunExecutableMetrics {
   argHash: string;
   argShape: string[];
   cwdHash?: string;
+  queueLimit?: number;
+  queueWaitMs?: number;
+  queueDepthAtEnqueue?: number;
+  queueActiveAtEnqueue?: number;
+  queueActiveAtStart?: number;
   semantic?: RunSemanticMetrics;
 }
 
@@ -102,8 +109,8 @@ interface PreparedSpawn {
   windowsVerbatimArguments?: boolean;
 }
 
-export async function runExecutable(input: RunExecutableInput): Promise<RunExecutableResult> {
-  const running = await startExecutableRun(input);
+export async function runExecutable(input: RunExecutableInput, options: StartExecutableRunOptions = {}): Promise<RunExecutableResult> {
+  const running = await startExecutableRun(input, options);
   return running.result;
 }
 
@@ -135,41 +142,54 @@ export async function startExecutableRun(input: RunExecutableInput, options: Sta
 
   const timeoutMs = options.timeoutMs ?? input.timeoutMs ?? defaultTimeoutMs;
   const result = (async (): Promise<RunExecutableResult> => {
-    let attempt = await spawnOnce(input, input.tool, args, stdin, timeoutMs);
+    const permit = await acquireExecutionPermit(options.executionQueue);
+    try {
+      let attempt = await spawnOnce(input, input.tool, args, stdin, timeoutMs);
 
-    if (attempt.spawnError !== undefined && shouldResolveAfterFailure(input.tool, attempt.spawnError)) {
-      const resolved = await resolveTool(input.tool);
-      if (resolved !== input.tool) {
-        attempt = await spawnOnce(input, resolved, args, stdin, timeoutMs);
+      if (attempt.spawnError !== undefined && shouldResolveAfterFailure(input.tool, attempt.spawnError)) {
+        const resolved = await resolveTool(input.tool);
+        if (resolved !== input.tool) {
+          attempt = await spawnOnce(input, resolved, args, stdin, timeoutMs);
+        }
       }
+
+      if (attempt.spawnError !== undefined) {
+        return failedBeforeSpawn(input, args, stdin, startedAt, "SpawnError", attempt.spawnError.message, permit?.metrics);
+      }
+
+      const stdout = attempt.stdout;
+      const stderr = attempt.stderr;
+      const output = await materializeRunOutput(stdout, stderr, defaultInlineOutputMaxBytes);
+      const timingMs = Date.now() - startedAt;
+
+      return {
+        ok: attempt.exitCode === 0 && !attempt.timedOut,
+        tool: input.tool,
+        timingMs,
+        metrics: buildRunMetrics(input, args, stdin, attempt, timingMs, permit?.metrics),
+        ...output,
+        error: attempt.exitCode === 0 && !attempt.timedOut ? undefined : {
+          code: attempt.timedOut ? "Timeout" : "NonZeroExit",
+          message: attempt.timedOut ? `Process exceeded timeoutMs=${timeoutMs}.` : `Process exited with code ${String(attempt.exitCode)}.`,
+        },
+      };
+    } finally {
+      permit?.release();
     }
-
-    if (attempt.spawnError !== undefined) {
-      return failedBeforeSpawn(input, args, stdin, startedAt, "SpawnError", attempt.spawnError.message);
-    }
-
-    const stdout = attempt.stdout;
-    const stderr = attempt.stderr;
-    const output = await materializeRunOutput(stdout, stderr, defaultInlineOutputMaxBytes);
-    const timingMs = Date.now() - startedAt;
-
-    return {
-      ok: attempt.exitCode === 0 && !attempt.timedOut,
-      tool: input.tool,
-      timingMs,
-      metrics: buildRunMetrics(input, args, stdin, attempt, timingMs),
-      ...output,
-      error: attempt.exitCode === 0 && !attempt.timedOut ? undefined : {
-        code: attempt.timedOut ? "Timeout" : "NonZeroExit",
-        message: attempt.timedOut ? `Process exceeded timeoutMs=${timeoutMs}.` : `Process exited with code ${String(attempt.exitCode)}.`,
-      },
-    };
   })();
 
   return {
     startedAt: startedAtIso,
     result,
   };
+}
+
+async function acquireExecutionPermit(executionQueue: ExecutionQueue | false | undefined): Promise<{ metrics: ExecutionQueueMetrics; release(): void } | undefined> {
+  if (executionQueue === false) {
+    return undefined;
+  }
+
+  return (executionQueue ?? defaultExecutionQueue).acquire();
 }
 
 async function spawnOnce(input: RunExecutableInput, tool: string, args: string[], stdin: string | undefined, timeoutMs: number): Promise<SpawnAttempt> {
@@ -262,7 +282,7 @@ async function readTextFile(file: string, cwd: string | undefined): Promise<stri
   return readFile(resolved, "utf8");
 }
 
-function failedBeforeSpawn(input: RunExecutableInput, args: string[], stdin: string | undefined, startedAt: number, code: string, message: string): RunExecutableResult {
+function failedBeforeSpawn(input: RunExecutableInput, args: string[], stdin: string | undefined, startedAt: number, code: string, message: string, executionQueue?: ExecutionQueueMetrics): RunExecutableResult {
   const timingMs = Date.now() - startedAt;
   return {
     ok: false,
@@ -275,7 +295,7 @@ function failedBeforeSpawn(input: RunExecutableInput, args: string[], stdin: str
       exitCode: null,
       signal: null,
       timedOut: false,
-    }, timingMs),
+    }, timingMs, executionQueue),
     error: {
       code,
       message,
@@ -417,6 +437,7 @@ function buildRunMetrics(
   stdin: string | undefined,
   attempt: SpawnAttempt,
   durationMs: number,
+  executionQueue?: ExecutionQueueMetrics,
 ): RunExecutableMetrics {
   return {
     childTool: normalizeToolName(input.tool),
@@ -431,6 +452,7 @@ function buildRunMetrics(
     argHash: shortHash(JSON.stringify(args)),
     argShape: args.map((arg, index) => shapeArg(args, arg, index)),
     ...(input.cwd ? { cwdHash: shortHash(resolve(input.cwd)) } : {}),
+    ...executionQueue,
     semantic: buildSemanticMetrics(input.tool, args, input.cwd),
   };
 }

@@ -133,12 +133,20 @@ Input shape:
 }
 ```
 
-`run` defaults to `executionMode: "auto"`. Auto mode starts the process once and
-waits inside the safe MCP request window. If the process finishes before the
-handoff threshold, Atrium returns the normal compact result. If the process is
-still running near 45 seconds, Atrium adopts it into the durable background
-operation store and returns an `operationId`/`runId`, `resultPath`, and a `wait`
-instruction.
+`run` defaults to `executionMode: "auto"`. All target executable calls pass
+through one in-memory execution queue before the child process is spawned,
+including `run` and `schema` discovery probes. The default queue allows 4
+concurrent child executions per Atrium MCP server process. Additional calls wait
+in FIFO order for a slot. This limit is intentionally per-process, not
+machine-wide; separate Copilot tabs can still have separate Atrium server
+processes.
+
+Auto mode starts the process once and waits inside the safe MCP request window.
+If the process finishes before the handoff threshold, Atrium returns the normal
+compact result. If the process is still running near 45 seconds, Atrium adopts it
+into the durable background operation store and returns an `operationId`/`runId`,
+`resultPath`, and a `wait` instruction. Background mode also uses the same queue
+and holds its slot until the child process result settles.
 
 Explicit blocking calls are still capped at `timeoutMs <= 60000` because MCP
 clients usually enforce a 60s request deadline. Longer explicit blocking
@@ -183,29 +191,38 @@ Flow:
 
    These are denied because shell-as-tool collapses structured args back into shell command text.
 
-3. Try to spawn the tool directly.
-4. On Windows bare-name `ENOENT`, resolve with `where.exe`.
-5. Cache the resolved path for the server process lifetime.
-6. If the resolved target is an npm `.cmd` shim, try to read the shim and execute the underlying JavaScript entrypoint through `process.execPath`. This avoids the slower and noisier `shell: true` path when possible.
-7. Capture stdout and stderr as buffers.
-8. Materialize each non-empty output stream:
+3. Acquire a slot from the in-memory execution queue unless that server was explicitly constructed with `executionQueue: false`.
+4. Try to spawn the tool directly.
+5. On Windows bare-name `ENOENT`, resolve with `where.exe`.
+6. Cache the resolved path for the server process lifetime.
+7. If the resolved target is an npm `.cmd` shim, try to read the shim and execute the underlying JavaScript entrypoint through `process.execPath`. This avoids the slower and noisier `shell: true` path when possible.
+8. Capture stdout and stderr as buffers.
+9. Release the execution queue slot in a `finally` path after the child process settles.
+10. Materialize each non-empty output stream:
 
    - Omit empty streams.
    - Inline streams up to 8192 bytes.
    - Write larger streams under `%TEMP%\atrium\runs\<uuid>\` and return `{ "file": "...", "bytes": n }`.
 
-9. Return a compact result:
+11. Return a compact result with execution metrics:
 
    ```json
    {
      "ok": true,
      "tool": "xray",
      "timingMs": 781,
+     "metrics": {
+       "queueLimit": 4,
+       "queueWaitMs": 0,
+       "queueDepthAtEnqueue": 0,
+       "queueActiveAtEnqueue": 0,
+       "queueActiveAtStart": 1
+     },
      "stdout": { "file": "...\\stdout.txt", "bytes": 737 }
    }
    ```
 
-Atrium intentionally does not return debug-only fields such as resolved executable path, argv echo, cwd echo, signal, exit code, stdout preview, stderr preview, warnings, or hints by default. Those cost tokens and do not help the agent decide the next step.
+Atrium intentionally does not return debug-only fields such as resolved executable path, argv echo, cwd echo, stdout preview, stderr preview, warnings, or hints by default. Queue metrics are included because they are needed to dogfood and tune the execution limiter.
 
 ## Output and artifact policy
 
@@ -230,6 +247,8 @@ Measured on Marcus's Windows machine:
 
 The important comparison is Atrium MCP vs PowerShell-wrapped. Atrium is effectively direct-spawn speed while avoiding PowerShell startup and quoting overhead.
 
+The execution queue adds no child-process work when fewer than 4 commands are active in the same MCP server process. Under contention, calls wait for a slot and their `metrics.queueWaitMs` / `metrics.queueDepthAtEnqueue` fields show the added latency.
+
 Run the benchmark with:
 
 ```powershell
@@ -242,6 +261,7 @@ npm run benchmark -- --command xray-small --iterations 8 --warmup 2
 | File | Responsibility |
 | --- | --- |
 | `src\server.ts` | MCP server registration for `schema`, `run`, `run-status`, and `wait`. |
+| `src\core\executionQueue.ts` | In-memory max-concurrency limiter for child process starts. |
 | `src\core\introspect.ts` | Implements `<tool> schema` then `<tool> --help` discovery. |
 | `src\core\runner.ts` | Process spawning, shell denylist, Windows resolution, npm shim handling, timeout, stdout/stderr capture. |
 | `src\core\artifacts.ts` | Materializes stdout/stderr as inline strings or `{file, bytes}` values. |
