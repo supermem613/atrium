@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { setTimeout as delay } from "node:timers/promises";
 import { describe, it } from "node:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
@@ -145,4 +146,72 @@ describe("fff MCP tools", () => {
       await serverTransport.close();
     }
   });
+
+  it("returns a durable operation handle when a search primitive is still running near the MCP deadline", async () => {
+    const fakeSupervisor: FffSupervisorLike = {
+      async callTool(): Promise<unknown> {
+        await delay(100);
+        return {
+          content: [
+            {
+              type: "text",
+              text: "src/slow.ts\n",
+            },
+          ],
+        };
+      },
+    };
+    const server = createAtriumServer({
+      fffSupervisor: fakeSupervisor,
+      autoBackgroundAfterMs: 5,
+      waitTimeoutMs: 1_000,
+    });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const client = new Client({ name: "test-client", version: "1.0.0" });
+
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+
+    try {
+      const started = await callJson(client, "find-files", {
+        root: "/tmp/slow",
+        query: "slow",
+      });
+
+      assert.equal(started.ok, true);
+      assert.equal(started.status, "running");
+      assert.equal(started.operationId, started.runId);
+      assert.equal(typeof started.resultPath, "string");
+      assert.deepEqual(started.wait, {
+        tool: "atrium.wait",
+        arguments: { operationId: started.operationId, follow: false },
+        maxWaitMs: 45_000,
+      });
+
+      const completed = await callJson(client, "wait", {
+        operationId: started.operationId,
+        maxWaitMs: 1_000,
+      });
+      assert.equal(completed.status, "completed");
+      assert.deepEqual(completed.result, {
+        kind: "files",
+        matches: [{ path: "src/slow.ts" }],
+        warnings: [],
+      });
+    } finally {
+      await client.close();
+      await serverTransport.close();
+    }
+  });
 });
+
+async function callJson(client: Client, name: string, args: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const response = await client.callTool({ name, arguments: args });
+  assert.ok(Array.isArray(response.content));
+  const firstContent = response.content[0];
+  assert.equal(typeof firstContent, "object");
+  assert.notEqual(firstContent, null);
+  assert.equal("text" in firstContent, true);
+  assert.equal(typeof firstContent.text, "string");
+  return JSON.parse(firstContent.text) as Record<string, unknown>;
+}

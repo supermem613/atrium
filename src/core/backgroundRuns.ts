@@ -1,7 +1,7 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
-import { RunExecutableInput, RunExecutableResult, RunningExecutable, StartExecutableRunOptions, startExecutableRun } from "./runner.js";
+import { RunExecutableInput, RunningExecutable, StartExecutableRunOptions, startExecutableRun } from "./runner.js";
 import { atriumTempPath } from "./tempPaths.js";
 
 type BackgroundRunStatus = "running" | "completed" | "failed";
@@ -27,7 +27,7 @@ export interface BackgroundRunSnapshot {
   resultPath: string;
   startedAt: string;
   completedAt?: string;
-  result?: RunExecutableResult;
+  result?: unknown;
   error?: {
     code: string;
     message: string;
@@ -72,7 +72,7 @@ interface BackgroundRunRecord {
   startedAt: string;
   completedAt?: string;
   status: BackgroundRunStatus;
-  result?: RunExecutableResult;
+  result?: unknown;
   error?: {
     code: string;
     message: string;
@@ -82,12 +82,17 @@ interface BackgroundRunRecord {
 
 const runs = new Map<string, BackgroundRunRecord>();
 
+export interface RunningBackgroundTask {
+  startedAt: string;
+  result: Promise<unknown>;
+}
+
 export async function startBackgroundRun(input: RunExecutableInput, options: StartExecutableRunOptions = {}): Promise<BackgroundRunHandle> {
   const running = await startExecutableRun(withLongRunningDefault(input), options);
   return adoptBackgroundRun(running);
 }
 
-export async function adoptBackgroundRun(running: RunningExecutable): Promise<BackgroundRunHandle> {
+export async function adoptBackgroundRun(running: RunningExecutable | RunningBackgroundTask): Promise<BackgroundRunHandle> {
   const runId = createOperationId();
   const directory = atriumTempPath("background-runs", runId);
   const resultPath = join(directory, "result.json");
@@ -174,7 +179,7 @@ export function withLongRunningDefault(input: RunExecutableInput): RunExecutable
   };
 }
 
-async function executeBackgroundRun(record: BackgroundRunRecord, running: RunningExecutable): Promise<void> {
+async function executeBackgroundRun(record: BackgroundRunRecord, running: RunningExecutable | RunningBackgroundTask): Promise<void> {
   try {
     record.result = await running.result;
     record.status = "completed";

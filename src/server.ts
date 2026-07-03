@@ -201,13 +201,16 @@ export function createAtriumServer(options: AtriumServerOptions = {}): McpServer
           timeoutMs: z.number().int().positive().max(3_600_000).optional().describe("Optional timeout in milliseconds for the request."),
         },
       },
-      async ({ root, query, glob, exclude, max, timeoutMs }: FffToolInput) => toolTextResult(normalizeFffResult(await fffSupervisor.callTool(root, toolSpec.underlyingToolName, {
-        query,
-        ...(glob !== undefined ? { glob } : {}),
-        ...(exclude !== undefined ? { exclude } : {}),
-        ...(max !== undefined ? { max } : {}),
-        ...(timeoutMs !== undefined ? { timeoutMs } : {}),
-      }))),
+      async ({ root, query, glob, exclude, max, timeoutMs }: FffToolInput) => toolTextResult(await runSearchAuto(
+        () => fffSupervisor.callTool(root, toolSpec.underlyingToolName, {
+          query,
+          ...(glob !== undefined ? { glob } : {}),
+          ...(exclude !== undefined ? { exclude } : {}),
+          ...(max !== undefined ? { max } : {}),
+          ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+        }).then(normalizeFffResult),
+        autoBackgroundAfterMs,
+      )),
     );
   }
 
@@ -228,7 +231,21 @@ async function runAuto(
   return adoptBackgroundRun(running);
 }
 
-async function waitForResultOrTimeout(result: Promise<RunExecutableResult>, timeoutMs: number): Promise<RunExecutableResult | undefined> {
+async function runSearchAuto(
+  search: () => Promise<unknown>,
+  autoBackgroundAfterMs: number,
+): Promise<unknown> {
+  const startedAt = new Date().toISOString();
+  const result = search();
+  const completed = await waitForResultOrTimeout(result, autoBackgroundAfterMs);
+  if (completed !== undefined) {
+    return completed;
+  }
+
+  return adoptBackgroundRun({ startedAt, result });
+}
+
+async function waitForResultOrTimeout<T>(result: Promise<T>, timeoutMs: number): Promise<T | undefined> {
   let timeout: NodeJS.Timeout | undefined;
   const timedOut = Symbol("timed-out");
   const winner = await Promise.race([
