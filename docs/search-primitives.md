@@ -83,7 +83,7 @@ Warnings from xray, including truncated and timed-out results, are surfaced in `
 
 ## Long-running contract
 
-Search primitives use the same smart Atrium operation contract as `run`.
+Search primitives use the same single execution behavior as `run`.
 
 If a search finishes inside the safe MCP request window, the tool returns the normal search result directly.
 
@@ -94,20 +94,20 @@ If a search is still running near the handoff threshold, the tool returns a dura
   "ok": true,
   "status": "running",
   "operationId": "atrium-...",
-  "runId": "atrium-...",
   "resultPath": "C:\\Users\\...\\result.json",
-  "wait": {
-    "tool": "atrium.wait",
+  "startedAt": "2026-...Z",
+  "nextCheck": {
+    "tool": "atrium.operation-status",
     "arguments": {
-      "operationId": "atrium-...",
-      "follow": false
+      "operationId": "atrium-..."
     },
-    "maxWaitMs": 45000
-  }
+    "callInMs": 60000
+  },
+  "message": "Still running. Call atrium.operation-status with this operationId in ~60000 ms. Repeat until status is completed or failed."
 }
 ```
 
-Call `atrium.wait` with the returned `operationId` until it returns `status: "completed"` or `status: "failed"`. If `wait` returns `status: "continue"` with `mustReissueWait: true`, call `wait` again with the same `operationId`.
+The `nextCheck` object is prescriptive. Wait `callInMs` milliseconds, then call `atrium.operation-status` with the returned `operationId`, and repeat until it returns `status: "completed"` or `status: "failed"`. The handle exposes no timeout or wait knob, and there is no separate `wait` tool.
 
 Completed search operations put the search result in `result`:
 
@@ -126,5 +126,5 @@ Completed search operations put the search result in `result`:
 }
 ```
 
-Never report search success from a still-running handle. Inspect the terminal `wait` result first.
+Never report search success from a still-running handle. Inspect the terminal `operation-status` result first.
 

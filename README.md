@@ -6,8 +6,7 @@ Atrium is an MCP server for agents. It exposes a small surface:
 
 - `atrium.schema` — discover a tool's invocation shape by asking the tool itself.
 - `atrium.run` — run a named CLI or executable with structured args and JSON results.
-- `atrium.run-status` — inspect a durable background operation by id.
-- `atrium.wait` — wait briefly on a durable operation handle without crossing the MCP request deadline.
+- `atrium.operation-status` — inspect a durable operation by id, handed off by any Atrium tool.
 - `atrium.find-files`, `atrium.grep`, `atrium.multi-grep`, `atrium.grep-code`, `atrium.multi-grep-code` — search files through first-class MCP primitives.
 
 Large stdout/stderr is written to temp files and returned as paths, so agents do not dump command output into the conversation context.
@@ -58,9 +57,8 @@ atrium mcp-config      # MCP config JSON for Copilot CLI
 atrium mcp-server      # stdio MCP server entrypoint
 atrium mcp-schema reflux # debug MCP schema through a local MCP client
 atrium mcp-run node -- --version
-atrium mcp-run node --execution-mode auto -- -e "setTimeout(() => console.log('done'), 90000)"
-atrium mcp-run-status <runId>
-atrium mcp-wait <operationId>
+atrium mcp-run node -- -e "setTimeout(() => console.log('done'), 90000)"
+atrium mcp-operation-status <operationId>
 atrium update          # git pull, install dependencies, and rebuild
 ```
 
@@ -93,9 +91,8 @@ The `mcp-*` commands call Atrium through a real local MCP client, matching the p
 atrium mcp-schema node
 atrium mcp-run node -- --version
 atrium mcp-run node --stdin-file C:\temp\stdin.txt -- -e "process.stdin.pipe(process.stdout)"
-atrium mcp-run node --execution-mode auto -- -e "setTimeout(() => console.log('done'), 90000)"
-atrium mcp-run-status <runId>
-atrium mcp-wait <operationId>
+atrium mcp-run node -- -e "setTimeout(() => console.log('done'), 90000)"
+atrium mcp-operation-status <operationId>
 ```
 
 ## Search MCP tools
@@ -130,7 +127,7 @@ MCP callers can use the same compact file-value contract for inputs and outputs:
 
 Small stdout/stderr up to 8192 bytes is returned inline as a string. Larger output is returned as `{ "file": "...", "bytes": n }`.
 
-`atrium.run` and the search MCP tools default to smart auto mode. Auto mode returns the normal result when the work completes inside the safe MCP window. If the work is still running near 45 seconds, Atrium returns a durable `operationId`/`runId`, a `resultPath`, and a `wait` instruction. Call `atrium.wait` with the `operationId`; it waits up to 45 seconds and returns either the terminal snapshot or `status: "continue"` with `mustReissueWait: true` and the same wait instruction so the caller can reissue it safely. Set `follow: true` on `atrium.wait` to keep re-waiting inside one MCP tool call; a single wait call is always clamped to the 45-second request-safe window even with a large `maxTotalWaitMs`, so it returns `status: "continue"` rather than outliving the client request deadline. Explicit `run` calls with `executionMode: "blocking"` still reject `timeoutMs` values above 60000 with `BlockingTimeoutTooLarge`.
+`atrium.run` and the search MCP tools have one execution behavior. They return the normal result when the work completes inside the safe MCP window. If the work is still running near 45 seconds, Atrium returns a durable `operationId`, a `resultPath`, and a prescriptive `nextCheck` object. `nextCheck` names exactly what to call next: the `atrium.operation-status` tool, with that `operationId`, after a fixed `callInMs` of 60000 milliseconds. Wait that long, then call `atrium.operation-status` with the `operationId`, and repeat until `status` is `completed` or `failed`. There are no timeout or wait knobs on the handle, and there is no separate `wait` tool. The input `timeoutMs` on `run` still bounds the child process and defaults to 3600000; it is not exposed on the returned handle.
 
 All target executable calls share one in-memory execution queue per Atrium MCP server process, including `atrium.run` and `atrium.schema` discovery probes. The default queue allows multiple concurrent child executions. Additional calls wait for a slot before spawning the child process. Background runs count against the queue until their child process completes, so background work cannot accumulate unbounded child processes. The queue is intentionally per-process, not machine-wide; separate Copilot tabs can still have separate Atrium server processes.
 
@@ -150,7 +147,7 @@ Run metrics include queue fields for dogfooding and tuning:
 
 The server and runner accept an `executionQueue` option for tests and local rollback. Passing `executionQueue: false` disables the limiter for that server instance.
 
-The local `atrium mcp-run` debug command follows returned handles within the same debug MCP server process until the operation reaches a terminal state or its `--request-timeout-ms` budget expires. Use `atrium mcp-wait` / `atrium mcp-run-status` for handles created by a long-lived MCP server such as Copilot CLI.
+The local `atrium mcp-run` debug command polls `operation-status` within the same debug MCP server process until the operation reaches a terminal state or its `--request-timeout-ms` budget expires. Use `atrium mcp-operation-status` for handles created by a long-lived MCP server such as Copilot CLI.
 
 For performance checks:
 
