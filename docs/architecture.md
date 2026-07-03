@@ -1,11 +1,12 @@
 # Atrium Architecture
 
-Atrium is a stdio MCP server that gives agents a structured path for single CLI and executable calls. It is not a shell, not a scripting runtime, and not a curated registry of every tool Marcus Markiewicz uses. It exposes four MCP tools:
+Atrium is a stdio MCP server that gives agents a structured path for single CLI and executable calls plus local search primitives. It is not a shell, not a scripting runtime, and not a curated registry of every tool Marcus Markiewicz uses. It exposes these MCP tools:
 
 - `schema` discovers how a target executable wants to be called.
 - `run` executes a target executable with an argument vector and returns a compact JSON result.
 - `run-status` inspects a durable operation handle.
 - `wait` blocks briefly on a durable operation handle and returns `continue` before the MCP request deadline.
+- `find-files`, `grep`, and `multi-grep` search local files through first-class MCP primitives.
 
 PowerShell remains the right tool for ad-hoc scripting, variables, loops, pipelines, and interactive commands. Long-running single executable calls should use Atrium auto/background operation handles.
 
@@ -71,7 +72,7 @@ Flow:
    ```json
    {
      "ok": true,
-     "tool": "xray",
+     "tool": "node",
      "source": "schema",
      "data": { "...": "target tool schema JSON" },
      "stdout": { "file": "...\\stdout.txt", "bytes": 2683 }
@@ -125,8 +126,8 @@ Input shape:
 
 ```json
 {
-  "tool": "xray",
-  "args": ["search", "tdd", "--root", "C:\\Users\\marcusm\\.copilot"],
+  "tool": "node",
+  "args": ["--version"],
   "cwd": "C:\\Users\\marcusm",
   "stdin": { "file": "C:\\temp\\stdin.txt" },
   "timeoutMs": 60000
@@ -209,7 +210,7 @@ Flow:
    ```json
    {
      "ok": true,
-     "tool": "xray",
+     "tool": "node",
      "timingMs": 781,
      "metrics": {
        "queueLimit": 4,
@@ -243,7 +244,6 @@ Measured on Marcus's Windows machine:
 | Command | Direct executable median | PowerShell-wrapped median | Atrium MCP median |
 | --- | ---: | ---: | ---: |
 | `node --version` | 57.0 ms | 339.8 ms | 45.7 ms |
-| `xray search tdd ...` | 602.8 ms | 998.9 ms | 600.4 ms |
 
 The important comparison is Atrium MCP vs PowerShell-wrapped. Atrium is effectively direct-spawn speed while avoiding PowerShell startup and quoting overhead.
 
@@ -253,7 +253,6 @@ Run the benchmark with:
 
 ```powershell
 npm run benchmark -- --command node-version --iterations 15 --warmup 3
-npm run benchmark -- --command xray-small --iterations 8 --warmup 2
 ```
 
 ## Source map

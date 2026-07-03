@@ -105,7 +105,7 @@ export const commandSpecs: CommandSpec[] = [
       documented: true,
       schema: "AtriumMcpSchemaResult",
     },
-    examples: ["mcp-schema xray"],
+    examples: ["mcp-schema node"],
   },
   {
     path: ["mcp-run"],
@@ -150,7 +150,7 @@ export const commandSpecs: CommandSpec[] = [
       documented: true,
       schema: "AtriumRunResultV2",
     },
-    examples: ["mcp-run node -- --version", "mcp-run xray -- search tdd --root C:\\Users\\marcusm\\.copilot --glob skills/**", "mcp-run node --execution-mode auto -- -e \"setTimeout(() => console.log('done'), 90000)\""],
+    examples: ["mcp-run node -- --version", "mcp-run node --execution-mode auto -- -e \"setTimeout(() => console.log('done'), 90000)\""],
   },
   {
     path: ["mcp-run-status"],

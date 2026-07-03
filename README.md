@@ -2,12 +2,13 @@
 
 > Agent-first MCP wrapper for running CLIs and executables with structured JSON results.
 
-Atrium is an MCP server for agents. It exposes a tiny surface:
+Atrium is an MCP server for agents. It exposes a small surface:
 
 - `atrium.schema` — discover a tool's invocation shape by asking the tool itself.
 - `atrium.run` — run a named CLI or executable with structured args and JSON results.
 - `atrium.run-status` — inspect a durable background operation by id.
 - `atrium.wait` — wait briefly on a durable operation handle without crossing the MCP request deadline.
+- `atrium.find-files`, `atrium.grep`, `atrium.multi-grep` — search files through first-class MCP primitives.
 
 Large stdout/stderr is written to temp files and returned as paths, so agents do not dump command output into the conversation context.
 
@@ -18,7 +19,7 @@ Atrium is for **single CLI/executable calls**. It is not a shell replacement and
 Copilot CLI on Windows often wraps simple CLI calls in PowerShell. That adds process startup cost, quoting risk, noisy stdout/stderr, and retry loops. Atrium gives the agent a persistent MCP server that:
 
 - runs the executable directly from structured args
-- resolves Windows npm shims like `xray.cmd` to their underlying Node entrypoint where possible
+- resolves Windows npm shims to their underlying Node entrypoint where possible
 - supports `{ "file": "..." }` input values for UTF-8 file content in `args[]` and `stdin`
 - returns stdout/stderr with a fixed heuristic: empty omitted, 1-8192 bytes inline, larger output as `{ "file": "...", "bytes": n }`
 - trims agent-facing results to the fields needed for routing: `ok`, `tool`, `timingMs`, stdout/stderr, and errors
@@ -31,9 +32,8 @@ Current benchmark signal on Marcus's Windows machine:
 | Command | Direct executable median | PowerShell-wrapped median | Atrium MCP median |
 | --- | ---: | ---: | ---: |
 | `node --version` | 57.0 ms | 339.8 ms | 45.7 ms |
-| `xray search tdd ...` | 602.8 ms | 998.9 ms | 600.4 ms |
 
-Interpretation: persistent Atrium MCP calls are effectively direct-spawn speed and materially faster than wrapping single CLI calls through PowerShell. The `xray` case is the important one: Atrium adds no meaningful overhead once the real command dominates runtime.
+Interpretation: persistent Atrium MCP calls are effectively direct-spawn speed and materially faster than wrapping single CLI calls through PowerShell.
 
 ## Quick start
 
@@ -90,10 +90,9 @@ atrium mcp-config
 The `mcp-*` commands call Atrium through a real local MCP client, matching the path Copilot CLI uses.
 
 ```bash
-atrium mcp-schema reflux
+atrium mcp-schema node
 atrium mcp-run node -- --version
 atrium mcp-run node --stdin-file C:\temp\stdin.txt -- -e "process.stdin.pipe(process.stdout)"
-atrium mcp-run xray -- search tdd --root C:\Users\marcusm\.copilot --glob skills/**
 atrium mcp-run node --execution-mode auto -- -e "setTimeout(() => console.log('done'), 90000)"
 atrium mcp-run-status <runId>
 atrium mcp-wait <operationId>
@@ -115,7 +114,7 @@ Atrium's MCP server exposes `find-files`, `grep`, and `multi-grep` as first-clas
 }
 ```
 
-These are MCP tools, not standalone CLI subcommands. The `atrium schema` command remains the catalog for Atrium's CLI commands.
+These are MCP tools, not standalone CLI subcommands. The `atrium schema` command remains the catalog for Atrium's CLI commands. See [Search primitives](docs/search-primitives.md) for complete request, result, and long-running handle shapes.
 
 MCP callers can use the same compact file-value contract for inputs and outputs:
 
@@ -129,7 +128,7 @@ MCP callers can use the same compact file-value contract for inputs and outputs:
 
 Small stdout/stderr up to 8192 bytes is returned inline as a string. Larger output is returned as `{ "file": "...", "bytes": n }`.
 
-`atrium.run` defaults to `executionMode: "auto"`. Auto mode returns the normal result when the command completes inside the safe MCP window. If the command is still running near 45 seconds, Atrium returns a durable `operationId`/`runId`, a `resultPath`, and a `wait` instruction. Call `atrium.wait` with the `operationId`; it waits up to 45 seconds and returns either the terminal snapshot or `status: "continue"` with `mustReissueWait: true` and the same wait instruction so the caller can reissue it safely. Set `follow: true` on `atrium.wait` to keep re-waiting inside one MCP tool call; a single wait call is always clamped to the 45-second request-safe window even with a large `maxTotalWaitMs`, so it returns `status: "continue"` rather than outliving the client request deadline. Explicit `executionMode: "blocking"` still rejects `timeoutMs` values above 60000 with `BlockingTimeoutTooLarge`.
+`atrium.run` and the search MCP tools default to smart auto mode. Auto mode returns the normal result when the work completes inside the safe MCP window. If the work is still running near 45 seconds, Atrium returns a durable `operationId`/`runId`, a `resultPath`, and a `wait` instruction. Call `atrium.wait` with the `operationId`; it waits up to 45 seconds and returns either the terminal snapshot or `status: "continue"` with `mustReissueWait: true` and the same wait instruction so the caller can reissue it safely. Set `follow: true` on `atrium.wait` to keep re-waiting inside one MCP tool call; a single wait call is always clamped to the 45-second request-safe window even with a large `maxTotalWaitMs`, so it returns `status: "continue"` rather than outliving the client request deadline. Explicit `run` calls with `executionMode: "blocking"` still reject `timeoutMs` values above 60000 with `BlockingTimeoutTooLarge`.
 
 All target executable calls share one in-memory execution queue per Atrium MCP server process, including `atrium.run` and `atrium.schema` discovery probes. The default queue allows multiple concurrent child executions. Additional calls wait for a slot before spawning the child process. Background runs count against the queue until their child process completes, so background work cannot accumulate unbounded child processes. The queue is intentionally per-process, not machine-wide; separate Copilot tabs can still have separate Atrium server processes.
 
@@ -155,7 +154,6 @@ For performance checks:
 
 ```bash
 npm run benchmark -- --command node-version --iterations 15 --warmup 3
-npm run benchmark -- --command xray-small --iterations 8 --warmup 2
 ```
 
 ## Questions and tasks it can handle
