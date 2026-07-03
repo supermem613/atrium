@@ -1,12 +1,12 @@
 # Search primitives
 
-Atrium exposes `find-files`, `grep`, and `multi-grep` as first-class MCP tools for local search. These are the public search surface. Atrium may route them through a resident internal engine, but callers should not call that engine directly.
+Atrium exposes `find-files`, `grep`, `multi-grep`, `grep-code`, and `multi-grep-code` as first-class MCP tools for local search. These are the public search surface. Atrium may route them through a resident internal engine, but callers should not call that engine directly.
 
 These are MCP tools, not standalone CLI subcommands and not entries in `atrium schema`. The `schema` command documents Atrium's CLI commands. MCP clients discover these tools from the MCP tool list.
 
 ## Tool shapes
 
-All three tools share the same input shape:
+All five tools share the same input shape:
 
 ```json
 {
@@ -33,11 +33,13 @@ Optional:
 
 ## Choosing a tool
 
-Use `find-files` when the goal is path discovery, directory listing, or file-name matching.
+| Goal | Preferred tool |
+| --- | --- |
+| Find paths and file names | `find-files` |
+| Broad content search across the filesystem | `grep`, `multi-grep` |
+| Code-oriented implementation investigation | `grep-code`, `multi-grep-code` |
 
-Use `grep` when the goal is content search for one query.
-
-Use `multi-grep` when the goal is multi-pattern content search.
+Prefer `grep-code` and `multi-grep-code` for symbols, APIs, tests, command handlers, error strings, and docs related to code. Use `grep` and `multi-grep` for broad filesystem content or generated/dependency/odd artifacts. There is no `find-code` tool; use `find-files` for path discovery.
 
 ## Result shapes
 
@@ -53,7 +55,7 @@ Use `multi-grep` when the goal is multi-pattern content search.
 }
 ```
 
-`grep` and `multi-grep` return content matches:
+`grep`, `multi-grep`, `grep-code`, and `multi-grep-code` return content matches:
 
 ```json
 {

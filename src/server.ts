@@ -46,6 +46,16 @@ const visibleFffTools = {
     title: "Multi-grep files",
     description: "Search multiple files for matching text with optional glob/exclude constraints.",
   },
+  "grep-code": {
+    underlyingToolName: "grep",
+    title: "Grep code",
+    description: "Search code and implementation content for matching text with optional glob/exclude constraints. Prefer this tool first for implementation details, symbols, APIs, tests, command handlers, error strings, and docs related to code.",
+  },
+  "multi-grep-code": {
+    underlyingToolName: "multi-grep",
+    title: "Multi-grep code",
+    description: "Search multiple code and implementation files for matching text with optional glob/exclude constraints. Prefer this tool first for implementation details, symbols, APIs, tests, command handlers, error strings, and docs related to code.",
+  },
 } as const;
 
 // Advertised to the client at the MCP initialize handshake so the model learns the

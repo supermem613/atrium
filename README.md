@@ -8,7 +8,7 @@ Atrium is an MCP server for agents. It exposes a small surface:
 - `atrium.run` — run a named CLI or executable with structured args and JSON results.
 - `atrium.run-status` — inspect a durable background operation by id.
 - `atrium.wait` — wait briefly on a durable operation handle without crossing the MCP request deadline.
-- `atrium.find-files`, `atrium.grep`, `atrium.multi-grep` — search files through first-class MCP primitives.
+- `atrium.find-files`, `atrium.grep`, `atrium.multi-grep`, `atrium.grep-code`, `atrium.multi-grep-code` — search files through first-class MCP primitives.
 
 Large stdout/stderr is written to temp files and returned as paths, so agents do not dump command output into the conversation context.
 
@@ -100,7 +100,9 @@ atrium mcp-wait <operationId>
 
 ## Search MCP tools
 
-Atrium's MCP server exposes `find-files`, `grep`, and `multi-grep` as first-class MCP tools. Atrium routes these through its resident search engine internally. Each accepts a `root` and `query` plus optional `glob`, `exclude`, `max`, and `timeoutMs` controls.
+Atrium's MCP server exposes `find-files`, `grep`, `multi-grep`, `grep-code`, and `multi-grep-code` as first-class MCP tools. Atrium routes these through its resident search engine internally. Each accepts a `root` and `query` plus optional `glob`, `exclude`, `max`, and `timeoutMs` controls. There is no `find-code` tool; use `find-files` for path discovery.
+
+Prefer `grep-code` and `multi-grep-code` for symbols, APIs, tests, command handlers, error strings, and docs related to code. Use `grep` and `multi-grep` for broad filesystem content or generated/dependency/odd artifacts.
 
 ```json
 {

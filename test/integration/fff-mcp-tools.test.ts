@@ -37,12 +37,13 @@ describe("fff MCP tools", () => {
       const listedTools = await client.listTools();
       const visibleToolNames = listedTools.tools.map((tool) => tool.name);
       assert.deepEqual(
-        visibleToolNames.filter((name) => ["find-files", "grep", "multi-grep"].includes(name)),
-        ["find-files", "grep", "multi-grep"],
+        visibleToolNames.filter((name) => ["find-files", "grep", "multi-grep", "grep-code", "multi-grep-code"].includes(name)),
+        ["find-files", "grep", "multi-grep", "grep-code", "multi-grep-code"],
       );
+      assert.equal(visibleToolNames.includes("find-code"), false);
 
       const expectedSchemaProperties = ["root", "query", "glob", "exclude", "max", "timeoutMs"];
-      for (const toolName of ["find-files", "grep", "multi-grep"] as const) {
+      for (const toolName of ["find-files", "grep", "multi-grep", "grep-code", "multi-grep-code"] as const) {
         const tool = listedTools.tools.find((candidate) => candidate.name === toolName);
         assert.ok(tool, `expected ${toolName} to be listed`);
 
@@ -110,6 +111,40 @@ describe("fff MCP tools", () => {
             exclude: "**/.git/**",
             max: 9,
             timeoutMs: 1500,
+          },
+        },
+        {
+          visibleToolName: "grep-code",
+          underlyingToolName: "grep",
+          expectedResult: {
+            kind: "content",
+            matches: [{ path: "src/one.ts", line: 7, text: "matched text" }],
+            warnings: [],
+          },
+          arguments: {
+            root: "/tmp/four",
+            query: "impl",
+            glob: "**/*.ts",
+            exclude: "**/dist/**",
+            max: 4,
+            timeoutMs: 900,
+          },
+        },
+        {
+          visibleToolName: "multi-grep-code",
+          underlyingToolName: "multi-grep",
+          expectedResult: {
+            kind: "content",
+            matches: [{ path: "src/one.ts", line: 7, text: "matched text" }],
+            warnings: [],
+          },
+          arguments: {
+            root: "/tmp/five",
+            query: "api",
+            glob: "**/*.{ts,js}",
+            exclude: "**/node_modules/**",
+            max: 7,
+            timeoutMs: 1200,
           },
         },
       ] as const;
