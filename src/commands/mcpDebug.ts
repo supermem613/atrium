@@ -3,26 +3,24 @@ import { CallToolResultSchema } from "@modelcontextprotocol/sdk/types.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { setTimeout as delay } from "node:timers/promises";
 
 interface McpRunOptions {
   cwd?: string;
   timeoutMs?: string;
   requestTimeoutMs?: string;
-  executionMode?: string;
   stdin?: string;
   stdinFile?: string;
 }
 
-interface McpWaitOptions {
-  maxWaitMs?: string;
-  maxTotalWaitMs?: string;
-  requestTimeoutMs?: string;
-  follow?: boolean;
-}
+// The debug command polls the instant in-memory operation-status read, so it uses a
+// short interval to observe completion quickly rather than the one-minute nextCheck
+// cadence meant for remote MCP agents. The loop is bounded by requestTimeoutMs.
+const debugPollIntervalMs = 200;
 
 async function withAtriumClient<T>(callback: (client: Client) => Promise<T>): Promise<T> {
   const serverPath = join(dirname(fileURLToPath(import.meta.url)), "..", "server.js");
-  const client = new Client({ name: "atrium-cli-debug", version: "0.5.0" });
+  const client = new Client({ name: "atrium-cli-debug", version: "2.0.0" });
   const transport = new StdioClientTransport({
     command: "node",
     args: [serverPath],
@@ -45,7 +43,6 @@ export async function mcpSchemaCommand(tool: string): Promise<void> {
 export async function mcpRunCommand(tool: string, args: string[] | undefined, options: McpRunOptions): Promise<void> {
   const timeoutMs = parseOptionalNumber(options.timeoutMs, "--timeout-ms");
   const requestTimeoutMs = parseOptionalNumber(options.requestTimeoutMs, "--request-timeout-ms") ?? requestTimeoutForRun(timeoutMs);
-  const executionMode = parseExecutionMode(options.executionMode);
   const response = await withAtriumClient(async (client) => {
     const runResponse = await client.callTool({
       name: "run",
@@ -55,7 +52,6 @@ export async function mcpRunCommand(tool: string, args: string[] | undefined, op
         cwd: options.cwd,
         stdin: options.stdinFile === undefined ? options.stdin : { file: options.stdinFile },
         timeoutMs,
-        executionMode,
       },
     }, CallToolResultSchema, { timeout: requestTimeoutMs });
     const runPayload = readToolPayload(runResponse);
@@ -63,34 +59,18 @@ export async function mcpRunCommand(tool: string, args: string[] | undefined, op
       return runResponse;
     }
 
-    return waitForDebugRun(client, runPayload.operationId, requestTimeoutMs);
+    return pollForDebugOperation(client, runPayload.operationId, requestTimeoutMs);
   });
   writeToolResponse(response);
 }
 
-export async function mcpRunStatusCommand(runId: string): Promise<void> {
+export async function mcpOperationStatusCommand(operationId: string): Promise<void> {
   const response = await withAtriumClient((client) => client.callTool({
-    name: "run-status",
-    arguments: {
-      runId,
-    },
-  }));
-  writeToolResponse(response);
-}
-
-export async function mcpWaitCommand(operationId: string, options: McpWaitOptions): Promise<void> {
-  const maxWaitMs = parseOptionalNumber(options.maxWaitMs, "--max-wait-ms");
-  const maxTotalWaitMs = parseOptionalNumber(options.maxTotalWaitMs, "--max-total-wait-ms");
-  const requestTimeoutMs = parseOptionalNumber(options.requestTimeoutMs, "--request-timeout-ms") ?? requestTimeoutForWait(maxWaitMs, maxTotalWaitMs, options.follow ?? false);
-  const response = await withAtriumClient((client) => client.callTool({
-    name: "wait",
+    name: "operation-status",
     arguments: {
       operationId,
-      maxWaitMs,
-      maxTotalWaitMs,
-      follow: options.follow,
     },
-  }, CallToolResultSchema, { timeout: requestTimeoutMs }));
+  }));
   writeToolResponse(response);
 }
 
@@ -143,51 +123,27 @@ function parseOptionalNumber(value: string | undefined, flag: string): number | 
   return parsed;
 }
 
-function parseExecutionMode(value: string | undefined): "auto" | "blocking" | "background" | undefined {
-  if (value === undefined) {
-    return undefined;
-  }
-
-  if (value === "auto" || value === "blocking" || value === "background") {
-    return value;
-  }
-
-  throw new Error("--execution-mode must be auto, blocking, or background");
-}
-
 function requestTimeoutForRun(timeoutMs: number | undefined): number {
   return timeoutMs === undefined ? 60_000 : timeoutMs + 1_000;
 }
 
-function requestTimeoutForWait(maxWaitMs: number | undefined, maxTotalWaitMs: number | undefined, follow: boolean): number {
-  return (follow ? maxTotalWaitMs ?? maxWaitMs ?? 45_000 : maxWaitMs ?? 45_000) + 5_000;
-}
-
-async function waitForDebugRun(client: Client, operationId: string, requestTimeoutMs: number): ReturnType<Client["callTool"]> {
+async function pollForDebugOperation(client: Client, operationId: string, requestTimeoutMs: number): ReturnType<Client["callTool"]> {
   const deadline = Date.now() + requestTimeoutMs;
-  let waitMs = nextDebugWaitMs(deadline);
-  let response = await client.callTool({
-    name: "wait",
-    arguments: {
-      operationId,
-      maxWaitMs: waitMs,
-    },
-  }, CallToolResultSchema, { timeout: waitMs + 1_000 });
+  let response = await callOperationStatus(client, operationId, requestTimeoutMs);
 
   while (Date.now() < deadline) {
     const payload = readToolPayload(response);
-    if (!isContinuePayload(payload)) {
+    if (!isRunningPayload(payload)) {
       return response;
     }
 
-    waitMs = nextDebugWaitMs(deadline);
-    response = await client.callTool({
-      name: "wait",
-      arguments: {
-        operationId,
-        maxWaitMs: waitMs,
-      },
-    }, CallToolResultSchema, { timeout: waitMs + 1_000 });
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) {
+      break;
+    }
+
+    await delay(Math.min(debugPollIntervalMs, remainingMs));
+    response = await callOperationStatus(client, operationId, requestTimeoutMs);
   }
 
   return textToolResponse({
@@ -196,9 +152,18 @@ async function waitForDebugRun(client: Client, operationId: string, requestTimeo
     operationId,
     error: {
       code: "DebugWaitTimeout",
-      message: `Local mcp-run debug command stopped waiting for operationId=${operationId}. Re-run with --request-timeout-ms if you need a longer debug wait.`,
+      message: `Local mcp-run debug command stopped polling for operationId=${operationId}. Re-run with --request-timeout-ms if you need a longer debug wait.`,
     },
   });
+}
+
+async function callOperationStatus(client: Client, operationId: string, requestTimeoutMs: number): ReturnType<Client["callTool"]> {
+  return client.callTool({
+    name: "operation-status",
+    arguments: {
+      operationId,
+    },
+  }, CallToolResultSchema, { timeout: requestTimeoutMs });
 }
 
 function isRunningPayload(value: unknown): value is { status: "running"; operationId: string } {
@@ -208,19 +173,6 @@ function isRunningPayload(value: unknown): value is { status: "running"; operati
     && value.status === "running"
     && "operationId" in value
     && typeof value.operationId === "string";
-}
-
-function isContinuePayload(value: unknown): value is { status: "continue"; operationId: string } {
-  return typeof value === "object"
-    && value !== null
-    && "status" in value
-    && value.status === "continue"
-    && "operationId" in value
-    && typeof value.operationId === "string";
-}
-
-function nextDebugWaitMs(deadline: number): number {
-  return Math.max(1, Math.min(45_000, deadline - Date.now() - 1_000));
 }
 
 function textToolResponse(value: unknown): Awaited<ReturnType<Client["callTool"]>> {

@@ -1,29 +1,41 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
-import { RunExecutableInput, RunningExecutable, StartExecutableRunOptions, startExecutableRun } from "./runner.js";
+import { RunExecutableInput, RunningExecutable } from "./runner.js";
 import { atriumTempPath } from "./tempPaths.js";
 
 type BackgroundRunStatus = "running" | "completed" | "failed";
 
 export const defaultLongRunningTimeoutMs = 3_600_000;
-export const defaultWaitTimeoutMs = 45_000;
+
+// Fixed recommended delay before the caller checks a durable operation again. The
+// handle is prescriptive on purpose. It never exposes a timeout or wait knob, so it
+// cannot imply a cancel or abort the server does not support. One minute keeps polling
+// well inside the poll-at-most-once-per-minute rule.
+export const defaultNextCheckMs = 60_000;
+
+export interface OperationNextCheck {
+  tool: "atrium.operation-status";
+  arguments: {
+    operationId: string;
+  };
+  callInMs: number;
+}
 
 export interface BackgroundRunHandle {
   ok: true;
   status: "running";
   operationId: string;
-  runId: string;
   resultPath: string;
   startedAt: string;
-  wait: BackgroundRunWaitInstruction;
+  nextCheck: OperationNextCheck;
+  message: string;
 }
 
 export interface BackgroundRunSnapshot {
   ok: boolean;
   status: BackgroundRunStatus;
   operationId: string;
-  runId: string;
   resultPath: string;
   startedAt: string;
   completedAt?: string;
@@ -32,42 +44,12 @@ export interface BackgroundRunSnapshot {
     code: string;
     message: string;
   };
-}
-
-export interface BackgroundRunWaitInstruction {
-  tool: "atrium.wait";
-  arguments: {
-    operationId: string;
-    follow: boolean;
-  };
-  maxWaitMs: number;
-}
-
-export interface BackgroundRunWaitOptions {
-  maxWaitMs?: number;
-  follow?: boolean;
-  maxTotalWaitMs?: number;
-  requestSafeWaitMs?: number;
-}
-
-export type BackgroundRunWaitResult = BackgroundRunSnapshot | BackgroundRunWaitContinue;
-
-export interface BackgroundRunWaitContinue {
-  ok: true;
-  status: "continue";
-  operationId: string;
-  runId: string;
-  resultPath: string;
-  startedAt: string;
-  nextWaitAfterMs: number;
-  mustReissueWait: true;
-  message: string;
-  wait: BackgroundRunWaitInstruction;
+  nextCheck?: OperationNextCheck;
+  message?: string;
 }
 
 interface BackgroundRunRecord {
   operationId: string;
-  runId: string;
   resultPath: string;
   startedAt: string;
   completedAt?: string;
@@ -87,25 +69,19 @@ export interface RunningBackgroundTask {
   result: Promise<unknown>;
 }
 
-export async function startBackgroundRun(input: RunExecutableInput, options: StartExecutableRunOptions = {}): Promise<BackgroundRunHandle> {
-  const running = await startExecutableRun(withLongRunningDefault(input), options);
-  return adoptBackgroundRun(running);
-}
-
 export async function adoptBackgroundRun(running: RunningExecutable | RunningBackgroundTask): Promise<BackgroundRunHandle> {
-  const runId = createOperationId();
-  const directory = atriumTempPath("background-runs", runId);
+  const operationId = createOperationId();
+  const directory = atriumTempPath("background-runs", operationId);
   const resultPath = join(directory, "result.json");
   const record = {
-    operationId: runId,
-    runId,
+    operationId,
     resultPath,
     startedAt: running.startedAt,
     status: "running",
     completion: Promise.resolve(),
   } satisfies BackgroundRunRecord;
   await mkdir(directory, { recursive: true });
-  runs.set(runId, record);
+  runs.set(operationId, record);
   await persistSnapshot(record);
   record.completion = executeBackgroundRun(record, running);
 
@@ -123,53 +99,6 @@ export async function getBackgroundRun(operationId: string): Promise<BackgroundR
   }
 
   return toSnapshot(record);
-}
-
-export async function waitForBackgroundRun(operationId: string, options: BackgroundRunWaitOptions = {}): Promise<BackgroundRunWaitResult> {
-  if (!isSafeOperationId(operationId)) {
-    return unknownRun(operationId, "", "Operation id must be a single safe path segment.");
-  }
-
-  // A single MCP wait call must never block past the request-safe window. The MCP
-  // client enforces a request deadline (about 60s), so a wait that holds the request
-  // longer surfaces to the caller as transport error -32001 instead of a structured
-  // result. follow and maxTotalWaitMs may ask for a longer budget, but the total a
-  // single call can block is clamped to requestSafeWaitMs so the contract holds for
-  // every caller-supplied combination. Callers reissue bounded waits to keep going.
-  const requestSafeWaitMs = Math.min(options.requestSafeWaitMs ?? defaultWaitTimeoutMs, defaultWaitTimeoutMs);
-  const cappedWaitMs = Math.min(options.maxWaitMs ?? requestSafeWaitMs, requestSafeWaitMs);
-  const requestedTotalWaitMs = Math.max(cappedWaitMs, options.maxTotalWaitMs ?? cappedWaitMs);
-  const maxTotalWaitMs = Math.min(requestedTotalWaitMs, requestSafeWaitMs);
-  const deadline = Date.now() + maxTotalWaitMs;
-  let remainingWaitMs = cappedWaitMs;
-  const record = runs.get(operationId);
-  if (record === undefined) {
-    const persisted = await readPersistedSnapshot(operationId);
-    if (persisted.status === "running") {
-      return toContinue(persisted, options.follow ?? false);
-    }
-
-    return persisted;
-  }
-
-  if (record.status !== "running") {
-    return toSnapshot(record);
-  }
-
-  do {
-    await waitForCompletionOrTimeout(record.completion, remainingWaitMs);
-    if (record.status !== "running") {
-      return toSnapshot(record);
-    }
-
-    if (options.follow !== true) {
-      return toContinue(toSnapshot(record), false);
-    }
-
-    remainingWaitMs = Math.min(cappedWaitMs, deadline - Date.now());
-  } while (remainingWaitMs > 0);
-
-  return toContinue(toSnapshot(record), true);
 }
 
 export function withLongRunningDefault(input: RunExecutableInput): RunExecutableInput {
@@ -204,31 +133,40 @@ function toHandle(record: BackgroundRunRecord): BackgroundRunHandle {
     ok: true,
     status: "running",
     operationId: record.operationId,
-    runId: record.runId,
     resultPath: record.resultPath,
     startedAt: record.startedAt,
-    wait: waitInstruction(record.operationId),
+    nextCheck: nextCheck(record.operationId),
+    message: runningMessage(),
   };
 }
 
 function toSnapshot(record: BackgroundRunRecord): BackgroundRunSnapshot {
-  return {
+  const snapshot: BackgroundRunSnapshot = {
     ok: record.status !== "failed",
     status: record.status,
     operationId: record.operationId,
-    runId: record.runId,
     resultPath: record.resultPath,
     startedAt: record.startedAt,
     completedAt: record.completedAt,
     result: record.result,
     error: record.error,
   };
+
+  if (record.status === "running") {
+    return {
+      ...snapshot,
+      nextCheck: nextCheck(record.operationId),
+      message: runningMessage(),
+    };
+  }
+
+  return snapshot;
 }
 
 async function readPersistedSnapshot(operationId: string): Promise<BackgroundRunSnapshot> {
   const resultPath = join(atriumTempPath("background-runs", operationId), "result.json");
   try {
-    const parsed = JSON.parse(await readFile(resultPath, "utf8")) as Partial<BackgroundRunSnapshot>;
+    const parsed = JSON.parse(await readFile(resultPath, "utf8")) as PersistedSnapshot;
     const snapshot = normalizePersistedSnapshot(parsed);
     if (snapshot !== undefined) {
       return snapshot;
@@ -240,71 +178,62 @@ async function readPersistedSnapshot(operationId: string): Promise<BackgroundRun
   }
 }
 
-function normalizePersistedSnapshot(value: Partial<BackgroundRunSnapshot>): BackgroundRunSnapshot | undefined {
+type PersistedSnapshot = Partial<BackgroundRunSnapshot> & { runId?: string };
+
+function normalizePersistedSnapshot(value: PersistedSnapshot): BackgroundRunSnapshot | undefined {
   if (!isPersistedSnapshotLike(value)) {
     return undefined;
   }
 
-  return {
+  // Legacy snapshots persisted only runId before operationId became the single id.
+  const operationId = value.operationId ?? value.runId ?? "";
+  const snapshot: BackgroundRunSnapshot = {
     ok: value.ok ?? value.status !== "failed",
     status: value.status,
-    operationId: value.operationId ?? value.runId,
-    runId: value.runId,
+    operationId,
     resultPath: value.resultPath,
     startedAt: value.startedAt,
     completedAt: value.completedAt,
     result: value.result,
     error: value.error,
   };
+
+  if (value.status === "running") {
+    return {
+      ...snapshot,
+      nextCheck: nextCheck(operationId),
+      message: runningMessage(),
+    };
+  }
+
+  return snapshot;
 }
 
-function isPersistedSnapshotLike(value: Partial<BackgroundRunSnapshot>): value is Omit<BackgroundRunSnapshot, "operationId"> & { operationId?: string } {
+function isPersistedSnapshotLike(value: PersistedSnapshot): value is PersistedSnapshot & {
+  status: BackgroundRunStatus;
+  resultPath: string;
+  startedAt: string;
+} {
   return typeof value === "object"
     && value !== null
     && (value.status === "running" || value.status === "completed" || value.status === "failed")
-    && typeof value.runId === "string"
+    && (typeof value.operationId === "string" || typeof value.runId === "string")
     && typeof value.resultPath === "string"
     && typeof value.startedAt === "string";
 }
 
-function toContinue(snapshot: BackgroundRunSnapshot, follow: boolean): BackgroundRunWaitContinue {
+function nextCheck(operationId: string): OperationNextCheck {
   return {
-    ok: true,
-    status: "continue",
-    operationId: snapshot.operationId,
-    runId: snapshot.runId,
-    resultPath: snapshot.resultPath,
-    startedAt: snapshot.startedAt,
-    nextWaitAfterMs: 0,
-    mustReissueWait: true,
-    message: "Operation is still running. Reissue atrium.wait with this operationId until status is completed or failed.",
-    wait: waitInstruction(snapshot.operationId, follow),
-  };
-}
-
-function waitInstruction(operationId: string, follow = false): BackgroundRunWaitInstruction {
-  return {
-    tool: "atrium.wait",
+    tool: "atrium.operation-status",
     arguments: {
       operationId,
-      follow,
     },
-    maxWaitMs: defaultWaitTimeoutMs,
+    callInMs: defaultNextCheckMs,
   };
 }
 
-async function waitForCompletionOrTimeout(completion: Promise<void>, timeoutMs: number): Promise<void> {
-  let timeout: NodeJS.Timeout | undefined;
-  await Promise.race([
-    completion,
-    new Promise<void>((resolve) => {
-      timeout = setTimeout(resolve, timeoutMs);
-      timeout.unref();
-    }),
-  ]);
-  if (timeout !== undefined) {
-    clearTimeout(timeout);
-  }
+function runningMessage(): string {
+  return `Still running. Call atrium.operation-status with this operationId in ~${defaultNextCheckMs} ms. Repeat until status is completed or failed.`;
 }
 
 function unknownRun(operationId: string, resultPath: string, cause: string): BackgroundRunSnapshot {
@@ -312,7 +241,6 @@ function unknownRun(operationId: string, resultPath: string, cause: string): Bac
     ok: false,
     status: "failed",
     operationId,
-    runId: operationId,
     resultPath,
     startedAt: "",
     error: {

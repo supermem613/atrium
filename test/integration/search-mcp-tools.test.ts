@@ -87,7 +87,7 @@ describe("search MCP tools", () => {
         return { ok: true, command: "files", data: { matches: [{ path: "src/slow.ts" }], summary: { fileCount: 1 } } };
       },
     };
-    const server = createAtriumServer({ searchClient: fakeClient, autoBackgroundAfterMs: 5, waitTimeoutMs: 1_000 });
+    const server = createAtriumServer({ searchClient: fakeClient, backgroundHandoffAfterMs: 5 });
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     const client = new Client({ name: "test-client", version: "1.0.0" });
 
@@ -98,15 +98,16 @@ describe("search MCP tools", () => {
       const started = await callJson(client, "find-files", { root: "/tmp/slow" });
       assert.equal(started.ok, true);
       assert.equal(started.status, "running");
-      assert.equal(started.operationId, started.runId);
+      assert.equal(typeof started.operationId, "string");
       assert.equal(typeof started.resultPath, "string");
-      assert.deepEqual(started.wait, {
-        tool: "atrium.wait",
-        arguments: { operationId: started.operationId, follow: false },
-        maxWaitMs: 45_000,
+      assert.deepEqual(started.nextCheck, {
+        tool: "atrium.operation-status",
+        arguments: { operationId: started.operationId },
+        callInMs: 60_000,
       });
+      assert.equal(typeof started.message, "string");
 
-      const completed = await callJson(client, "wait", { operationId: started.operationId, maxWaitMs: 1_000 });
+      const completed = await pollOperationStatus(client, started.operationId);
       assert.equal(completed.status, "completed");
       assert.deepEqual(completed.result, { kind: "files", matches: [{ path: "src/slow.ts" }], warnings: [] });
     } finally {
@@ -115,6 +116,19 @@ describe("search MCP tools", () => {
     }
   });
 });
+
+async function pollOperationStatus(client: Client, operationId: unknown): Promise<Record<string, unknown>> {
+  assert.equal(typeof operationId, "string");
+  const deadline = Date.now() + 5_000;
+  let snapshot = await callJson(client, "operation-status", { operationId });
+  while (snapshot.status === "running" && Date.now() < deadline) {
+    await delay(10);
+    snapshot = await callJson(client, "operation-status", { operationId });
+  }
+
+  assert.notEqual(snapshot.status, "running");
+  return snapshot;
+}
 
 async function callJson(client: Client, name: string, args: Record<string, unknown>): Promise<Record<string, unknown>> {
   const response = await client.callTool({ name, arguments: args });
