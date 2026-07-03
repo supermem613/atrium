@@ -2,6 +2,7 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
@@ -10,57 +11,55 @@ import { adoptBackgroundRun, defaultWaitTimeoutMs, getBackgroundRun, startBackgr
 import { runExecutable, RunExecutableInput, RunExecutableResult, startExecutableRun } from "./core/runner.js";
 import { ExecutionQueue } from "./core/executionQueue.js";
 import { toolTextResult } from "./mcp/format.js";
-import { normalizeFffResult } from "./core/fff/normalize.js";
-import { createFffSupervisor } from "./core/fff/supervisor.js";
-import type { FffToolCallArguments } from "./core/fff/types.js";
+import { createXrayClient } from "./core/search/xrayClient.js";
+import { normalizeXrayResult } from "./core/search/normalize.js";
+import type { XraySearchClientLike } from "./core/search/types.js";
 
 const defaultMcpRequestTimeoutMs = 60_000;
 const defaultAutoBackgroundAfterMs = 45_000;
 
-export interface FffSupervisorLike {
-  callTool(rootPath: string, toolName: string, input?: FffToolCallArguments): Promise<unknown>;
+const packageVersion = (JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version: string }).version;
+
+interface SearchVerbSpec {
+  command: "search" | "files";
+  all: boolean;
+  regex: boolean;
+  kind: "content" | "files";
+  title: string;
+  description: string;
 }
 
-interface FffToolInput {
-  root: string;
-  query: string;
-  glob?: string;
-  exclude?: string;
-  max?: number;
-  timeoutMs?: number;
-}
-
-const visibleFffTools = {
-  "find-files": {
-    underlyingToolName: "find-files",
-    title: "Find files",
-    description: "Search the filesystem for files matching a query and optional glob/exclude constraints.",
-  },
+const contentVerbs: Record<"grep" | "grep-code" | "multi-grep" | "multi-grep-code", SearchVerbSpec> = {
   "grep": {
-    underlyingToolName: "grep",
+    command: "search", all: true, regex: false, kind: "content",
     title: "Grep files",
-    description: "Search files for matching text with optional glob/exclude constraints.",
-  },
-  "multi-grep": {
-    underlyingToolName: "multi-grep",
-    title: "Multi-grep files",
-    description: "Search multiple files for matching text with optional glob/exclude constraints.",
+    description: "Unrestricted content search across the filesystem, including hidden, gitignored, and vendor files. Use for broad filesystem or generated and dependency content. For code-aware search prefer grep-code.",
   },
   "grep-code": {
-    underlyingToolName: "grep",
+    command: "search", all: false, regex: false, kind: "content",
     title: "Grep code",
-    description: "Search code and implementation content for matching text with optional glob/exclude constraints. Prefer this tool first for implementation details, symbols, APIs, tests, command handlers, error strings, and docs related to code.",
+    description: "Git-aware content search over code that skips hidden, gitignored, and vendor files. Prefer this first for symbols, APIs, tests, command handlers, error strings, and docs related to code.",
+  },
+  "multi-grep": {
+    command: "search", all: true, regex: true, kind: "content",
+    title: "Multi-grep files",
+    description: "Unrestricted multi-pattern content search. Provide a regex alternation such as foo|bar|baz. Includes hidden, gitignored, and vendor files.",
   },
   "multi-grep-code": {
-    underlyingToolName: "multi-grep",
+    command: "search", all: false, regex: true, kind: "content",
     title: "Multi-grep code",
-    description: "Search multiple code and implementation files for matching text with optional glob/exclude constraints. Prefer this tool first for implementation details, symbols, APIs, tests, command handlers, error strings, and docs related to code.",
+    description: "Git-aware multi-pattern content search over code. Provide a regex alternation such as foo|bar|baz. Prefer this first for code-oriented investigation.",
   },
-} as const;
+};
+
+const findFilesVerb: SearchVerbSpec = {
+  command: "files", all: true, regex: false, kind: "files",
+  title: "Find files",
+  description: "List file paths under a root, filtered by glob or type. Path discovery only; it never reads file contents. Includes hidden, gitignored, and vendor files.",
+};
 
 // Advertised to the client at the MCP initialize handshake so the model learns the
 // hard constraints up front instead of discovering them through denied tool calls.
-// Each rule here maps to a denial or contract enforced by the run, wait, and runner code.
 const atriumInstructions = [
   "Atrium runs named CLIs and executables with structured JSON results. It is not a shell.",
   "",
@@ -80,8 +79,9 @@ const atriumInstructions = [
   "- Use the schema tool to discover a CLI invocation shape instead of scraping help through a shell.",
   "",
   "Search primitives:",
-  "- Use find-files to find paths under a root, grep to search file contents under a root, and multi-grep for multi-pattern content search.",
-  "- These are first-class Atrium MCP tools. Atrium routes them through its resident search engine internally. Do not call the engine directly.",
+  "- Content search verbs grep, grep-code, multi-grep, and multi-grep-code run xray search. find-files lists paths with xray files and never reads contents.",
+  "- grep, multi-grep, and find-files are unrestricted and include hidden, gitignored, and vendor files. grep-code and multi-grep-code are git-aware and scoped to code.",
+  "- These are first-class Atrium MCP tools backed by xray. Do not call xray directly for search.",
 ].join("\n");
 
 export interface AtriumServerOptions {
@@ -89,7 +89,7 @@ export interface AtriumServerOptions {
   waitTimeoutMs?: number;
   requestSafeWaitMs?: number;
   executionQueue?: ExecutionQueue | false;
-  fffSupervisor?: FffSupervisorLike;
+  searchClient?: XraySearchClientLike;
 }
 
 export function createAtriumServer(options: AtriumServerOptions = {}): McpServer {
@@ -99,11 +99,11 @@ export function createAtriumServer(options: AtriumServerOptions = {}): McpServer
   const executionOptions = {
     executionQueue: options.executionQueue,
   };
-  const fffSupervisor = options.fffSupervisor ?? createFffSupervisor();
+  const searchClient = options.searchClient ?? createXrayClient();
   const server = new McpServer(
     {
       name: "atrium",
-      version: "1.3.0",
+      version: packageVersion,
     },
     {
       instructions: atriumInstructions,
@@ -196,33 +196,64 @@ export function createAtriumServer(options: AtriumServerOptions = {}): McpServer
     })),
   );
 
-  for (const [toolName, toolSpec] of Object.entries(visibleFffTools)) {
+  for (const [toolName, spec] of Object.entries(contentVerbs)) {
     server.registerTool(
       toolName,
       {
-        title: toolSpec.title,
-        description: toolSpec.description,
+        title: spec.title,
+        description: spec.description,
         inputSchema: {
           root: z.string().min(1).describe("Root path to search from."),
-          query: z.string().min(1).describe("Search query to pass to the underlying fff tool."),
+          query: z.string().min(1).describe("Search query passed to xray."),
           glob: z.string().min(1).optional().describe("Optional glob to constrain the search."),
-          exclude: z.string().min(1).optional().describe("Optional exclude pattern to skip paths."),
-          max: z.number().int().positive().optional().describe("Optional max number of results to return."),
+          exclude: z.string().min(1).optional().describe("Optional exclude pattern applied as a negated glob."),
+          max: z.number().int().positive().optional().describe("Optional maximum number of results to return."),
           timeoutMs: z.number().int().positive().max(3_600_000).optional().describe("Optional timeout in milliseconds for the request."),
         },
       },
-      async ({ root, query, glob, exclude, max, timeoutMs }: FffToolInput) => toolTextResult(await runSearchAuto(
-        () => fffSupervisor.callTool(root, toolSpec.underlyingToolName, {
+      async ({ root, query, glob, exclude, max, timeoutMs }) => toolTextResult(await runSearchAuto(
+        () => searchClient.run({
+          command: spec.command,
+          root,
           query,
+          ...(spec.regex ? { regex: true } : {}),
+          ...(spec.all ? { all: true } : {}),
           ...(glob !== undefined ? { glob } : {}),
           ...(exclude !== undefined ? { exclude } : {}),
           ...(max !== undefined ? { max } : {}),
           ...(timeoutMs !== undefined ? { timeoutMs } : {}),
-        }).then(normalizeFffResult),
+        }).then((envelope) => normalizeXrayResult(envelope, spec.kind)),
         autoBackgroundAfterMs,
       )),
     );
   }
+
+  server.registerTool(
+    "find-files",
+    {
+      title: findFilesVerb.title,
+      description: findFilesVerb.description,
+      inputSchema: {
+        root: z.string().min(1).describe("Root path to list files from."),
+        glob: z.string().min(1).optional().describe("Optional glob to constrain the listing by path or name."),
+        exclude: z.string().min(1).optional().describe("Optional exclude pattern applied as a negated glob."),
+        max: z.number().int().positive().optional().describe("Optional maximum number of files to return."),
+        timeoutMs: z.number().int().positive().max(3_600_000).optional().describe("Optional timeout in milliseconds for the request."),
+      },
+    },
+    async ({ root, glob, exclude, max, timeoutMs }) => toolTextResult(await runSearchAuto(
+      () => searchClient.run({
+        command: "files",
+        root,
+        all: true,
+        ...(glob !== undefined ? { glob } : {}),
+        ...(exclude !== undefined ? { exclude } : {}),
+        ...(max !== undefined ? { max } : {}),
+        ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+      }).then((envelope) => normalizeXrayResult(envelope, "files")),
+      autoBackgroundAfterMs,
+    )),
+  );
 
   return server;
 }

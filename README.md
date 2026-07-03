@@ -45,7 +45,7 @@ npm run build
 npm link    # makes `atrium` available globally
 ```
 
-Requires Node.js 22 or newer.
+Requires Node.js 22 or newer, and the [xray](https://github.com/supermem613/xray) CLI on `PATH` (the search MCP tools shell out to it).
 
 ## Commands
 
@@ -100,9 +100,9 @@ atrium mcp-wait <operationId>
 
 ## Search MCP tools
 
-Atrium's MCP server exposes `find-files`, `grep`, `multi-grep`, `grep-code`, and `multi-grep-code` as first-class MCP tools. Atrium routes these through its resident search engine internally. Each accepts a `root` and `query` plus optional `glob`, `exclude`, `max`, and `timeoutMs` controls. There is no `find-code` tool; use `find-files` for path discovery.
+Atrium's MCP server exposes `find-files`, `grep`, `multi-grep`, `grep-code`, and `multi-grep-code` as first-class MCP tools backed by [xray](https://github.com/supermem613/xray) (bundled ripgrep). The content verbs run `xray search`; `find-files` runs `xray files` and never reads file contents. Content verbs take a `root` and `query` plus optional `glob`, `exclude`, `max`, and `timeoutMs`; `find-files` takes the same shape without `query`, so path discovery is by `glob` rather than content. There is no `find-code` tool; use `find-files` for path discovery.
 
-Prefer `grep-code` and `multi-grep-code` for symbols, APIs, tests, command handlers, error strings, and docs related to code. Use `grep` and `multi-grep` for broad filesystem content or generated/dependency/odd artifacts.
+`grep`, `multi-grep`, and `find-files` are unrestricted: they include hidden, gitignored, and vendor files such as `node_modules`. `grep-code` and `multi-grep-code` are git-aware and skip hidden, gitignored, and vendor files. Prefer `grep-code` and `multi-grep-code` for symbols, APIs, tests, command handlers, error strings, and docs related to code. Use `grep` and `multi-grep` for broad filesystem content or generated and dependency artifacts.
 
 ```json
 {
