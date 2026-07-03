@@ -99,6 +99,24 @@ atrium mcp-run-status <runId>
 atrium mcp-wait <operationId>
 ```
 
+## Search MCP tools
+
+Atrium's MCP server exposes `find-files`, `grep`, and `multi-grep` as first-class MCP tools. Atrium routes these through its resident search engine internally. Each accepts a `root` and `query` plus optional `glob`, `exclude`, `max`, and `timeoutMs` controls.
+
+```json
+{
+  "name": "grep",
+  "arguments": {
+    "root": "C:\\repo",
+    "query": "TODO",
+    "glob": "**/*.{ts,md}",
+    "max": 20
+  }
+}
+```
+
+These are MCP tools, not standalone CLI subcommands. The `atrium schema` command remains the catalog for Atrium's CLI commands.
+
 MCP callers can use the same compact file-value contract for inputs and outputs:
 
 ```json

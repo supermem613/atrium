@@ -10,9 +10,43 @@ import { adoptBackgroundRun, defaultWaitTimeoutMs, getBackgroundRun, startBackgr
 import { runExecutable, RunExecutableInput, RunExecutableResult, startExecutableRun } from "./core/runner.js";
 import { ExecutionQueue } from "./core/executionQueue.js";
 import { toolTextResult } from "./mcp/format.js";
+import { normalizeFffResult } from "./core/fff/normalize.js";
+import { createFffSupervisor } from "./core/fff/supervisor.js";
+import type { FffToolCallArguments } from "./core/fff/types.js";
 
 const defaultMcpRequestTimeoutMs = 60_000;
 const defaultAutoBackgroundAfterMs = 45_000;
+
+export interface FffSupervisorLike {
+  callTool(rootPath: string, toolName: string, input?: FffToolCallArguments): Promise<unknown>;
+}
+
+interface FffToolInput {
+  root: string;
+  query: string;
+  glob?: string;
+  exclude?: string;
+  max?: number;
+  timeoutMs?: number;
+}
+
+const visibleFffTools = {
+  "find-files": {
+    underlyingToolName: "find-files",
+    title: "Find files",
+    description: "Search the filesystem for files matching a query and optional glob/exclude constraints.",
+  },
+  "grep": {
+    underlyingToolName: "grep",
+    title: "Grep files",
+    description: "Search files for matching text with optional glob/exclude constraints.",
+  },
+  "multi-grep": {
+    underlyingToolName: "multi-grep",
+    title: "Multi-grep files",
+    description: "Search multiple files for matching text with optional glob/exclude constraints.",
+  },
+} as const;
 
 // Advertised to the client at the MCP initialize handshake so the model learns the
 // hard constraints up front instead of discovering them through denied tool calls.
@@ -34,6 +68,10 @@ const atriumInstructions = [
   "- A plain string argument or stdin is used literally.",
   "- An object {file: path} is replaced with the UTF-8 contents of that file.",
   "- Use the schema tool to discover a CLI invocation shape instead of scraping help through a shell.",
+  "",
+  "Search primitives:",
+  "- Use find-files to find paths under a root, grep to search file contents under a root, and multi-grep for multi-pattern content search.",
+  "- These are first-class Atrium MCP tools. Atrium routes them through its resident search engine internally. Do not call the engine directly.",
 ].join("\n");
 
 export interface AtriumServerOptions {
@@ -41,6 +79,7 @@ export interface AtriumServerOptions {
   waitTimeoutMs?: number;
   requestSafeWaitMs?: number;
   executionQueue?: ExecutionQueue | false;
+  fffSupervisor?: FffSupervisorLike;
 }
 
 export function createAtriumServer(options: AtriumServerOptions = {}): McpServer {
@@ -50,6 +89,7 @@ export function createAtriumServer(options: AtriumServerOptions = {}): McpServer
   const executionOptions = {
     executionQueue: options.executionQueue,
   };
+  const fffSupervisor = options.fffSupervisor ?? createFffSupervisor();
   const server = new McpServer(
     {
       name: "atrium",
@@ -145,6 +185,31 @@ export function createAtriumServer(options: AtriumServerOptions = {}): McpServer
       requestSafeWaitMs,
     })),
   );
+
+  for (const [toolName, toolSpec] of Object.entries(visibleFffTools)) {
+    server.registerTool(
+      toolName,
+      {
+        title: toolSpec.title,
+        description: toolSpec.description,
+        inputSchema: {
+          root: z.string().min(1).describe("Root path to search from."),
+          query: z.string().min(1).describe("Search query to pass to the underlying fff tool."),
+          glob: z.string().min(1).optional().describe("Optional glob to constrain the search."),
+          exclude: z.string().min(1).optional().describe("Optional exclude pattern to skip paths."),
+          max: z.number().int().positive().optional().describe("Optional max number of results to return."),
+          timeoutMs: z.number().int().positive().max(3_600_000).optional().describe("Optional timeout in milliseconds for the request."),
+        },
+      },
+      async ({ root, query, glob, exclude, max, timeoutMs }: FffToolInput) => toolTextResult(normalizeFffResult(await fffSupervisor.callTool(root, toolSpec.underlyingToolName, {
+        query,
+        ...(glob !== undefined ? { glob } : {}),
+        ...(exclude !== undefined ? { exclude } : {}),
+        ...(max !== undefined ? { max } : {}),
+        ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+      }))),
+    );
+  }
 
   return server;
 }

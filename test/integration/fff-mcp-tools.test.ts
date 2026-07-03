@@ -1,0 +1,148 @@
+import assert from "node:assert/strict";
+import { describe, it } from "node:test";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { createAtriumServer, type FffSupervisorLike } from "../../src/server.js";
+
+class FakeFffSupervisor implements FffSupervisorLike {
+  public calls: Array<{ rootPath: string; toolName: string; input: Record<string, unknown> | undefined }> = [];
+
+  async callTool(rootPath: string, toolName: string, input?: Record<string, unknown>): Promise<unknown> {
+    this.calls.push({ rootPath, toolName, input });
+    return {
+      content: [
+        {
+          type: "text",
+          text: toolName === "find-files"
+            ? "src/one.ts\nsrc/two.ts\n"
+            : "src/one.ts:7:matched text\n",
+        },
+      ],
+    };
+  }
+}
+
+describe("fff MCP tools", () => {
+  it("exposes search primitives with stable schemas and routes calls through the injected supervisor", async () => {
+    const fakeSupervisor = new FakeFffSupervisor();
+    const server = createAtriumServer({ fffSupervisor: fakeSupervisor });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const client = new Client({ name: "test-client", version: "1.0.0" });
+
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+
+    try {
+      const listedTools = await client.listTools();
+      const visibleToolNames = listedTools.tools.map((tool) => tool.name);
+      assert.deepEqual(
+        visibleToolNames.filter((name) => ["find-files", "grep", "multi-grep"].includes(name)),
+        ["find-files", "grep", "multi-grep"],
+      );
+
+      const expectedSchemaProperties = ["root", "query", "glob", "exclude", "max", "timeoutMs"];
+      for (const toolName of ["find-files", "grep", "multi-grep"] as const) {
+        const tool = listedTools.tools.find((candidate) => candidate.name === toolName);
+        assert.ok(tool, `expected ${toolName} to be listed`);
+
+        const inputSchema = tool.inputSchema as Record<string, unknown>;
+        assert.ok(inputSchema, `${toolName} should expose an input schema`);
+        const properties = inputSchema.properties as Record<string, unknown> | undefined;
+        assert.ok(properties, `${toolName} should expose JSON-schema properties`);
+        for (const propertyName of expectedSchemaProperties) {
+          assert.ok(properties?.[propertyName], `${toolName} should define ${propertyName}`);
+        }
+
+        const required = inputSchema.required as string[] | undefined;
+        assert.ok(required, `${toolName} should list required fields`);
+        assert.ok(required.includes("root"), `${toolName} should require root`);
+        assert.ok(required.includes("query"), `${toolName} should require query`);
+      }
+
+      const expectedCalls = [
+        {
+          visibleToolName: "find-files",
+          underlyingToolName: "find-files",
+          expectedResult: {
+            kind: "files",
+            matches: [{ path: "src/one.ts" }, { path: "src/two.ts" }],
+            warnings: [],
+          },
+          arguments: {
+            root: "/tmp/one",
+            query: "needle",
+            glob: "**/*.ts",
+            exclude: "**/dist/**",
+            max: 5,
+            timeoutMs: 250,
+          },
+        },
+        {
+          visibleToolName: "grep",
+          underlyingToolName: "grep",
+          expectedResult: {
+            kind: "content",
+            matches: [{ path: "src/one.ts", line: 7, text: "matched text" }],
+            warnings: [],
+          },
+          arguments: {
+            root: "/tmp/two",
+            query: "pattern",
+            glob: "**/*.{js,ts}",
+            exclude: "**/node_modules/**",
+            max: 3,
+            timeoutMs: 600,
+          },
+        },
+        {
+          visibleToolName: "multi-grep",
+          underlyingToolName: "multi-grep",
+          expectedResult: {
+            kind: "content",
+            matches: [{ path: "src/one.ts", line: 7, text: "matched text" }],
+            warnings: [],
+          },
+          arguments: {
+            root: "/tmp/three",
+            query: "value",
+            glob: "**/*.md",
+            exclude: "**/.git/**",
+            max: 9,
+            timeoutMs: 1500,
+          },
+        },
+      ] as const;
+
+      for (const expectedCall of expectedCalls) {
+        const result = await client.callTool({
+          name: expectedCall.visibleToolName,
+          arguments: expectedCall.arguments,
+        });
+        assert.ok(Array.isArray(result.content), `${expectedCall.visibleToolName} should return content array`);
+        assert.ok(result.content[0], `${expectedCall.visibleToolName} should return content`);
+        const firstContent = result.content[0];
+        assert.equal(typeof firstContent, "object");
+        assert.notEqual(firstContent, null);
+        assert.equal("text" in firstContent, true);
+        assert.equal(typeof firstContent.text, "string");
+        const parsed = JSON.parse(firstContent.text);
+        assert.deepEqual(parsed, expectedCall.expectedResult);
+
+        assert.deepEqual(fakeSupervisor.calls.at(-1), {
+          rootPath: expectedCall.arguments.root,
+          toolName: expectedCall.underlyingToolName,
+          input: {
+            query: expectedCall.arguments.query,
+            glob: expectedCall.arguments.glob,
+            exclude: expectedCall.arguments.exclude,
+            max: expectedCall.arguments.max,
+            timeoutMs: expectedCall.arguments.timeoutMs,
+          },
+        });
+      }
+    } finally {
+      await client.close();
+      await serverTransport.close();
+    }
+  });
+});
