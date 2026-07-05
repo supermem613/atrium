@@ -5,7 +5,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { doctorCommand } from "./commands/doctor.js";
-import { mcpRunCommand, mcpRunStatusCommand, mcpSchemaCommand, mcpWaitCommand } from "./commands/mcpDebug.js";
+import { mcpOperationStatusCommand, mcpRunCommand, mcpSchemaCommand } from "./commands/mcpDebug.js";
 import { mcpConfigCommand } from "./commands/mcpConfig.js";
 import { schemaCommand } from "./commands/schema.js";
 import { startAtriumServer } from "./server.js";
@@ -55,24 +55,14 @@ program
   .option("--cwd <path>", "Working directory for the command")
   .option("--stdin <text>", "stdin content to pass to the command")
   .option("--stdin-file <path>", "Read stdin content from a UTF-8 file")
-  .option("--timeout-ms <ms>", "Execution timeout in milliseconds. Auto/background default to 3600000; explicit blocking supports up to 60000")
+  .option("--timeout-ms <ms>", "Execution timeout in milliseconds that bounds the child process. Defaults to 3600000")
   .option("--request-timeout-ms <ms>", "MCP client request timeout in milliseconds. Debug command only")
-  .option("--execution-mode <mode>", "Run execution mode: auto, blocking, or background")
   .action(mcpRunCommand);
 
 program
-  .command("mcp-run-status <runId>")
-  .description("Inspect a background run created by the MCP run tool")
-  .action(mcpRunStatusCommand);
-
-program
-  .command("mcp-wait <operationId>")
-  .description("Wait briefly for a background run created by the MCP run tool")
-  .option("--max-wait-ms <ms>", "Maximum bounded wait in milliseconds, capped by the MCP wait tool")
-  .option("--follow", "Keep re-waiting until the operation finishes or --max-total-wait-ms is reached")
-  .option("--max-total-wait-ms <ms>", "Total follow budget in milliseconds")
-  .option("--request-timeout-ms <ms>", "MCP client request timeout in milliseconds. Debug command only")
-  .action(mcpWaitCommand);
+  .command("mcp-operation-status <operationId>")
+  .description("Check a durable operation created by any Atrium MCP tool")
+  .action(mcpOperationStatusCommand);
 
 program
   .command("update")

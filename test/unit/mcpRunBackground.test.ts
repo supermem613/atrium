@@ -9,205 +9,91 @@ import { AtriumServerOptions, createAtriumServer } from "../../src/server.js";
 import { atriumTempPath } from "../../src/core/tempPaths.js";
 import { getBackgroundRun } from "../../src/core/backgroundRuns.js";
 
-describe("MCP run background mode", () => {
-  it("returns a background handle when explicitly requested", async () => {
+describe("MCP run handoff", () => {
+  it("hands off a durable operation with a prescriptive nextCheck when the command is still running past the handoff window", async () => {
     await withInMemoryClient(async (client) => {
       const started = await callJson(client, "run", {
         tool: process.execPath,
-        args: ["-e", "process.stdout.write('async-ok')"],
-        executionMode: "background",
+        args: ["-e", "setTimeout(() => process.stdout.write('handoff-ok'), 100)"],
       });
 
       assert.equal(started.ok, true);
       assert.equal(started.status, "running");
-      assert.equal(started.operationId, started.runId);
-      assert.equal(typeof started.runId, "string");
-      assert.equal(typeof started.resultPath, "string");
-      assertRecord(started.wait);
+      assertString(started.operationId);
       assertString(started.resultPath);
       assert.equal(started.resultPath.startsWith(atriumTempPath("background-runs")), true);
+      assert.deepEqual(started.nextCheck, {
+        tool: "atrium.operation-status",
+        arguments: { operationId: started.operationId },
+        callInMs: 60_000,
+      });
+      assertString(started.message);
 
-      const runId = started.runId;
-      assertString(runId);
-      const completed = await waitForCompletion(client, runId);
+      const completed = await pollOperationStatus(client, started.operationId);
       const result = completed.result;
       assertRecord(result);
       assert.equal(completed.status, "completed");
       assert.equal(result.ok, true);
-      assert.equal(result.stdout, "async-ok");
-    });
+      assert.equal(result.stdout, "handoff-ok");
+    }, { backgroundHandoffAfterMs: 5 });
   });
 
-  it("returns a blocking-compatible result by default when the command finishes inside the auto window", async () => {
+  it("returns the result inline when the command finishes inside the handoff window", async () => {
     await withInMemoryClient(async (client) => {
       const result = await callJson(client, "run", {
         tool: process.execPath,
-        args: ["-e", "process.stdout.write('blocking-ok')"],
+        args: ["-e", "process.stdout.write('inline-ok')"],
       });
 
       assert.equal(result.ok, true);
-      assert.equal(result.stdout, "blocking-ok");
-      assert.equal(result.runId, undefined);
+      assert.equal(result.stdout, "inline-ok");
+      assert.equal(result.operationId, undefined);
+      assert.equal(result.nextCheck, undefined);
     });
   });
 
-  it("keeps an explicit blocking mode for callers that set it", async () => {
+  it("accepts a timeoutMs above the old blocking cap and returns a normal result", async () => {
     await withInMemoryClient(async (client) => {
       const result = await callJson(client, "run", {
         tool: process.execPath,
-        args: ["-e", "process.stdout.write('explicit-blocking-ok')"],
-        executionMode: "blocking",
-      });
-
-      assert.equal(result.ok, true);
-      assert.equal(result.stdout, "explicit-blocking-ok");
-      assert.equal(result.runId, undefined);
-    });
-  });
-
-  it("fails fast for blocking timeouts that exceed the default MCP request deadline", async () => {
-    await withInMemoryClient(async (client) => {
-      const result = await callJson(client, "run", {
-        tool: process.execPath,
-        args: ["-e", "setTimeout(() => process.stdout.write('late'), 10)"],
+        args: ["-e", "process.stdout.write('big-timeout-ok')"],
         timeoutMs: 60_001,
-        executionMode: "blocking",
       });
 
-      assert.equal(result.ok, false);
-      assert.equal(result.runId, undefined);
-      assertRecord(result.error);
-      assert.equal(result.error.code, "BlockingTimeoutTooLarge");
+      assert.equal(result.ok, true);
+      assert.equal(result.stdout, "big-timeout-ok");
+      assert.equal(result.operationId, undefined);
     });
   });
 
-  it("allows long timeouts when callers explicitly use background mode", async () => {
+  it("operation-status returns the prescriptive handle while the operation is still running", async () => {
     await withInMemoryClient(async (client) => {
       const started = await callJson(client, "run", {
         tool: process.execPath,
-        args: ["-e", "process.stdout.write('long-background-ok')"],
-        timeoutMs: 60_001,
-        executionMode: "background",
+        args: ["-e", "setTimeout(() => process.stdout.write('still-running-ok'), 150)"],
       });
-
-      assert.equal(started.ok, true);
-      assert.equal(started.status, "running");
-      assertString(started.runId);
-      const completed = await waitForCompletion(client, started.runId);
-      const result = completed.result;
-      assertRecord(result);
-      assert.equal(result.ok, true);
-      assert.equal(result.stdout, "long-background-ok");
-    });
-  });
-
-  it("auto mode returns a durable operation handle when the command is still running near the MCP deadline", async () => {
-    await withInMemoryClient(async (client) => {
-      const started = await callJson(client, "run", {
-        tool: process.execPath,
-        args: ["-e", "setTimeout(() => process.stdout.write('auto-background-ok'), 100)"],
-      });
-
-      assert.equal(started.ok, true);
-      assert.equal(started.status, "running");
-      assert.equal(started.operationId, started.runId);
       assertString(started.operationId);
-      assertRecord(started.wait);
-      assert.deepEqual(started.wait.arguments, { operationId: started.operationId, follow: false });
 
-      const completed = await callJson(client, "wait", {
-        operationId: started.operationId,
-        maxWaitMs: 1_000,
+      const status = await callJson(client, "operation-status", { operationId: started.operationId });
+      assert.equal(status.ok, true);
+      assert.equal(status.status, "running");
+      assert.equal(status.operationId, started.operationId);
+      assert.deepEqual(status.nextCheck, {
+        tool: "atrium.operation-status",
+        arguments: { operationId: started.operationId },
+        callInMs: 60_000,
       });
+      assertString(status.message);
+
+      const completed = await pollOperationStatus(client, started.operationId);
       const result = completed.result;
       assertRecord(result);
       assert.equal(completed.status, "completed");
-      assert.equal(result.ok, true);
-      assert.equal(result.stdout, "auto-background-ok");
-    }, { autoBackgroundAfterMs: 5, waitTimeoutMs: 1_000 });
+      assert.equal(result.stdout, "still-running-ok");
+    }, { backgroundHandoffAfterMs: 5 });
   });
 
-  it("wait returns continue when the operation is still running after the bounded wait", async () => {
-    await withInMemoryClient(async (client) => {
-      const started = await callJson(client, "run", {
-        tool: process.execPath,
-        args: ["-e", "setTimeout(() => process.stdout.write('wait-later-ok'), 150)"],
-      });
-      assertString(started.operationId);
-
-      const pending = await callJson(client, "wait", {
-        operationId: started.operationId,
-        maxWaitMs: 1,
-      });
-      assert.equal(pending.ok, true);
-      assert.equal(pending.status, "continue");
-      assert.equal(pending.operationId, started.operationId);
-      assert.equal(pending.mustReissueWait, true);
-      assertString(pending.message);
-      assertRecord(pending.wait);
-      assert.deepEqual(pending.wait.arguments, { operationId: started.operationId, follow: false });
-
-      const completed = await callJson(client, "wait", {
-        operationId: started.operationId,
-        maxWaitMs: 1_000,
-      });
-      const result = completed.result;
-      assertRecord(result);
-      assert.equal(completed.status, "completed");
-      assert.equal(result.stdout, "wait-later-ok");
-    }, { autoBackgroundAfterMs: 5, waitTimeoutMs: 1_000 });
-  });
-
-  it("wait follow mode keeps re-waiting until the operation completes", async () => {
-    await withInMemoryClient(async (client) => {
-      const started = await callJson(client, "run", {
-        tool: process.execPath,
-        args: ["-e", "setTimeout(() => process.stdout.write('follow-ok'), 100)"],
-      });
-      assertString(started.operationId);
-
-      const completed = await callJson(client, "wait", {
-        operationId: started.operationId,
-        maxWaitMs: 10,
-        maxTotalWaitMs: 1_000,
-        follow: true,
-      });
-      const result = completed.result;
-      assertRecord(result);
-      assert.equal(completed.status, "completed");
-      assert.equal(result.stdout, "follow-ok");
-    }, { autoBackgroundAfterMs: 5, waitTimeoutMs: 10 });
-  });
-
-  it("wait stays inside the request-safe window even when follow uses a large maxTotalWaitMs", async () => {
-    await withInMemoryClient(async (client) => {
-      const started = await callJson(client, "run", {
-        tool: process.execPath,
-        args: ["-e", "setTimeout(() => process.stdout.write('slow-follow-ok'), 1_500)"],
-      });
-      assertString(started.operationId);
-
-      const startedAt = Date.now();
-      const pending = await callJson(client, "wait", {
-        operationId: started.operationId,
-        maxWaitMs: 60,
-        maxTotalWaitMs: 600_000,
-        follow: true,
-      });
-      const elapsedMs = Date.now() - startedAt;
-
-      assert.equal(pending.ok, true);
-      assert.equal(pending.status, "continue");
-      assert.equal(pending.mustReissueWait, true);
-      assert.equal(
-        elapsedMs < 1_000,
-        true,
-        `single MCP wait blocked ${elapsedMs}ms, past the request-safe window`,
-      );
-    }, { autoBackgroundAfterMs: 5, waitTimeoutMs: 60, requestSafeWaitMs: 60 });
-  });
-
-  it("run-status recovers a persisted operation snapshot when the run is not in memory", async () => {
+  it("operation-status recovers a persisted operation snapshot when the run is not in memory", async () => {
     const operationId = "atrium-test-persisted-operation";
     const directory = atriumTempPath("background-runs", operationId);
     const resultPath = join(directory, "result.json");
@@ -216,7 +102,6 @@ describe("MCP run background mode", () => {
       ok: true,
       status: "completed",
       operationId,
-      runId: operationId,
       resultPath,
       startedAt: "2026-01-01T00:00:00.000Z",
       completedAt: "2026-01-01T00:00:01.000Z",
@@ -249,7 +134,7 @@ describe("MCP run background mode", () => {
     assert.equal(snapshot.result.stdout, "ok");
   });
 
-  it("run-status recovers legacy persisted snapshots that only contain runId", async () => {
+  it("operation-status recovers legacy persisted snapshots that only contain runId", async () => {
     const runId = "atrium-test-legacy-run";
     const directory = atriumTempPath("background-runs", runId);
     const resultPath = join(directory, "result.json");
@@ -265,8 +150,8 @@ describe("MCP run background mode", () => {
 
     const snapshot = await getBackgroundRun(runId);
     assert.equal(snapshot.ok, true);
+    assert.equal(snapshot.status, "completed");
     assert.equal(snapshot.operationId, runId);
-    assert.equal(snapshot.runId, runId);
   });
 
   it("rejects operation ids that are not safe path segments", async () => {
@@ -319,12 +204,13 @@ function assertString(value: unknown): asserts value is string {
   assert.equal(typeof value, "string");
 }
 
-async function waitForCompletion(client: Client, runId: string): Promise<Record<string, unknown>> {
+async function pollOperationStatus(client: Client, operationId: unknown): Promise<Record<string, unknown>> {
+  assertString(operationId);
   const deadline = Date.now() + 5_000;
-  let snapshot = await callJson(client, "run-status", { runId });
+  let snapshot = await callJson(client, "operation-status", { operationId });
   while (snapshot.status === "running" && Date.now() < deadline) {
     await setImmediate();
-    snapshot = await callJson(client, "run-status", { runId });
+    snapshot = await callJson(client, "operation-status", { operationId });
   }
 
   assert.notEqual(snapshot.status, "running");

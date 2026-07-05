@@ -22,9 +22,10 @@ describe("MCP initialize instructions", () => {
 
       const text = instructions as string;
       assert.match(text, /Shells are denied/);
-      assert.match(text, /BlockingTimeoutTooLarge/);
+      assert.match(text, /one execution behavior/);
       assert.match(text, /operationId/);
-      assert.match(text, /mustReissueWait/);
+      assert.match(text, /nextCheck/);
+      assert.match(text, /operation-status/);
       assert.match(text, /\{file: path\}/);
     } finally {
       await client.close();

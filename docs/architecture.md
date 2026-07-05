@@ -1,13 +1,13 @@
 # Atrium Architecture
 
-Atrium is a stdio MCP server that gives agents a structured path for single CLI and executable calls. It is not a shell, not a scripting runtime, and not a curated registry of every tool Marcus Markiewicz uses. It exposes four MCP tools:
+Atrium is a stdio MCP server that gives agents a structured path for single CLI and executable calls plus local search primitives. It is not a shell, not a scripting runtime, and not a curated registry of every tool Marcus Markiewicz uses. It exposes these MCP tools:
 
 - `schema` discovers how a target executable wants to be called.
 - `run` executes a target executable with an argument vector and returns a compact JSON result.
-- `run-status` inspects a durable operation handle.
-- `wait` blocks briefly on a durable operation handle and returns `continue` before the MCP request deadline.
+- `operation-status` inspects a durable operation handle handed off by any Atrium tool.
+- `find-files`, `grep`, and `multi-grep` search local files through first-class MCP primitives.
 
-PowerShell remains the right tool for ad-hoc scripting, variables, loops, pipelines, and interactive commands. Long-running single executable calls should use Atrium auto/background operation handles.
+PowerShell remains the right tool for ad-hoc scripting, variables, loops, pipelines, and interactive commands. Long-running single executable calls hand off a durable operation handle that the caller polls with `operation-status`.
 
 ## Process model
 
@@ -71,7 +71,7 @@ Flow:
    ```json
    {
      "ok": true,
-     "tool": "xray",
+     "tool": "node",
      "source": "schema",
      "data": { "...": "target tool schema JSON" },
      "stdout": { "file": "...\\stdout.txt", "bytes": 2683 }
@@ -125,15 +125,15 @@ Input shape:
 
 ```json
 {
-  "tool": "xray",
-  "args": ["search", "tdd", "--root", "C:\\Users\\marcusm\\.copilot"],
+  "tool": "node",
+  "args": ["--version"],
   "cwd": "C:\\Users\\marcusm",
   "stdin": { "file": "C:\\temp\\stdin.txt" },
   "timeoutMs": 60000
 }
 ```
 
-`run` defaults to `executionMode: "auto"`. All target executable calls pass
+`run` has one execution behavior. All target executable calls pass
 through one in-memory execution queue before the child process is spawned,
 including `run` and `schema` discovery probes. The default queue allows 4
 concurrent child executions per Atrium MCP server process. Additional calls wait
@@ -141,37 +141,44 @@ in FIFO order for a slot. This limit is intentionally per-process, not
 machine-wide; separate Copilot tabs can still have separate Atrium server
 processes.
 
-Auto mode starts the process once and waits inside the safe MCP request window.
+`run` starts the process once and waits inside the safe MCP request window.
 If the process finishes before the handoff threshold, Atrium returns the normal
 compact result. If the process is still running near 45 seconds, Atrium adopts it
-into the durable background operation store and returns an `operationId`/`runId`,
-`resultPath`, and a `wait` instruction. Background mode also uses the same queue
-and holds its slot until the child process result settles.
+into the durable operation store and returns an `operationId`, a `resultPath`, and
+a prescriptive `nextCheck` object. The adopted operation keeps its queue slot
+until the child process result settles.
 
-Explicit blocking calls are still capped at `timeoutMs <= 60000` because MCP
-clients usually enforce a 60s request deadline. Longer explicit blocking
-requests fail fast with a structured `BlockingTimeoutTooLarge` envelope instead
-of letting the client surface raw `-32001 Request timed out`.
+`nextCheck` names exactly what the caller does next: the `operation-status` tool,
+with that `operationId`, after a fixed `callInMs` of 60000 ms. The handle exposes
+no timeout or wait knob, so it never implies a cancel or abort the server does not
+support. The input `timeoutMs` still bounds the child process and defaults to
+3600000 ms; it is not echoed on the handle.
 
-`wait` is a bounded long-poll. It waits up to 45000 ms for an `operationId`. If
-the operation reaches a terminal state, `wait` returns the same snapshot shape as
-`run-status`. If it is still running, `wait` returns `status: "continue"` with
-`mustReissueWait: true`, the same `operationId`, and a fresh wait instruction.
-Callers can reissue `wait` without ever holding one MCP request past the client
-deadline.
+```json
+{
+  "ok": true,
+  "status": "running",
+  "operationId": "atrium-...",
+  "resultPath": "C:\\...\\result.json",
+  "startedAt": "2026-...Z",
+  "nextCheck": { "tool": "atrium.operation-status", "arguments": { "operationId": "atrium-..." }, "callInMs": 60000 },
+  "message": "Still running. Call atrium.operation-status with this operationId in ~60000 ms. Repeat until status is completed or failed."
+}
+```
 
-`wait` also supports `follow: true`. Follow mode repeats those bounded waits
-inside one MCP tool call until the operation reaches a terminal status. A single
-wait call is always clamped to the 45000 ms request-safe window, so even a large
-`maxTotalWaitMs` cannot make one request outlive the MCP client deadline and fail
-with `-32001`. If the operation is still running when the window closes, Atrium
-returns `status: "continue"` with `mustReissueWait: true` so the caller does not
-confuse a still-running operation with completion and reissues `wait` to continue.
+`operation-status` returns the current state and final result path for a durable
+operation handed off by any Atrium tool. While the operation is still running it
+returns the same prescriptive `nextCheck` handle. Once terminal it returns the
+snapshot with `status: "completed"` or `status: "failed"`, `completedAt`, and the
+`result` or `error`, and no `nextCheck`. It recovers from the persisted snapshot at
+`resultPath` when the handle is no longer in server memory. There is no separate
+`wait` tool; callers poll `operation-status` on the cadence the handle prescribes.
 
-The local `atrium mcp-run` debug command also exposes `--request-timeout-ms`
-because it owns its MCP client. That option is only for local debugging.
-Long-lived agent hosts should use auto mode, then call `wait` again when they
-receive `status: "continue"`.
+The local `atrium mcp-run` debug command exposes `--request-timeout-ms` because it
+owns its MCP client. That option is only for local debugging. It polls
+`operation-status` within its own process until the operation is terminal or the
+budget expires. Long-lived agent hosts call `operation-status` again after the
+handle's `callInMs` whenever they receive a running handle.
 
 ```json
 {
@@ -209,7 +216,7 @@ Flow:
    ```json
    {
      "ok": true,
-     "tool": "xray",
+     "tool": "node",
      "timingMs": 781,
      "metrics": {
        "queueLimit": 4,
@@ -243,7 +250,6 @@ Measured on Marcus's Windows machine:
 | Command | Direct executable median | PowerShell-wrapped median | Atrium MCP median |
 | --- | ---: | ---: | ---: |
 | `node --version` | 57.0 ms | 339.8 ms | 45.7 ms |
-| `xray search tdd ...` | 602.8 ms | 998.9 ms | 600.4 ms |
 
 The important comparison is Atrium MCP vs PowerShell-wrapped. Atrium is effectively direct-spawn speed while avoiding PowerShell startup and quoting overhead.
 
@@ -253,14 +259,13 @@ Run the benchmark with:
 
 ```powershell
 npm run benchmark -- --command node-version --iterations 15 --warmup 3
-npm run benchmark -- --command xray-small --iterations 8 --warmup 2
 ```
 
 ## Source map
 
 | File | Responsibility |
 | --- | --- |
-| `src\server.ts` | MCP server registration for `schema`, `run`, `run-status`, and `wait`. |
+| `src\server.ts` | MCP server registration for `schema`, `run`, and `operation-status`. |
 | `src\core\executionQueue.ts` | In-memory max-concurrency limiter for child process starts. |
 | `src\core\introspect.ts` | Implements `<tool> schema` then `<tool> --help` discovery. |
 | `src\core\runner.ts` | Process spawning, shell denylist, Windows resolution, npm shim handling, timeout, stdout/stderr capture. |
