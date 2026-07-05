@@ -5,6 +5,13 @@ import type { XrayEnvelope, XrayRunOptions, XraySearchClientLike } from "./types
 
 export type ExecutableRunner = (input: RunExecutableInput, options?: StartExecutableRunOptions) => Promise<RunExecutableResult>;
 
+// Grace the runner's hard-kill deadline must add on top of xray's own --timeoutMs.
+// xray reaches its --timeoutMs, then flushes partial results plus a timeout warning.
+// If the runner kill fires at the same instant it truncates that flush and turns a
+// graceful partial result into a hard "Process exceeded timeoutMs" failure. This
+// mirrors requestTimeoutForRun in mcpDebug, which grants the outer wait the same margin.
+const RUNNER_KILL_GRACE_MS = 1_000;
+
 export function buildXrayArgs(options: XrayRunOptions): string[] {
   const args: string[] = [options.command];
   if (options.query !== undefined) {
@@ -50,7 +57,11 @@ export function createXrayClient(runner: ExecutableRunner = runExecutable): Xray
   return {
     async run(options: XrayRunOptions): Promise<XrayEnvelope> {
       const result = await runner(
-        { tool: "xray", args: buildXrayArgs(options), timeoutMs: options.timeoutMs },
+        {
+          tool: "xray",
+          args: buildXrayArgs(options),
+          ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs + RUNNER_KILL_GRACE_MS } : {}),
+        },
         { executionQueue: false },
       );
       const stdout = await readOutputValue(result.stdout);
