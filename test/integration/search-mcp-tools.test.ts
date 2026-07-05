@@ -31,7 +31,7 @@ describe("search MCP tools", () => {
     try {
       const listedTools = await client.listTools();
       const visibleToolNames = listedTools.tools.map((tool) => tool.name).sort();
-      assert.deepEqual(visibleToolNames, ["find-files", "grep", "grep-code", "operation-status", "run", "schema"]);
+      assert.deepEqual(visibleToolNames, ["find-files", "grep", "grep-code", "operation-wait", "run", "schema"]);
 
       for (const toolName of ["grep", "grep-code"] as const) {
         const tool = listedTools.tools.find((candidate) => candidate.name === toolName);
@@ -39,9 +39,10 @@ describe("search MCP tools", () => {
         const inputSchema = tool.inputSchema as Record<string, unknown>;
         const properties = inputSchema.properties as Record<string, unknown> | undefined;
         assert.ok(properties, `${toolName} should expose properties`);
-        for (const propertyName of ["root", "query", "queries", "regex", "glob", "exclude", "max", "timeoutMs"]) {
+        for (const propertyName of ["root", "query", "queries", "regex", "glob", "exclude", "max"]) {
           assert.ok(properties?.[propertyName], `${toolName} should define ${propertyName}`);
         }
+        assert.equal(properties?.timeoutMs, undefined);
         assert.equal((properties?.queries as Record<string, unknown>).type, "array", `${toolName} queries should be an array`);
         assert.equal((properties?.regex as Record<string, unknown>).type, "boolean", `${toolName} regex should be a boolean`);
         const required = inputSchema.required as string[] | undefined;
@@ -52,15 +53,15 @@ describe("search MCP tools", () => {
       assert.ok(findFiles, "expected find-files to be listed");
       const findFilesSchema = findFiles.inputSchema as Record<string, unknown>;
       const findFilesProperties = findFilesSchema.properties as Record<string, unknown> | undefined;
-      assert.deepEqual(Object.keys(findFilesProperties ?? {}).sort(), ["exclude", "glob", "max", "root", "timeoutMs"]);
+      assert.deepEqual(Object.keys(findFilesProperties ?? {}).sort(), ["exclude", "glob", "max", "root"]);
       assert.deepEqual(findFilesSchema.required, ["root"]);
 
       const expectedContentResult = { kind: "content", matches: [{ path: "src/one.ts", line: 7, text: "matched text" }], warnings: [] };
 
       // A single query stays a literal xray search, so grep and grep-code behavior is unchanged.
       const singleLiteralRouting = [
-        { name: "grep", args: { root: "/tmp/x", query: "needle", glob: "**/*.ts", exclude: "**/dist/**", max: 5, timeoutMs: 250 }, expected: { command: "search", root: "/tmp/x", query: "needle", all: true, glob: "**/*.ts", exclude: "**/dist/**", max: 5, timeoutMs: 250 } },
-        { name: "grep-code", args: { root: "/tmp/x", query: "needle", glob: "**/*.ts", exclude: "**/dist/**", max: 5, timeoutMs: 250 }, expected: { command: "search", root: "/tmp/x", query: "needle", glob: "**/*.ts", exclude: "**/dist/**", max: 5, timeoutMs: 250 } },
+        { name: "grep", args: { root: "/tmp/x", query: "needle", glob: "**/*.ts", exclude: "**/dist/**", max: 5 }, expected: { command: "search", root: "/tmp/x", query: "needle", all: true, glob: "**/*.ts", exclude: "**/dist/**", max: 5, timeoutMs: 59_000 } },
+        { name: "grep-code", args: { root: "/tmp/x", query: "needle", glob: "**/*.ts", exclude: "**/dist/**", max: 5 }, expected: { command: "search", root: "/tmp/x", query: "needle", glob: "**/*.ts", exclude: "**/dist/**", max: 5, timeoutMs: 59_000 } },
       ] as const;
       for (const routing of singleLiteralRouting) {
         const parsed = await callJson(client, routing.name, routing.args);
@@ -70,19 +71,19 @@ describe("search MCP tools", () => {
 
       // Multiple literal queries are regex-escaped and joined into one alternation.
       const multiLiteralRouting = [
-        { name: "grep", expected: { command: "search", root: "/tmp/x", query: "alpha|beta\\(x\\)|gamma", regex: true, all: true, glob: "**/*.ts", exclude: "**/dist/**", max: 5, timeoutMs: 250 } },
-        { name: "grep-code", expected: { command: "search", root: "/tmp/x", query: "alpha|beta\\(x\\)|gamma", regex: true, glob: "**/*.ts", exclude: "**/dist/**", max: 5, timeoutMs: 250 } },
+        { name: "grep", expected: { command: "search", root: "/tmp/x", query: "alpha|beta\\(x\\)|gamma", regex: true, all: true, glob: "**/*.ts", exclude: "**/dist/**", max: 5, timeoutMs: 59_000 } },
+        { name: "grep-code", expected: { command: "search", root: "/tmp/x", query: "alpha|beta\\(x\\)|gamma", regex: true, glob: "**/*.ts", exclude: "**/dist/**", max: 5, timeoutMs: 59_000 } },
       ] as const;
       for (const routing of multiLiteralRouting) {
-        const parsed = await callJson(client, routing.name, { root: "/tmp/x", queries: ["alpha", "beta(x)", "gamma"], glob: "**/*.ts", exclude: "**/dist/**", max: 5, timeoutMs: 250 });
+        const parsed = await callJson(client, routing.name, { root: "/tmp/x", queries: ["alpha", "beta(x)", "gamma"], glob: "**/*.ts", exclude: "**/dist/**", max: 5 });
         assert.deepEqual(parsed, expectedContentResult);
         assert.deepEqual(fakeClient.calls.at(-1), routing.expected);
       }
 
       // regex:true passes patterns through as a raw alternation without escaping.
       const regexRouting = [
-        { name: "grep", args: { root: "/tmp/x", queries: ["alpha", "beta(x)", "gamma"], regex: true }, expected: { command: "search", root: "/tmp/x", query: "alpha|beta(x)|gamma", regex: true, all: true } },
-        { name: "grep-code", args: { root: "/tmp/x", query: "be.n", regex: true }, expected: { command: "search", root: "/tmp/x", query: "be.n", regex: true } },
+        { name: "grep", args: { root: "/tmp/x", queries: ["alpha", "beta(x)", "gamma"], regex: true }, expected: { command: "search", root: "/tmp/x", query: "alpha|beta(x)|gamma", regex: true, all: true, timeoutMs: 59_000 } },
+        { name: "grep-code", args: { root: "/tmp/x", query: "be.n", regex: true }, expected: { command: "search", root: "/tmp/x", query: "be.n", regex: true, timeoutMs: 59_000 } },
       ] as const;
       for (const routing of regexRouting) {
         const parsed = await callJson(client, routing.name, routing.args);
@@ -100,9 +101,9 @@ describe("search MCP tools", () => {
         assert.match((neither.content as Array<{ text: string }>)[0].text, /exactly one of query or queries/);
       }
 
-      const parsedFiles = await callJson(client, "find-files", { root: "/tmp/f", glob: "**/*.ts", exclude: "**/dist/**", max: 50, timeoutMs: 250 });
+      const parsedFiles = await callJson(client, "find-files", { root: "/tmp/f", glob: "**/*.ts", exclude: "**/dist/**", max: 50 });
       assert.deepEqual(parsedFiles, { kind: "files", matches: [{ path: "src/one.ts" }, { path: "src/two.ts" }], warnings: [] });
-      assert.deepEqual(fakeClient.calls.at(-1), { command: "files", root: "/tmp/f", all: true, glob: "**/*.ts", exclude: "**/dist/**", max: 50, timeoutMs: 250 });
+      assert.deepEqual(fakeClient.calls.at(-1), { command: "files", root: "/tmp/f", all: true, glob: "**/*.ts", exclude: "**/dist/**", max: 50, timeoutMs: 59_000 });
     } finally {
       await client.close();
       await serverTransport.close();
@@ -130,13 +131,13 @@ describe("search MCP tools", () => {
       assert.equal(typeof started.operationId, "string");
       assert.equal(typeof started.resultPath, "string");
       assert.deepEqual(started.nextCheck, {
-        tool: "atrium.operation-status",
+        tool: "atrium.operation-wait",
         arguments: { operationId: started.operationId },
-        callInMs: 60_000,
+        callInMs: 0,
       });
       assert.equal(typeof started.message, "string");
 
-      const completed = await pollOperationStatus(client, started.operationId);
+      const completed = await waitForOperation(client, started.operationId);
       assert.equal(completed.status, "completed");
       assert.deepEqual(completed.result, { kind: "files", matches: [{ path: "src/slow.ts" }], warnings: [] });
     } finally {
@@ -146,16 +147,16 @@ describe("search MCP tools", () => {
   });
 });
 
-async function pollOperationStatus(client: Client, operationId: unknown): Promise<Record<string, unknown>> {
+async function waitForOperation(client: Client, operationId: unknown): Promise<Record<string, unknown>> {
   assert.equal(typeof operationId, "string");
   const deadline = Date.now() + 5_000;
-  let snapshot = await callJson(client, "operation-status", { operationId });
-  while (snapshot.status === "running" && Date.now() < deadline) {
+  let snapshot = await callJson(client, "operation-wait", { operationId });
+  while (snapshot.status === "continue" && Date.now() < deadline) {
     await delay(10);
-    snapshot = await callJson(client, "operation-status", { operationId });
+    snapshot = await callJson(client, "operation-wait", { operationId });
   }
 
-  assert.notEqual(snapshot.status, "running");
+  assert.notEqual(snapshot.status, "continue");
   return snapshot;
 }
 

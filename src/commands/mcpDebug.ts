@@ -3,20 +3,15 @@ import { CallToolResultSchema } from "@modelcontextprotocol/sdk/types.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { setTimeout as delay } from "node:timers/promises";
 
 interface McpRunOptions {
   cwd?: string;
-  timeoutMs?: string;
   requestTimeoutMs?: string;
   stdin?: string;
   stdinFile?: string;
 }
 
-// The debug command polls the instant in-memory operation-status read, so it uses a
-// short interval to observe completion quickly rather than the one-minute nextCheck
-// cadence meant for remote MCP agents. The loop is bounded by requestTimeoutMs.
-const debugPollIntervalMs = 200;
+const defaultDebugRequestTimeoutMs = 60_000;
 
 async function withAtriumClient<T>(callback: (client: Client) => Promise<T>): Promise<T> {
   const serverPath = join(dirname(fileURLToPath(import.meta.url)), "..", "server.js");
@@ -41,8 +36,7 @@ export async function mcpSchemaCommand(tool: string): Promise<void> {
 }
 
 export async function mcpRunCommand(tool: string, args: string[] | undefined, options: McpRunOptions): Promise<void> {
-  const timeoutMs = parseOptionalNumber(options.timeoutMs, "--timeout-ms");
-  const requestTimeoutMs = parseOptionalNumber(options.requestTimeoutMs, "--request-timeout-ms") ?? requestTimeoutForRun(timeoutMs);
+  const requestTimeoutMs = parseOptionalNumber(options.requestTimeoutMs, "--request-timeout-ms") ?? defaultDebugRequestTimeoutMs;
   const response = await withAtriumClient(async (client) => {
     const runResponse = await client.callTool({
       name: "run",
@@ -51,7 +45,6 @@ export async function mcpRunCommand(tool: string, args: string[] | undefined, op
         args: args ?? [],
         cwd: options.cwd,
         stdin: options.stdinFile === undefined ? options.stdin : { file: options.stdinFile },
-        timeoutMs,
       },
     }, CallToolResultSchema, { timeout: requestTimeoutMs });
     const runPayload = readToolPayload(runResponse);
@@ -59,14 +52,14 @@ export async function mcpRunCommand(tool: string, args: string[] | undefined, op
       return runResponse;
     }
 
-    return pollForDebugOperation(client, runPayload.operationId, requestTimeoutMs);
+    return waitForDebugOperation(client, runPayload.operationId, requestTimeoutMs);
   });
   writeToolResponse(response);
 }
 
-export async function mcpOperationStatusCommand(operationId: string): Promise<void> {
+export async function mcpOperationWaitCommand(operationId: string): Promise<void> {
   const response = await withAtriumClient((client) => client.callTool({
-    name: "operation-status",
+    name: "operation-wait",
     arguments: {
       operationId,
     },
@@ -123,27 +116,17 @@ function parseOptionalNumber(value: string | undefined, flag: string): number | 
   return parsed;
 }
 
-function requestTimeoutForRun(timeoutMs: number | undefined): number {
-  return timeoutMs === undefined ? 60_000 : timeoutMs + 1_000;
-}
-
-async function pollForDebugOperation(client: Client, operationId: string, requestTimeoutMs: number): ReturnType<Client["callTool"]> {
+async function waitForDebugOperation(client: Client, operationId: string, requestTimeoutMs: number): ReturnType<Client["callTool"]> {
   const deadline = Date.now() + requestTimeoutMs;
-  let response = await callOperationStatus(client, operationId, requestTimeoutMs);
+  let response = await callOperationWait(client, operationId, defaultDebugRequestTimeoutMs);
 
   while (Date.now() < deadline) {
     const payload = readToolPayload(response);
-    if (!isRunningPayload(payload)) {
+    if (!isContinuePayload(payload)) {
       return response;
     }
 
-    const remainingMs = deadline - Date.now();
-    if (remainingMs <= 0) {
-      break;
-    }
-
-    await delay(Math.min(debugPollIntervalMs, remainingMs));
-    response = await callOperationStatus(client, operationId, requestTimeoutMs);
+    response = await callOperationWait(client, operationId, defaultDebugRequestTimeoutMs);
   }
 
   return textToolResponse({
@@ -152,14 +135,14 @@ async function pollForDebugOperation(client: Client, operationId: string, reques
     operationId,
     error: {
       code: "DebugWaitTimeout",
-      message: `Local mcp-run debug command stopped polling for operationId=${operationId}. Re-run with --request-timeout-ms if you need a longer debug wait.`,
+      message: `Local mcp-run debug command stopped waiting for operationId=${operationId}. Re-run with --request-timeout-ms if you need a longer debug wait.`,
     },
   });
 }
 
-async function callOperationStatus(client: Client, operationId: string, requestTimeoutMs: number): ReturnType<Client["callTool"]> {
+async function callOperationWait(client: Client, operationId: string, requestTimeoutMs: number): ReturnType<Client["callTool"]> {
   return client.callTool({
-    name: "operation-status",
+    name: "operation-wait",
     arguments: {
       operationId,
     },
@@ -171,6 +154,15 @@ function isRunningPayload(value: unknown): value is { status: "running"; operati
     && value !== null
     && "status" in value
     && value.status === "running"
+    && "operationId" in value
+    && typeof value.operationId === "string";
+}
+
+function isContinuePayload(value: unknown): value is { status: "continue"; operationId: string } {
+  return typeof value === "object"
+    && value !== null
+    && "status" in value
+    && value.status === "continue"
     && "operationId" in value
     && typeof value.operationId === "string";
 }

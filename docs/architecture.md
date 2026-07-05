@@ -4,10 +4,10 @@ Atrium is a stdio MCP server that gives agents a structured path for single CLI 
 
 - `schema` discovers how a target executable wants to be called.
 - `run` executes a target executable with an argument vector and returns a compact JSON result.
-- `operation-status` inspects a durable operation handle handed off by any Atrium tool.
+- `operation-wait` waits for a durable operation handle handed off by any Atrium tool.
 - `find-files`, `grep`, and `grep-code` search local files through first-class MCP primitives.
 
-PowerShell remains the right tool for ad-hoc scripting, variables, loops, pipelines, and interactive commands. Long-running single executable calls hand off a durable operation handle that the caller polls with `operation-status`.
+PowerShell remains the right tool for ad-hoc scripting, variables, loops, pipelines, and interactive commands. Long-running single executable calls hand off a durable operation handle that the caller waits on with `operation-wait`.
 
 ## Process model
 
@@ -128,8 +128,7 @@ Input shape:
   "tool": "node",
   "args": ["--version"],
   "cwd": "C:\\Users\\marcusm",
-  "stdin": { "file": "C:\\temp\\stdin.txt" },
-  "timeoutMs": 60000
+  "stdin": { "file": "C:\\temp\\stdin.txt" }
 }
 ```
 
@@ -148,11 +147,10 @@ into the durable operation store and returns an `operationId`, a `resultPath`, a
 a prescriptive `nextCheck` object. The adopted operation keeps its queue slot
 until the child process result settles.
 
-`nextCheck` names exactly what the caller does next: the `operation-status` tool,
-with that `operationId`, after a fixed `callInMs` of 60000 ms. The handle exposes
-no timeout or wait knob, so it never implies a cancel or abort the server does not
-support. The input `timeoutMs` still bounds the child process and defaults to
-3600000 ms; it is not echoed on the handle.
+`nextCheck` names exactly what the caller does next: the `operation-wait` tool
+with that `operationId`. The handle exposes no timeout or wait knob, so callers
+cannot imply a cancel or abort the server does not support. Atrium keeps fixed
+server-side execution deadlines instead of caller-tuned operation timeouts.
 
 ```json
 {
@@ -161,24 +159,24 @@ support. The input `timeoutMs` still bounds the child process and defaults to
   "operationId": "atrium-...",
   "resultPath": "C:\\...\\result.json",
   "startedAt": "2026-...Z",
-  "nextCheck": { "tool": "atrium.operation-status", "arguments": { "operationId": "atrium-..." }, "callInMs": 60000 },
-  "message": "Still running. Call atrium.operation-status with this operationId in ~60000 ms. Repeat until status is completed or failed."
+  "nextCheck": { "tool": "atrium.operation-wait", "arguments": { "operationId": "atrium-..." }, "callInMs": 0 },
+  "message": "Still running. Call atrium.operation-wait with this operationId. Repeat until status is completed or failed."
 }
 ```
 
-`operation-status` returns the current state and final result path for a durable
-operation handed off by any Atrium tool. While the operation is still running it
-returns the same prescriptive `nextCheck` handle. Once terminal it returns the
-snapshot with `status: "completed"` or `status: "failed"`, `completedAt`, and the
-`result` or `error`, and no `nextCheck`. It recovers from the persisted snapshot at
-`resultPath` when the handle is no longer in server memory. There is no separate
-`wait` tool; callers poll `operation-status` on the cadence the handle prescribes.
+`operation-wait` waits inside a request-safe window for a durable operation handed
+off by any Atrium tool. If the operation is still running after that window, it
+returns `status: "continue"`, `mustReissueWait: true`, and the same prescriptive
+`nextCheck` handle. Once terminal it returns the snapshot with `status:
+"completed"` or `status: "failed"`, `completedAt`, and the `result` or `error`.
+It recovers from the persisted snapshot at `resultPath` when the handle is no
+longer in server memory.
 
 The local `atrium mcp-run` debug command exposes `--request-timeout-ms` because it
-owns its MCP client. That option is only for local debugging. It polls
-`operation-status` within its own process until the operation is terminal or the
-budget expires. Long-lived agent hosts call `operation-status` again after the
-handle's `callInMs` whenever they receive a running handle.
+owns its MCP client. That option is only for local debugging. It reissues
+`operation-wait` within its own process until the operation is terminal or the
+budget expires. Long-lived agent hosts call `operation-wait` whenever they receive
+a running or continue handle.
 
 ```json
 {
@@ -265,7 +263,7 @@ npm run benchmark -- --command node-version --iterations 15 --warmup 3
 
 | File | Responsibility |
 | --- | --- |
-| `src\server.ts` | MCP server registration for `schema`, `run`, and `operation-status`. |
+| `src\server.ts` | MCP server registration for `schema`, `run`, and `operation-wait`. |
 | `src\core\executionQueue.ts` | In-memory max-concurrency limiter for child process starts. |
 | `src\core\introspect.ts` | Implements `<tool> schema` then `<tool> --help` discovery. |
 | `src\core\runner.ts` | Process spawning, shell denylist, Windows resolution, npm shim handling, timeout, stdout/stderr capture. |

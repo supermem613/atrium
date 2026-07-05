@@ -130,11 +130,6 @@ export const commandSpecs: CommandSpec[] = [
           summary: "Read stdin content from a UTF-8 file.",
         },
         {
-          name: "--timeout-ms",
-          type: "number",
-          summary: "Execution timeout in milliseconds that bounds the child process. Defaults to 3600000 when omitted.",
-        },
-        {
           name: "--request-timeout-ms",
           type: "number",
           summary: "MCP client request timeout in milliseconds for the local debug client.",
@@ -148,8 +143,8 @@ export const commandSpecs: CommandSpec[] = [
     examples: ["mcp-run node -- --version", "mcp-run node -- -e \"setTimeout(() => console.log('done'), 90000)\""],
   },
   {
-    path: ["mcp-operation-status"],
-    summary: "Check a durable MCP operation by operation id.",
+    path: ["mcp-operation-wait"],
+    summary: "Wait for a durable MCP operation by operation id.",
     effect: "read",
     input: {
       positionals: ["operationId"],
@@ -157,9 +152,9 @@ export const commandSpecs: CommandSpec[] = [
     },
     output: {
       documented: true,
-      schema: "AtriumOperationSnapshot",
+      schema: "AtriumOperationWaitResult",
     },
-    examples: ["mcp-operation-status atrium-mabc1234-00000000-0000-0000-0000-000000000000"],
+    examples: ["mcp-operation-wait atrium-mabc1234-00000000-0000-0000-0000-000000000000"],
   },
   {
     path: ["update"],

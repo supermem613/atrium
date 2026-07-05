@@ -25,7 +25,7 @@ describe("MCP initialize instructions", () => {
       assert.match(text, /one execution behavior/);
       assert.match(text, /operationId/);
       assert.match(text, /nextCheck/);
-      assert.match(text, /operation-status/);
+      assert.match(text, /operation-wait/);
       assert.match(text, /\{file: path\}/);
     } finally {
       await client.close();

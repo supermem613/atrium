@@ -10,7 +10,7 @@ import { atriumTempPath } from "../../src/core/tempPaths.js";
 import { getBackgroundRun } from "../../src/core/backgroundRuns.js";
 
 describe("MCP run handoff", () => {
-  it("hands off a durable operation with a prescriptive nextCheck when the command is still running past the handoff window", async () => {
+  it("hands off a durable operation with a prescriptive operation-wait nextCheck when the command is still running past the handoff window", async () => {
     await withInMemoryClient(async (client) => {
       const started = await callJson(client, "run", {
         tool: process.execPath,
@@ -23,13 +23,13 @@ describe("MCP run handoff", () => {
       assertString(started.resultPath);
       assert.equal(started.resultPath.startsWith(atriumTempPath("background-runs")), true);
       assert.deepEqual(started.nextCheck, {
-        tool: "atrium.operation-status",
+        tool: "atrium.operation-wait",
         arguments: { operationId: started.operationId },
-        callInMs: 60_000,
+        callInMs: 0,
       });
       assertString(started.message);
 
-      const completed = await pollOperationStatus(client, started.operationId);
+      const completed = await waitForOperation(client, started.operationId);
       const result = completed.result;
       assertRecord(result);
       assert.equal(completed.status, "completed");
@@ -52,21 +52,20 @@ describe("MCP run handoff", () => {
     });
   });
 
-  it("accepts a timeoutMs above the old blocking cap and returns a normal result", async () => {
+  it("does not expose timeoutMs in the agent-facing run schema", async () => {
     await withInMemoryClient(async (client) => {
-      const result = await callJson(client, "run", {
-        tool: process.execPath,
-        args: ["-e", "process.stdout.write('big-timeout-ok')"],
-        timeoutMs: 60_001,
-      });
+      const listedTools = await client.listTools();
+      const runTool = listedTools.tools.find((tool) => tool.name === "run");
+      assert.ok(runTool, "expected run tool to be listed");
 
-      assert.equal(result.ok, true);
-      assert.equal(result.stdout, "big-timeout-ok");
-      assert.equal(result.operationId, undefined);
+      const inputSchema = runTool.inputSchema as Record<string, unknown>;
+      const properties = inputSchema.properties as Record<string, unknown> | undefined;
+      assert.ok(properties, "run should expose properties");
+      assert.equal(properties.timeoutMs, undefined);
     });
   });
 
-  it("operation-status returns the prescriptive handle while the operation is still running", async () => {
+  it("operation-wait returns continue when the operation is still running after the bounded wait", async () => {
     await withInMemoryClient(async (client) => {
       const started = await callJson(client, "run", {
         tool: process.execPath,
@@ -74,26 +73,27 @@ describe("MCP run handoff", () => {
       });
       assertString(started.operationId);
 
-      const status = await callJson(client, "operation-status", { operationId: started.operationId });
-      assert.equal(status.ok, true);
-      assert.equal(status.status, "running");
-      assert.equal(status.operationId, started.operationId);
-      assert.deepEqual(status.nextCheck, {
-        tool: "atrium.operation-status",
+      const pending = await callJson(client, "operation-wait", { operationId: started.operationId });
+      assert.equal(pending.ok, true);
+      assert.equal(pending.status, "continue");
+      assert.equal(pending.operationId, started.operationId);
+      assert.equal(pending.mustReissueWait, true);
+      assert.deepEqual(pending.nextCheck, {
+        tool: "atrium.operation-wait",
         arguments: { operationId: started.operationId },
-        callInMs: 60_000,
+        callInMs: 0,
       });
-      assertString(status.message);
+      assertString(pending.message);
 
-      const completed = await pollOperationStatus(client, started.operationId);
+      const completed = await waitForOperation(client, started.operationId);
       const result = completed.result;
       assertRecord(result);
       assert.equal(completed.status, "completed");
       assert.equal(result.stdout, "still-running-ok");
-    }, { backgroundHandoffAfterMs: 5 });
+    }, { backgroundHandoffAfterMs: 5, waitTimeoutMs: 1 });
   });
 
-  it("operation-status recovers a persisted operation snapshot when the run is not in memory", async () => {
+  it("operation-wait recovers a persisted operation snapshot when the run is not in memory", async () => {
     const operationId = "atrium-test-persisted-operation";
     const directory = atriumTempPath("background-runs", operationId);
     const resultPath = join(directory, "result.json");
@@ -134,7 +134,7 @@ describe("MCP run handoff", () => {
     assert.equal(snapshot.result.stdout, "ok");
   });
 
-  it("operation-status recovers legacy persisted snapshots that only contain runId", async () => {
+  it("internal recovery supports legacy persisted snapshots that only contain runId", async () => {
     const runId = "atrium-test-legacy-run";
     const directory = atriumTempPath("background-runs", runId);
     const resultPath = join(directory, "result.json");
@@ -204,15 +204,15 @@ function assertString(value: unknown): asserts value is string {
   assert.equal(typeof value, "string");
 }
 
-async function pollOperationStatus(client: Client, operationId: unknown): Promise<Record<string, unknown>> {
+async function waitForOperation(client: Client, operationId: unknown): Promise<Record<string, unknown>> {
   assertString(operationId);
   const deadline = Date.now() + 5_000;
-  let snapshot = await callJson(client, "operation-status", { operationId });
-  while (snapshot.status === "running" && Date.now() < deadline) {
+  let snapshot = await callJson(client, "operation-wait", { operationId });
+  while (snapshot.status === "continue" && Date.now() < deadline) {
     await setImmediate();
-    snapshot = await callJson(client, "operation-status", { operationId });
+    snapshot = await callJson(client, "operation-wait", { operationId });
   }
 
-  assert.notEqual(snapshot.status, "running");
+  assert.notEqual(snapshot.status, "continue");
   return snapshot;
 }

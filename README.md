@@ -6,7 +6,7 @@ Atrium is an MCP server for agents. It exposes a small surface:
 
 - `atrium.schema` — discover a tool's invocation shape by asking the tool itself.
 - `atrium.run` — run a named CLI or executable with structured args and JSON results.
-- `atrium.operation-status` — inspect a durable operation by id, handed off by any Atrium tool.
+- `atrium.operation-wait` — wait for a durable operation by id, handed off by any Atrium tool.
 - `atrium.find-files`, `atrium.grep`, `atrium.grep-code` — search files through first-class MCP primitives.
 
 Large stdout/stderr is written to temp files and returned as paths, so agents do not dump command output into the conversation context.
@@ -58,7 +58,7 @@ atrium mcp-server      # stdio MCP server entrypoint
 atrium mcp-schema reflux # debug MCP schema through a local MCP client
 atrium mcp-run node -- --version
 atrium mcp-run node -- -e "setTimeout(() => console.log('done'), 90000)"
-atrium mcp-operation-status <operationId>
+atrium mcp-operation-wait <operationId>
 atrium update          # git pull, install dependencies, and rebuild
 ```
 
@@ -92,12 +92,12 @@ atrium mcp-schema node
 atrium mcp-run node -- --version
 atrium mcp-run node --stdin-file C:\temp\stdin.txt -- -e "process.stdin.pipe(process.stdout)"
 atrium mcp-run node -- -e "setTimeout(() => console.log('done'), 90000)"
-atrium mcp-operation-status <operationId>
+atrium mcp-operation-wait <operationId>
 ```
 
 ## Search MCP tools
 
-Atrium's MCP server exposes `find-files`, `grep`, and `grep-code` as first-class MCP tools backed by [xray](https://github.com/supermem613/xray) (bundled ripgrep). The content verbs run `xray search`; `find-files` runs `xray files` and never reads file contents. `grep` and `grep-code` take a `root` plus either a single `query` or a `queries` array that matches any of several patterns; set `regex` true to treat the patterns as regular expressions instead of literal text. All content verbs also accept optional `glob`, `exclude`, `max`, and `timeoutMs`; `find-files` takes the same shape without `query`/`queries`, so path discovery is by `glob` rather than content. There is no `find-code` tool; use `find-files` for path discovery.
+Atrium's MCP server exposes `find-files`, `grep`, and `grep-code` as first-class MCP tools backed by [xray](https://github.com/supermem613/xray) (bundled ripgrep). The content verbs run `xray search`; `find-files` runs `xray files` and never reads file contents. `grep` and `grep-code` take a `root` plus either a single `query` or a `queries` array that matches any of several patterns; set `regex` true to treat the patterns as regular expressions instead of literal text. All content verbs also accept optional `glob`, `exclude`, and `max`; `find-files` takes the same shape without `query`/`queries`, so path discovery is by `glob` rather than content. Atrium applies a fixed internal search deadline so agents do not tune timeouts. There is no `find-code` tool; use `find-files` for path discovery.
 
 `grep` and `find-files` are unrestricted: they include hidden, gitignored, and vendor files such as `node_modules`. `grep-code` is git-aware and skips hidden, gitignored, and vendor files. Prefer `grep-code` for symbols, APIs, tests, command handlers, error strings, and docs related to code. Use `grep` for broad filesystem content or generated and dependency artifacts.
 
@@ -127,7 +127,7 @@ MCP callers can use the same compact file-value contract for inputs and outputs:
 
 Small stdout/stderr up to 8192 bytes is returned inline as a string. Larger output is returned as `{ "file": "...", "bytes": n }`.
 
-`atrium.run` and the search MCP tools have one execution behavior. They return the normal result when the work completes inside the safe MCP window. If the work is still running near 45 seconds, Atrium returns a durable `operationId`, a `resultPath`, and a prescriptive `nextCheck` object. `nextCheck` names exactly what to call next: the `atrium.operation-status` tool, with that `operationId`, after a fixed `callInMs` of 60000 milliseconds. Wait that long, then call `atrium.operation-status` with the `operationId`, and repeat until `status` is `completed` or `failed`. There are no timeout or wait knobs on the handle, and there is no separate `wait` tool. The input `timeoutMs` on `run` still bounds the child process and defaults to 3600000; it is not exposed on the returned handle.
+`atrium.run` and the search MCP tools have one execution behavior. They return the normal result when the work completes inside the safe MCP window. If the work is still running near 45 seconds, Atrium returns a durable `operationId`, a `resultPath`, and a prescriptive `nextCheck` object. `nextCheck` names exactly what to call next: the `atrium.operation-wait` tool with that `operationId`. Call `atrium.operation-wait`, then repeat while it returns `status: "continue"`. Terminal waits return `status: "completed"` or `status: "failed"` with the final `result` or `error`. Agents do not control operation or wait timeouts; Atrium uses fixed server-side deadlines and a request-safe wait window.
 
 All target executable calls share one in-memory execution queue per Atrium MCP server process, including `atrium.run` and `atrium.schema` discovery probes. The default queue allows multiple concurrent child executions. Additional calls wait for a slot before spawning the child process. Background runs count against the queue until their child process completes, so background work cannot accumulate unbounded child processes. The queue is intentionally per-process, not machine-wide; separate Copilot tabs can still have separate Atrium server processes.
 
@@ -147,7 +147,7 @@ Run metrics include queue fields for dogfooding and tuning:
 
 The server and runner accept an `executionQueue` option for tests and local rollback. Passing `executionQueue: false` disables the limiter for that server instance.
 
-The local `atrium mcp-run` debug command polls `operation-status` within the same debug MCP server process until the operation reaches a terminal state or its `--request-timeout-ms` budget expires. Use `atrium mcp-operation-status` for handles created by a long-lived MCP server such as Copilot CLI.
+The local `atrium mcp-run` debug command reissues `operation-wait` within the same debug MCP server process until the operation reaches a terminal state or its `--request-timeout-ms` budget expires. Use `atrium mcp-operation-wait` for handles created by a long-lived MCP server such as Copilot CLI.
 
 For performance checks:
 
