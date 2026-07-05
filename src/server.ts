@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { McpError, ErrorCode } from "@modelcontextprotocol/sdk/types.js";
 import { introspectTool } from "./core/introspect.js";
-import { adoptBackgroundRun, getBackgroundRun, withLongRunningDefault } from "./core/backgroundRuns.js";
+import { adoptBackgroundRun, defaultWaitTimeoutMs, waitForBackgroundRun, withLongRunningDefault } from "./core/backgroundRuns.js";
 import { RunExecutableInput, RunExecutableResult, startExecutableRun } from "./core/runner.js";
 import { ExecutionQueue } from "./core/executionQueue.js";
 import { toolTextResult } from "./mcp/format.js";
@@ -17,6 +17,7 @@ import { normalizeXrayResult } from "./core/search/normalize.js";
 import type { XraySearchClientLike } from "./core/search/types.js";
 
 const defaultBackgroundHandoffAfterMs = 45_000;
+const defaultSearchTimeoutMs = 59_000;
 
 const packageVersion = (JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version: string }).version;
 
@@ -90,8 +91,8 @@ const atriumInstructions = [
   "2. There is one execution behavior. Every run and search starts, waits briefly, then returns the result if it finished, otherwise returns a durable operationId. A handoff is not an error.",
   "",
   "Handoff contract:",
-  "- When a tool returns status running with an operationId, it also returns a nextCheck object naming exactly what to call next: the operation-status tool, with that operationId, after callInMs milliseconds.",
-  "- Wait callInMs, then call operation-status with the operationId. Repeat until status is completed or failed. Never report success from a still-running handle.",
+  "- When a tool returns status running with an operationId, it also returns a nextCheck object naming exactly what to call next: the operation-wait tool with that operationId.",
+  "- Repeat operation-wait while it returns status continue. Never report success from a still-running handle.",
   "",
   "Value contract:",
   "- A plain string argument or stdin is used literally.",
@@ -106,12 +107,14 @@ const atriumInstructions = [
 
 export interface AtriumServerOptions {
   backgroundHandoffAfterMs?: number;
+  waitTimeoutMs?: number;
   executionQueue?: ExecutionQueue | false;
   searchClient?: XraySearchClientLike;
 }
 
 export function createAtriumServer(options: AtriumServerOptions = {}): McpServer {
   const backgroundHandoffAfterMs = options.backgroundHandoffAfterMs ?? defaultBackgroundHandoffAfterMs;
+  const waitTimeoutMs = options.waitTimeoutMs ?? defaultWaitTimeoutMs;
   const executionOptions = {
     executionQueue: options.executionQueue,
   };
@@ -144,31 +147,30 @@ export function createAtriumServer(options: AtriumServerOptions = {}): McpServer
     "run",
     {
       title: "Run a CLI or executable",
-      description: "Execute named CLIs with structured args and structured JSON returns. Returns the normal result when the command finishes inside the handoff window, otherwise returns a durable operationId and a prescriptive nextCheck instruction telling you to poll operation-status.",
+      description: "Execute named CLIs with structured args and structured JSON returns. Returns the normal result when the command finishes inside the handoff window, otherwise returns a durable operationId and a prescriptive nextCheck instruction telling you to call operation-wait. The child process uses Atrium's fixed server-side execution deadline; callers cannot tune it.",
       inputSchema: {
         tool: z.string().min(1).describe("Binary name on PATH or executable path. Shells such as pwsh, powershell, bash, cmd, sh, and zsh are denied."),
         args: z.array(z.union([z.string(), z.object({ file: z.string().min(1) })])).optional().describe("Argument vector. Use {file} to replace that argument with UTF-8 file contents. Do not pass a shell command string."),
         cwd: z.string().optional().describe("Working directory for the process."),
         stdin: z.union([z.string(), z.object({ file: z.string().min(1) })]).optional().describe("Optional stdin content. Use {file} to read UTF-8 stdin content from a file."),
-        timeoutMs: z.number().int().positive().max(3_600_000).optional().describe("Execution timeout in milliseconds that bounds the child process. Defaults to 3600000 when omitted."),
       },
     },
     async (input) => toolTextResult(await runWithHandoff(input, backgroundHandoffAfterMs, executionOptions)),
   );
 
   server.registerTool(
-    "operation-status",
+    "operation-wait",
     {
-      title: "Check a durable operation",
-      description: "Return the current state and final result path for a durable operation handed off by any Atrium tool. While the operation is running it returns the same prescriptive nextCheck instruction. Recovers from the persisted operation snapshot when server memory no longer has the handle.",
+      title: "Wait for a durable operation",
+      description: "Wait briefly for a durable operation handed off by any Atrium tool. Returns the terminal result when complete. If still running after Atrium's fixed request-safe wait window, returns status continue with the same operationId and a nextCheck instruction to call operation-wait again. This does not cancel, shorten, or tune the underlying operation.",
       inputSchema: {
         operationId: z.string().min(1).describe("Durable operationId returned by an Atrium tool handoff."),
       },
     },
-    async ({ operationId }) => toolTextResult(await getBackgroundRun(operationId)),
+    async ({ operationId }) => toolTextResult(await waitForBackgroundRun(operationId, { requestSafeWaitMs: waitTimeoutMs })),
   );
 
-  const runContentSearch = async (spec: SearchVerbSpec, query: string, regex: boolean, root: string, glob?: string, exclude?: string, max?: number, timeoutMs?: number) =>
+  const runContentSearch = async (spec: SearchVerbSpec, query: string, regex: boolean, root: string, glob?: string, exclude?: string, max?: number) =>
     toolTextResult(await runSearchWithHandoff(
       () => searchClient.run({
         command: spec.command,
@@ -179,7 +181,7 @@ export function createAtriumServer(options: AtriumServerOptions = {}): McpServer
         ...(glob !== undefined ? { glob } : {}),
         ...(exclude !== undefined ? { exclude } : {}),
         ...(max !== undefined ? { max } : {}),
-        ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+        timeoutMs: defaultSearchTimeoutMs,
       }).then((envelope) => normalizeXrayResult(envelope, spec.kind)),
       backgroundHandoffAfterMs,
     ));
@@ -198,12 +200,11 @@ export function createAtriumServer(options: AtriumServerOptions = {}): McpServer
           glob: z.string().min(1).optional().describe("Optional glob to constrain the search."),
           exclude: z.string().min(1).optional().describe("Optional exclude pattern applied as a negated glob."),
           max: z.number().int().positive().optional().describe("Optional maximum number of results to return."),
-          timeoutMs: z.number().int().positive().max(3_600_000).optional().describe("Optional timeout in milliseconds for the request."),
         },
       },
-      async ({ root, query, queries, regex, glob, exclude, max, timeoutMs }) => {
+      async ({ root, query, queries, regex, glob, exclude, max }) => {
         const resolved = resolveSearchQuery(toolName, query, queries, regex ?? false);
-        return runContentSearch(spec, resolved.query, resolved.regex, root, glob, exclude, max, timeoutMs);
+        return runContentSearch(spec, resolved.query, resolved.regex, root, glob, exclude, max);
       },
     );
   }
@@ -218,10 +219,9 @@ export function createAtriumServer(options: AtriumServerOptions = {}): McpServer
         glob: z.string().min(1).optional().describe("Optional glob to constrain the listing by path or name."),
         exclude: z.string().min(1).optional().describe("Optional exclude pattern applied as a negated glob."),
         max: z.number().int().positive().optional().describe("Optional maximum number of files to return."),
-        timeoutMs: z.number().int().positive().max(3_600_000).optional().describe("Optional timeout in milliseconds for the request."),
       },
     },
-    async ({ root, glob, exclude, max, timeoutMs }) => toolTextResult(await runSearchWithHandoff(
+    async ({ root, glob, exclude, max }) => toolTextResult(await runSearchWithHandoff(
       () => searchClient.run({
         command: "files",
         root,
@@ -229,7 +229,7 @@ export function createAtriumServer(options: AtriumServerOptions = {}): McpServer
         ...(glob !== undefined ? { glob } : {}),
         ...(exclude !== undefined ? { exclude } : {}),
         ...(max !== undefined ? { max } : {}),
-        ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+        timeoutMs: defaultSearchTimeoutMs,
       }).then((envelope) => normalizeXrayResult(envelope, "files")),
       backgroundHandoffAfterMs,
     )),

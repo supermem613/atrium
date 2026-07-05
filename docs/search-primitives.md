@@ -14,8 +14,7 @@ The two content verbs (`grep`, `grep-code`) share one input shape. Pass a single
   "query": "TODO",
   "glob": "**/*.{ts,md}",
   "exclude": "**/node_modules/**",
-  "max": 20,
-  "timeoutMs": 30000
+  "max": 20
 }
 ```
 
@@ -27,8 +26,7 @@ Or pass a `queries` array to match any of several patterns. Atrium escapes each 
   "queries": ["TODO", "FIXME", "HACK"],
   "glob": "**/*.{ts,md}",
   "exclude": "**/node_modules/**",
-  "max": 20,
-  "timeoutMs": 30000
+  "max": 20
 }
 ```
 
@@ -49,8 +47,7 @@ Provide exactly one of `query` or `queries`; sending both or neither is rejected
   "root": "C:\\repo",
   "glob": "**/*.test.ts",
   "exclude": "**/node_modules/**",
-  "max": 100,
-  "timeoutMs": 30000
+  "max": 100
 }
 ```
 
@@ -65,7 +62,8 @@ Optional:
 - `glob`: constrain searched paths.
 - `exclude`: skip matching paths, applied as a negated glob.
 - `max`: cap returned results.
-- `timeoutMs`: bound the underlying request.
+
+Atrium applies a fixed internal search deadline. Callers cannot tune search timeouts.
 
 ## Choosing a tool
 
@@ -121,17 +119,17 @@ If a search is still running near the handoff threshold, the tool returns a dura
   "resultPath": "C:\\Users\\...\\result.json",
   "startedAt": "2026-...Z",
   "nextCheck": {
-    "tool": "atrium.operation-status",
+    "tool": "atrium.operation-wait",
     "arguments": {
       "operationId": "atrium-..."
     },
-    "callInMs": 60000
+    "callInMs": 0
   },
-  "message": "Still running. Call atrium.operation-status with this operationId in ~60000 ms. Repeat until status is completed or failed."
+  "message": "Still running. Call atrium.operation-wait with this operationId. Repeat until status is completed or failed."
 }
 ```
 
-The `nextCheck` object is prescriptive. Wait `callInMs` milliseconds, then call `atrium.operation-status` with the returned `operationId`, and repeat until it returns `status: "completed"` or `status: "failed"`. The handle exposes no timeout or wait knob, and there is no separate `wait` tool.
+The `nextCheck` object is prescriptive. Call `atrium.operation-wait` with the returned `operationId`, and repeat while it returns `status: "continue"`. The handle exposes no timeout or wait knob.
 
 Completed search operations put the search result in `result`:
 
@@ -150,5 +148,4 @@ Completed search operations put the search result in `result`:
 }
 ```
 
-Never report search success from a still-running handle. Inspect the terminal `operation-status` result first.
-
+Never report search success from a still-running handle. Inspect the terminal `operation-wait` result first.

@@ -7,15 +7,10 @@ import { atriumTempPath } from "./tempPaths.js";
 type BackgroundRunStatus = "running" | "completed" | "failed";
 
 export const defaultLongRunningTimeoutMs = 3_600_000;
-
-// Fixed recommended delay before the caller checks a durable operation again. The
-// handle is prescriptive on purpose. It never exposes a timeout or wait knob, so it
-// cannot imply a cancel or abort the server does not support. One minute keeps polling
-// well inside the poll-at-most-once-per-minute rule.
-export const defaultNextCheckMs = 60_000;
+export const defaultWaitTimeoutMs = 45_000;
 
 export interface OperationNextCheck {
-  tool: "atrium.operation-status";
+  tool: "atrium.operation-wait";
   arguments: {
     operationId: string;
   };
@@ -46,6 +41,24 @@ export interface BackgroundRunSnapshot {
   };
   nextCheck?: OperationNextCheck;
   message?: string;
+}
+
+export interface BackgroundRunWaitOptions {
+  requestSafeWaitMs?: number;
+}
+
+export type BackgroundRunWaitResult = BackgroundRunSnapshot | BackgroundRunWaitContinue;
+
+export interface BackgroundRunWaitContinue {
+  ok: true;
+  status: "continue";
+  operationId: string;
+  resultPath: string;
+  startedAt: string;
+  nextWaitAfterMs: number;
+  mustReissueWait: true;
+  nextCheck: OperationNextCheck;
+  message: string;
 }
 
 interface BackgroundRunRecord {
@@ -99,6 +112,34 @@ export async function getBackgroundRun(operationId: string): Promise<BackgroundR
   }
 
   return toSnapshot(record);
+}
+
+export async function waitForBackgroundRun(operationId: string, options: BackgroundRunWaitOptions = {}): Promise<BackgroundRunWaitResult> {
+  if (!isSafeOperationId(operationId)) {
+    return unknownRun(operationId, "", "Operation id must be a single safe path segment.");
+  }
+
+  const waitMs = Math.min(options.requestSafeWaitMs ?? defaultWaitTimeoutMs, defaultWaitTimeoutMs);
+  const record = runs.get(operationId);
+  if (record === undefined) {
+    const persisted = await readPersistedSnapshot(operationId);
+    if (persisted.status === "running") {
+      return toContinue(persisted);
+    }
+
+    return persisted;
+  }
+
+  if (record.status !== "running") {
+    return toSnapshot(record);
+  }
+
+  await waitForCompletionOrTimeout(record.completion, waitMs);
+  if (record.status !== "running") {
+    return toSnapshot(record);
+  }
+
+  return toContinue(toSnapshot(record));
 }
 
 export function withLongRunningDefault(input: RunExecutableInput): RunExecutableInput {
@@ -224,16 +265,44 @@ function isPersistedSnapshotLike(value: PersistedSnapshot): value is PersistedSn
 
 function nextCheck(operationId: string): OperationNextCheck {
   return {
-    tool: "atrium.operation-status",
+    tool: "atrium.operation-wait",
     arguments: {
       operationId,
     },
-    callInMs: defaultNextCheckMs,
+    callInMs: 0,
   };
 }
 
 function runningMessage(): string {
-  return `Still running. Call atrium.operation-status with this operationId in ~${defaultNextCheckMs} ms. Repeat until status is completed or failed.`;
+  return "Still running. Call atrium.operation-wait with this operationId. Repeat until status is completed or failed.";
+}
+
+function toContinue(snapshot: BackgroundRunSnapshot): BackgroundRunWaitContinue {
+  return {
+    ok: true,
+    status: "continue",
+    operationId: snapshot.operationId,
+    resultPath: snapshot.resultPath,
+    startedAt: snapshot.startedAt,
+    nextWaitAfterMs: 0,
+    mustReissueWait: true,
+    nextCheck: nextCheck(snapshot.operationId),
+    message: runningMessage(),
+  };
+}
+
+async function waitForCompletionOrTimeout(completion: Promise<void>, timeoutMs: number): Promise<void> {
+  let timeout: NodeJS.Timeout | undefined;
+  await Promise.race([
+    completion,
+    new Promise<void>((resolve) => {
+      timeout = setTimeout(resolve, timeoutMs);
+      timeout.unref();
+    }),
+  ]);
+  if (timeout !== undefined) {
+    clearTimeout(timeout);
+  }
 }
 
 function unknownRun(operationId: string, resultPath: string, cause: string): BackgroundRunSnapshot {

@@ -12,7 +12,7 @@ describe("schema", () => {
       ["mcp-server"],
       ["mcp-schema"],
       ["mcp-run"],
-      ["mcp-operation-status"],
+      ["mcp-operation-wait"],
       ["update"],
     ]);
   });

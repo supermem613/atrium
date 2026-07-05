@@ -5,7 +5,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { doctorCommand } from "./commands/doctor.js";
-import { mcpOperationStatusCommand, mcpRunCommand, mcpSchemaCommand } from "./commands/mcpDebug.js";
+import { mcpOperationWaitCommand, mcpRunCommand, mcpSchemaCommand } from "./commands/mcpDebug.js";
 import { mcpConfigCommand } from "./commands/mcpConfig.js";
 import { schemaCommand } from "./commands/schema.js";
 import { startAtriumServer } from "./server.js";
@@ -55,14 +55,13 @@ program
   .option("--cwd <path>", "Working directory for the command")
   .option("--stdin <text>", "stdin content to pass to the command")
   .option("--stdin-file <path>", "Read stdin content from a UTF-8 file")
-  .option("--timeout-ms <ms>", "Execution timeout in milliseconds that bounds the child process. Defaults to 3600000")
   .option("--request-timeout-ms <ms>", "MCP client request timeout in milliseconds. Debug command only")
   .action(mcpRunCommand);
 
 program
-  .command("mcp-operation-status <operationId>")
-  .description("Check a durable operation created by any Atrium MCP tool")
-  .action(mcpOperationStatusCommand);
+  .command("mcp-operation-wait <operationId>")
+  .description("Wait for a durable operation created by any Atrium MCP tool")
+  .action(mcpOperationWaitCommand);
 
 program
   .command("update")
