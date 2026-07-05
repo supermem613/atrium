@@ -19,7 +19,7 @@ class FakeXrayClient implements XraySearchClientLike {
 }
 
 describe("search MCP tools", () => {
-  it("exposes the five verbs with stable schemas and routes calls to xray", async () => {
+  it("exposes the three search verbs with stable schemas and routes calls to xray", async () => {
     const fakeClient = new FakeXrayClient();
     const server = createAtriumServer({ searchClient: fakeClient });
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
@@ -30,10 +30,8 @@ describe("search MCP tools", () => {
 
     try {
       const listedTools = await client.listTools();
-      const visibleToolNames = listedTools.tools.map((tool) => tool.name);
-      for (const expectedName of ["find-files", "grep", "multi-grep", "grep-code", "multi-grep-code"]) {
-        assert.ok(visibleToolNames.includes(expectedName), `expected ${expectedName} to be listed`);
-      }
+      const visibleToolNames = listedTools.tools.map((tool) => tool.name).sort();
+      assert.deepEqual(visibleToolNames, ["find-files", "grep", "grep-code", "operation-status", "run", "schema"]);
 
       for (const toolName of ["grep", "grep-code"] as const) {
         const tool = listedTools.tools.find((candidate) => candidate.name === toolName);
@@ -41,30 +39,13 @@ describe("search MCP tools", () => {
         const inputSchema = tool.inputSchema as Record<string, unknown>;
         const properties = inputSchema.properties as Record<string, unknown> | undefined;
         assert.ok(properties, `${toolName} should expose properties`);
-        for (const propertyName of ["root", "query", "glob", "exclude", "max", "timeoutMs"]) {
+        for (const propertyName of ["root", "query", "queries", "regex", "glob", "exclude", "max", "timeoutMs"]) {
           assert.ok(properties?.[propertyName], `${toolName} should define ${propertyName}`);
         }
+        assert.equal((properties?.queries as Record<string, unknown>).type, "array", `${toolName} queries should be an array`);
+        assert.equal((properties?.regex as Record<string, unknown>).type, "boolean", `${toolName} regex should be a boolean`);
         const required = inputSchema.required as string[] | undefined;
-        assert.ok(required?.includes("root"), `${toolName} should require root`);
-        assert.ok(required?.includes("query"), `${toolName} should require query`);
-      }
-
-      for (const toolName of ["multi-grep", "multi-grep-code"] as const) {
-        const tool = listedTools.tools.find((candidate) => candidate.name === toolName);
-        assert.ok(tool, `expected ${toolName} to be listed`);
-        const inputSchema = tool.inputSchema as Record<string, unknown>;
-        const properties = inputSchema.properties as Record<string, unknown> | undefined;
-        assert.ok(properties, `${toolName} should expose properties`);
-        for (const propertyName of ["root", "queries", "glob", "exclude", "max", "timeoutMs"]) {
-          assert.ok(properties?.[propertyName], `${toolName} should define ${propertyName}`);
-        }
-        assert.equal(properties?.query, undefined, `${toolName} should not define a single query`);
-        const queriesSchema = properties?.queries as Record<string, unknown>;
-        assert.equal(queriesSchema.type, "array", `${toolName} queries should be an array`);
-        const required = inputSchema.required as string[] | undefined;
-        assert.ok(required?.includes("root"), `${toolName} should require root`);
-        assert.ok(required?.includes("queries"), `${toolName} should require queries`);
-        assert.ok(!required?.includes("query"), `${toolName} should not require query`);
+        assert.deepEqual(required, ["root"], `${toolName} should require only root`);
       }
 
       const findFiles = listedTools.tools.find((candidate) => candidate.name === "find-files");
@@ -74,29 +55,49 @@ describe("search MCP tools", () => {
       assert.deepEqual(Object.keys(findFilesProperties ?? {}).sort(), ["exclude", "glob", "max", "root", "timeoutMs"]);
       assert.deepEqual(findFilesSchema.required, ["root"]);
 
-      const contentArguments = { root: "/tmp/x", query: "needle", glob: "**/*.ts", exclude: "**/dist/**", max: 5, timeoutMs: 250 };
       const expectedContentResult = { kind: "content", matches: [{ path: "src/one.ts", line: 7, text: "matched text" }], warnings: [] };
-      const singleRouting = [
-        { name: "grep", expected: { command: "search", root: "/tmp/x", query: "needle", all: true, glob: "**/*.ts", exclude: "**/dist/**", max: 5, timeoutMs: 250 } },
-        { name: "grep-code", expected: { command: "search", root: "/tmp/x", query: "needle", glob: "**/*.ts", exclude: "**/dist/**", max: 5, timeoutMs: 250 } },
-      ] as const;
 
-      for (const routing of singleRouting) {
-        const parsed = await callJson(client, routing.name, contentArguments);
+      // A single query stays a literal xray search, so grep and grep-code behavior is unchanged.
+      const singleLiteralRouting = [
+        { name: "grep", args: { root: "/tmp/x", query: "needle", glob: "**/*.ts", exclude: "**/dist/**", max: 5, timeoutMs: 250 }, expected: { command: "search", root: "/tmp/x", query: "needle", all: true, glob: "**/*.ts", exclude: "**/dist/**", max: 5, timeoutMs: 250 } },
+        { name: "grep-code", args: { root: "/tmp/x", query: "needle", glob: "**/*.ts", exclude: "**/dist/**", max: 5, timeoutMs: 250 }, expected: { command: "search", root: "/tmp/x", query: "needle", glob: "**/*.ts", exclude: "**/dist/**", max: 5, timeoutMs: 250 } },
+      ] as const;
+      for (const routing of singleLiteralRouting) {
+        const parsed = await callJson(client, routing.name, routing.args);
         assert.deepEqual(parsed, expectedContentResult);
         assert.deepEqual(fakeClient.calls.at(-1), routing.expected);
       }
 
-      const multiArguments = { root: "/tmp/x", queries: ["alpha", "beta(x)", "gamma"], glob: "**/*.ts", exclude: "**/dist/**", max: 5, timeoutMs: 250 };
-      const multiRouting = [
-        { name: "multi-grep", expected: { command: "search", root: "/tmp/x", query: "alpha|beta(x)|gamma", regex: true, all: true, glob: "**/*.ts", exclude: "**/dist/**", max: 5, timeoutMs: 250 } },
-        { name: "multi-grep-code", expected: { command: "search", root: "/tmp/x", query: "alpha|beta(x)|gamma", regex: true, glob: "**/*.ts", exclude: "**/dist/**", max: 5, timeoutMs: 250 } },
+      // Multiple literal queries are regex-escaped and joined into one alternation.
+      const multiLiteralRouting = [
+        { name: "grep", expected: { command: "search", root: "/tmp/x", query: "alpha|beta\\(x\\)|gamma", regex: true, all: true, glob: "**/*.ts", exclude: "**/dist/**", max: 5, timeoutMs: 250 } },
+        { name: "grep-code", expected: { command: "search", root: "/tmp/x", query: "alpha|beta\\(x\\)|gamma", regex: true, glob: "**/*.ts", exclude: "**/dist/**", max: 5, timeoutMs: 250 } },
       ] as const;
-
-      for (const routing of multiRouting) {
-        const parsed = await callJson(client, routing.name, multiArguments);
+      for (const routing of multiLiteralRouting) {
+        const parsed = await callJson(client, routing.name, { root: "/tmp/x", queries: ["alpha", "beta(x)", "gamma"], glob: "**/*.ts", exclude: "**/dist/**", max: 5, timeoutMs: 250 });
         assert.deepEqual(parsed, expectedContentResult);
         assert.deepEqual(fakeClient.calls.at(-1), routing.expected);
+      }
+
+      // regex:true passes patterns through as a raw alternation without escaping.
+      const regexRouting = [
+        { name: "grep", args: { root: "/tmp/x", queries: ["alpha", "beta(x)", "gamma"], regex: true }, expected: { command: "search", root: "/tmp/x", query: "alpha|beta(x)|gamma", regex: true, all: true } },
+        { name: "grep-code", args: { root: "/tmp/x", query: "be.n", regex: true }, expected: { command: "search", root: "/tmp/x", query: "be.n", regex: true } },
+      ] as const;
+      for (const routing of regexRouting) {
+        const parsed = await callJson(client, routing.name, routing.args);
+        assert.deepEqual(parsed, expectedContentResult);
+        assert.deepEqual(fakeClient.calls.at(-1), routing.expected);
+      }
+
+      // Ambiguous or empty pattern input is rejected with a clear, actionable message.
+      for (const toolName of ["grep", "grep-code"] as const) {
+        const both = await client.callTool({ name: toolName, arguments: { root: "/tmp/x", query: "a", queries: ["b"] } });
+        assert.equal(both.isError, true, `${toolName} should reject query and queries together`);
+        assert.match((both.content as Array<{ text: string }>)[0].text, /exactly one of query or queries/);
+        const neither = await client.callTool({ name: toolName, arguments: { root: "/tmp/x" } });
+        assert.equal(neither.isError, true, `${toolName} should reject missing query and queries`);
+        assert.match((neither.content as Array<{ text: string }>)[0].text, /exactly one of query or queries/);
       }
 
       const parsedFiles = await callJson(client, "find-files", { root: "/tmp/f", glob: "**/*.ts", exclude: "**/dist/**", max: 50, timeoutMs: 250 });

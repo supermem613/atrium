@@ -1,12 +1,12 @@
 # Search primitives
 
-Atrium exposes `find-files`, `grep`, `multi-grep`, `grep-code`, and `multi-grep-code` as first-class MCP tools for local search. These are the public search surface. Atrium routes them to [xray](https://github.com/supermem613/xray) (bundled ripgrep): the content verbs run `xray search` and `find-files` runs `xray files`. xray must be on `PATH`. Callers should not invoke xray directly; use these MCP tools.
+Atrium exposes `find-files`, `grep`, and `grep-code` as first-class MCP tools for local search. These are the public search surface. Atrium routes them to [xray](https://github.com/supermem613/xray) (bundled ripgrep): the content verbs run `xray search` and `find-files` runs `xray files`. xray must be on `PATH`. Callers should not invoke xray directly; use these MCP tools.
 
 These are MCP tools, not standalone CLI subcommands and not entries in `atrium schema`. The `schema` command documents Atrium's CLI commands. MCP clients discover these tools from the MCP tool list.
 
 ## Tool shapes
 
-The two single-pattern content verbs (`grep`, `grep-code`) share one input shape:
+The two content verbs (`grep`, `grep-code`) share one input shape. Pass a single `query`:
 
 ```json
 {
@@ -19,7 +19,7 @@ The two single-pattern content verbs (`grep`, `grep-code`) share one input shape
 }
 ```
 
-The two multi-pattern content verbs (`multi-grep`, `multi-grep-code`) take a `queries` array instead of a single `query`. Atrium joins the patterns into one regex alternation before running xray:
+Or pass a `queries` array to match any of several patterns. Atrium escapes each pattern and joins them into one alternation before running xray:
 
 ```json
 {
@@ -29,6 +29,16 @@ The two multi-pattern content verbs (`multi-grep`, `multi-grep-code`) take a `qu
   "exclude": "**/node_modules/**",
   "max": 20,
   "timeoutMs": 30000
+}
+```
+
+Provide exactly one of `query` or `queries`; sending both or neither is rejected. Patterns match literally by default. Set `regex` to `true` to treat them as regular expressions instead, in which case Atrium joins them verbatim with `|`:
+
+```json
+{
+  "root": "C:\\repo",
+  "queries": ["foo\\d+", "bar.*baz"],
+  "regex": true
 }
 ```
 
@@ -47,11 +57,11 @@ The two multi-pattern content verbs (`multi-grep`, `multi-grep-code`) take a `qu
 Required:
 
 - `root`: the directory to search from.
-- `query`: the content query for the single-pattern verbs `grep` and `grep-code`.
-- `queries`: an array of one or more regex patterns for the multi-pattern verbs `multi-grep` and `multi-grep-code`. Atrium combines them into an alternation such as `foo|bar|baz`.
+- exactly one of `query` or `queries` for the content verbs `grep` and `grep-code`. `query` is a single pattern; `queries` is an array of one or more patterns that Atrium combines into an alternation such as `foo|bar|baz`.
 
 Optional:
 
+- `regex`: treat the patterns as regular expressions. Defaults to `false`, which matches patterns literally.
 - `glob`: constrain searched paths.
 - `exclude`: skip matching paths, applied as a negated glob.
 - `max`: cap returned results.
@@ -62,10 +72,10 @@ Optional:
 | Goal | Preferred tool | Scope |
 | --- | --- | --- |
 | Find paths and file names | `find-files` | unrestricted |
-| Broad content search across the filesystem | `grep`, `multi-grep` | unrestricted |
-| Code-oriented implementation investigation | `grep-code`, `multi-grep-code` | git-aware, code only |
+| Broad content search across the filesystem | `grep` | unrestricted |
+| Code-oriented implementation investigation | `grep-code` | git-aware, code only |
 
-`grep`, `multi-grep`, and `find-files` are **unrestricted**: they include hidden, gitignored, and vendor files such as `node_modules`. `grep-code` and `multi-grep-code` are **git-aware** and skip hidden, gitignored, and vendor files. Prefer `grep-code` and `multi-grep-code` for symbols, APIs, tests, command handlers, error strings, and docs related to code. Use `grep` and `multi-grep` for broad filesystem content or generated and dependency artifacts. There is no `find-code` tool; use `find-files` for path discovery.
+`grep` and `find-files` are **unrestricted**: they include hidden, gitignored, and vendor files such as `node_modules`. `grep-code` is **git-aware** and skips hidden, gitignored, and vendor files. Prefer `grep-code` for symbols, APIs, tests, command handlers, error strings, and docs related to code. Use `grep` for broad filesystem content or generated and dependency artifacts. There is no `find-code` tool; use `find-files` for path discovery.
 
 ## Result shapes
 
@@ -81,7 +91,7 @@ Optional:
 }
 ```
 
-`grep`, `multi-grep`, `grep-code`, and `multi-grep-code` return content matches:
+`grep` and `grep-code` return content matches:
 
 ```json
 {

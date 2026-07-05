@@ -6,6 +6,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
+import { McpError, ErrorCode } from "@modelcontextprotocol/sdk/types.js";
 import { introspectTool } from "./core/introspect.js";
 import { adoptBackgroundRun, getBackgroundRun, withLongRunningDefault } from "./core/backgroundRuns.js";
 import { RunExecutableInput, RunExecutableResult, startExecutableRun } from "./core/runner.js";
@@ -22,40 +23,62 @@ const packageVersion = (JSON.parse(readFileSync(new URL("../package.json", impor
 interface SearchVerbSpec {
   command: "search" | "files";
   all: boolean;
-  regex: boolean;
   kind: "content" | "files";
   title: string;
   description: string;
 }
 
-const contentVerbs: Record<"grep" | "grep-code" | "multi-grep" | "multi-grep-code", SearchVerbSpec> = {
+const contentVerbs: Record<"grep" | "grep-code", SearchVerbSpec> = {
   "grep": {
-    command: "search", all: true, regex: false, kind: "content",
+    command: "search", all: true, kind: "content",
     title: "Grep files",
-    description: "Unrestricted content search across the filesystem, including hidden, gitignored, and vendor files. Use for broad filesystem or generated and dependency content. For code-aware search prefer grep-code.",
+    description: "Unrestricted content search across the filesystem, including hidden, gitignored, and vendor files. Pass a single literal query, or a queries array to match any of several patterns. Set regex true to treat patterns as regular expressions. For code-aware search prefer grep-code.",
   },
   "grep-code": {
-    command: "search", all: false, regex: false, kind: "content",
+    command: "search", all: false, kind: "content",
     title: "Grep code",
-    description: "Git-aware content search over code that skips hidden, gitignored, and vendor files. Prefer this first for symbols, APIs, tests, command handlers, error strings, and docs related to code.",
-  },
-  "multi-grep": {
-    command: "search", all: true, regex: true, kind: "content",
-    title: "Multi-grep files",
-    description: "Unrestricted multi-pattern content search. Provide a regex alternation such as foo|bar|baz. Includes hidden, gitignored, and vendor files.",
-  },
-  "multi-grep-code": {
-    command: "search", all: false, regex: true, kind: "content",
-    title: "Multi-grep code",
-    description: "Git-aware multi-pattern content search over code. Provide a regex alternation such as foo|bar|baz. Prefer this first for code-oriented investigation.",
+    description: "Git-aware content search over code that skips hidden, gitignored, and vendor files. Pass a single literal query, or a queries array to match any of several patterns. Set regex true to treat patterns as regular expressions. Prefer this first for symbols, APIs, tests, command handlers, error strings, and docs related to code.",
   },
 };
 
 const findFilesVerb: SearchVerbSpec = {
-  command: "files", all: true, regex: false, kind: "files",
+  command: "files", all: true, kind: "files",
   title: "Find files",
   description: "List file paths under a root, filtered by glob or type. Path discovery only; it never reads file contents. Includes hidden, gitignored, and vendor files.",
 };
+
+// Escapes regex metacharacters so a literal pattern matches itself when several
+// literal patterns are combined into one xray alternation.
+function escapeRegExp(pattern: string): string {
+  return pattern.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+// Resolves query/queries/regex into one xray query plus whether xray runs in
+// regex mode. A lone literal query stays a plain literal search so grep and
+// grep-code keep their prior single-pattern behavior. Multiple literal patterns
+// are escaped and joined into an alternation. When regex is set, patterns are
+// joined verbatim. Exactly one of query or queries must be present.
+function resolveSearchQuery(
+  toolName: string,
+  query: string | undefined,
+  queries: string[] | undefined,
+  regex: boolean,
+): { query: string; regex: boolean } {
+  if ((query === undefined) === (queries === undefined)) {
+    throw new McpError(
+      ErrorCode.InvalidParams,
+      `Invalid arguments for tool ${toolName}: provide exactly one of query or queries.`,
+    );
+  }
+  const patterns = query !== undefined ? [query] : queries as string[];
+  if (regex) {
+    return { query: patterns.join("|"), regex: true };
+  }
+  if (patterns.length === 1) {
+    return { query: patterns[0], regex: false };
+  }
+  return { query: patterns.map(escapeRegExp).join("|"), regex: true };
+}
 
 // Advertised to the client at the MCP initialize handshake so the model learns the
 // hard constraints up front instead of discovering them through denied tool calls.
@@ -76,8 +99,8 @@ const atriumInstructions = [
   "- Use the schema tool to discover a CLI invocation shape instead of scraping help through a shell.",
   "",
   "Search primitives:",
-  "- Content search verbs grep, grep-code, multi-grep, and multi-grep-code run xray search. find-files lists paths with xray files and never reads contents.",
-  "- grep, multi-grep, and find-files are unrestricted and include hidden, gitignored, and vendor files. grep-code and multi-grep-code are git-aware and scoped to code.",
+  "- Content search verbs grep and grep-code run xray search. find-files lists paths with xray files and never reads contents.",
+  "- grep and grep-code take a single literal query or a queries array to match any of several patterns. Set regex true to treat patterns as regular expressions. grep and find-files are unrestricted and include hidden, gitignored, and vendor files. grep-code is git-aware and scoped to code.",
   "- These are first-class Atrium MCP tools backed by xray. Do not call xray directly for search.",
 ].join("\n");
 
@@ -145,13 +168,13 @@ export function createAtriumServer(options: AtriumServerOptions = {}): McpServer
     async ({ operationId }) => toolTextResult(await getBackgroundRun(operationId)),
   );
 
-  const runContentSearch = async (spec: SearchVerbSpec, query: string, root: string, glob?: string, exclude?: string, max?: number, timeoutMs?: number) =>
+  const runContentSearch = async (spec: SearchVerbSpec, query: string, regex: boolean, root: string, glob?: string, exclude?: string, max?: number, timeoutMs?: number) =>
     toolTextResult(await runSearchWithHandoff(
       () => searchClient.run({
         command: spec.command,
         root,
         query,
-        ...(spec.regex ? { regex: true } : {}),
+        ...(regex ? { regex: true } : {}),
         ...(spec.all ? { all: true } : {}),
         ...(glob !== undefined ? { glob } : {}),
         ...(exclude !== undefined ? { exclude } : {}),
@@ -162,29 +185,6 @@ export function createAtriumServer(options: AtriumServerOptions = {}): McpServer
     ));
 
   for (const [toolName, spec] of Object.entries(contentVerbs)) {
-    if (spec.regex) {
-      // Multi verbs are named and described as multi-pattern, so callers naturally
-      // send a queries array. Accept that shape and join it into a single regex
-      // alternation for xray instead of forcing the caller to pre-join with a pipe.
-      server.registerTool(
-        toolName,
-        {
-          title: spec.title,
-          description: spec.description,
-          inputSchema: {
-            root: z.string().min(1).describe("Root path to search from."),
-            queries: z.array(z.string().min(1)).min(1).describe("One or more regex patterns. They are combined into a single alternation such as foo|bar|baz."),
-            glob: z.string().min(1).optional().describe("Optional glob to constrain the search."),
-            exclude: z.string().min(1).optional().describe("Optional exclude pattern applied as a negated glob."),
-            max: z.number().int().positive().optional().describe("Optional maximum number of results to return."),
-            timeoutMs: z.number().int().positive().max(3_600_000).optional().describe("Optional timeout in milliseconds for the request."),
-          },
-        },
-        async ({ root, queries, glob, exclude, max, timeoutMs }) => runContentSearch(spec, queries.join("|"), root, glob, exclude, max, timeoutMs),
-      );
-      continue;
-    }
-
     server.registerTool(
       toolName,
       {
@@ -192,14 +192,19 @@ export function createAtriumServer(options: AtriumServerOptions = {}): McpServer
         description: spec.description,
         inputSchema: {
           root: z.string().min(1).describe("Root path to search from."),
-          query: z.string().min(1).describe("Search query passed to xray."),
+          query: z.string().min(1).optional().describe("A single search pattern. Provide either query or queries, not both."),
+          queries: z.array(z.string().min(1)).min(1).optional().describe("Two or more patterns to match any of. Atrium combines them into one alternation. Provide either query or queries, not both."),
+          regex: z.boolean().optional().describe("Treat the patterns as regular expressions. Defaults to false, which matches patterns literally."),
           glob: z.string().min(1).optional().describe("Optional glob to constrain the search."),
           exclude: z.string().min(1).optional().describe("Optional exclude pattern applied as a negated glob."),
           max: z.number().int().positive().optional().describe("Optional maximum number of results to return."),
           timeoutMs: z.number().int().positive().max(3_600_000).optional().describe("Optional timeout in milliseconds for the request."),
         },
       },
-      async ({ root, query, glob, exclude, max, timeoutMs }) => runContentSearch(spec, query, root, glob, exclude, max, timeoutMs),
+      async ({ root, query, queries, regex, glob, exclude, max, timeoutMs }) => {
+        const resolved = resolveSearchQuery(toolName, query, queries, regex ?? false);
+        return runContentSearch(spec, resolved.query, resolved.regex, root, glob, exclude, max, timeoutMs);
+      },
     );
   }
 

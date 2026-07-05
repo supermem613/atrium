@@ -7,7 +7,7 @@ Atrium is an MCP server for agents. It exposes a small surface:
 - `atrium.schema` — discover a tool's invocation shape by asking the tool itself.
 - `atrium.run` — run a named CLI or executable with structured args and JSON results.
 - `atrium.operation-status` — inspect a durable operation by id, handed off by any Atrium tool.
-- `atrium.find-files`, `atrium.grep`, `atrium.multi-grep`, `atrium.grep-code`, `atrium.multi-grep-code` — search files through first-class MCP primitives.
+- `atrium.find-files`, `atrium.grep`, `atrium.grep-code` — search files through first-class MCP primitives.
 
 Large stdout/stderr is written to temp files and returned as paths, so agents do not dump command output into the conversation context.
 
@@ -97,9 +97,9 @@ atrium mcp-operation-status <operationId>
 
 ## Search MCP tools
 
-Atrium's MCP server exposes `find-files`, `grep`, `multi-grep`, `grep-code`, and `multi-grep-code` as first-class MCP tools backed by [xray](https://github.com/supermem613/xray) (bundled ripgrep). The content verbs run `xray search`; `find-files` runs `xray files` and never reads file contents. The single-pattern verbs `grep` and `grep-code` take a `root` and `query`; the multi-pattern verbs `multi-grep` and `multi-grep-code` take a `root` and a `queries` array that Atrium joins into a regex alternation. All content verbs also accept optional `glob`, `exclude`, `max`, and `timeoutMs`; `find-files` takes the same shape without `query`/`queries`, so path discovery is by `glob` rather than content. There is no `find-code` tool; use `find-files` for path discovery.
+Atrium's MCP server exposes `find-files`, `grep`, and `grep-code` as first-class MCP tools backed by [xray](https://github.com/supermem613/xray) (bundled ripgrep). The content verbs run `xray search`; `find-files` runs `xray files` and never reads file contents. `grep` and `grep-code` take a `root` plus either a single `query` or a `queries` array that matches any of several patterns; set `regex` true to treat the patterns as regular expressions instead of literal text. All content verbs also accept optional `glob`, `exclude`, `max`, and `timeoutMs`; `find-files` takes the same shape without `query`/`queries`, so path discovery is by `glob` rather than content. There is no `find-code` tool; use `find-files` for path discovery.
 
-`grep`, `multi-grep`, and `find-files` are unrestricted: they include hidden, gitignored, and vendor files such as `node_modules`. `grep-code` and `multi-grep-code` are git-aware and skip hidden, gitignored, and vendor files. Prefer `grep-code` and `multi-grep-code` for symbols, APIs, tests, command handlers, error strings, and docs related to code. Use `grep` and `multi-grep` for broad filesystem content or generated and dependency artifacts.
+`grep` and `find-files` are unrestricted: they include hidden, gitignored, and vendor files such as `node_modules`. `grep-code` is git-aware and skips hidden, gitignored, and vendor files. Prefer `grep-code` for symbols, APIs, tests, command handlers, error strings, and docs related to code. Use `grep` for broad filesystem content or generated and dependency artifacts.
 
 ```json
 {

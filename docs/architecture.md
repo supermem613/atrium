@@ -5,7 +5,7 @@ Atrium is a stdio MCP server that gives agents a structured path for single CLI 
 - `schema` discovers how a target executable wants to be called.
 - `run` executes a target executable with an argument vector and returns a compact JSON result.
 - `operation-status` inspects a durable operation handle handed off by any Atrium tool.
-- `find-files`, `grep`, and `multi-grep` search local files through first-class MCP primitives.
+- `find-files`, `grep`, and `grep-code` search local files through first-class MCP primitives.
 
 PowerShell remains the right tool for ad-hoc scripting, variables, loops, pipelines, and interactive commands. Long-running single executable calls hand off a durable operation handle that the caller polls with `operation-status`.
 
