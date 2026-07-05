@@ -6,7 +6,7 @@ These are MCP tools, not standalone CLI subcommands and not entries in `atrium s
 
 ## Tool shapes
 
-The four content verbs (`grep`, `grep-code`, `multi-grep`, `multi-grep-code`) share one input shape:
+The two single-pattern content verbs (`grep`, `grep-code`) share one input shape:
 
 ```json
 {
@@ -19,7 +19,20 @@ The four content verbs (`grep`, `grep-code`, `multi-grep`, `multi-grep-code`) sh
 }
 ```
 
-`find-files` is path discovery only and takes the same shape **without** `query`. It never reads file contents; narrow the listing by `glob` and `exclude` instead:
+The two multi-pattern content verbs (`multi-grep`, `multi-grep-code`) take a `queries` array instead of a single `query`. Atrium joins the patterns into one regex alternation before running xray:
+
+```json
+{
+  "root": "C:\\repo",
+  "queries": ["TODO", "FIXME", "HACK"],
+  "glob": "**/*.{ts,md}",
+  "exclude": "**/node_modules/**",
+  "max": 20,
+  "timeoutMs": 30000
+}
+```
+
+`find-files` is path discovery only and takes the same shape **without** `query` or `queries`. It never reads file contents; narrow the listing by `glob` and `exclude` instead:
 
 ```json
 {
@@ -34,7 +47,8 @@ The four content verbs (`grep`, `grep-code`, `multi-grep`, `multi-grep-code`) sh
 Required:
 
 - `root`: the directory to search from.
-- `query`: the content query (content verbs only). `multi-grep` and `multi-grep-code` take a regex alternation such as `foo|bar|baz`.
+- `query`: the content query for the single-pattern verbs `grep` and `grep-code`.
+- `queries`: an array of one or more regex patterns for the multi-pattern verbs `multi-grep` and `multi-grep-code`. Atrium combines them into an alternation such as `foo|bar|baz`.
 
 Optional:
 

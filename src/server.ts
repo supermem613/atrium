@@ -145,7 +145,46 @@ export function createAtriumServer(options: AtriumServerOptions = {}): McpServer
     async ({ operationId }) => toolTextResult(await getBackgroundRun(operationId)),
   );
 
+  const runContentSearch = async (spec: SearchVerbSpec, query: string, root: string, glob?: string, exclude?: string, max?: number, timeoutMs?: number) =>
+    toolTextResult(await runSearchWithHandoff(
+      () => searchClient.run({
+        command: spec.command,
+        root,
+        query,
+        ...(spec.regex ? { regex: true } : {}),
+        ...(spec.all ? { all: true } : {}),
+        ...(glob !== undefined ? { glob } : {}),
+        ...(exclude !== undefined ? { exclude } : {}),
+        ...(max !== undefined ? { max } : {}),
+        ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+      }).then((envelope) => normalizeXrayResult(envelope, spec.kind)),
+      backgroundHandoffAfterMs,
+    ));
+
   for (const [toolName, spec] of Object.entries(contentVerbs)) {
+    if (spec.regex) {
+      // Multi verbs are named and described as multi-pattern, so callers naturally
+      // send a queries array. Accept that shape and join it into a single regex
+      // alternation for xray instead of forcing the caller to pre-join with a pipe.
+      server.registerTool(
+        toolName,
+        {
+          title: spec.title,
+          description: spec.description,
+          inputSchema: {
+            root: z.string().min(1).describe("Root path to search from."),
+            queries: z.array(z.string().min(1)).min(1).describe("One or more regex patterns. They are combined into a single alternation such as foo|bar|baz."),
+            glob: z.string().min(1).optional().describe("Optional glob to constrain the search."),
+            exclude: z.string().min(1).optional().describe("Optional exclude pattern applied as a negated glob."),
+            max: z.number().int().positive().optional().describe("Optional maximum number of results to return."),
+            timeoutMs: z.number().int().positive().max(3_600_000).optional().describe("Optional timeout in milliseconds for the request."),
+          },
+        },
+        async ({ root, queries, glob, exclude, max, timeoutMs }) => runContentSearch(spec, queries.join("|"), root, glob, exclude, max, timeoutMs),
+      );
+      continue;
+    }
+
     server.registerTool(
       toolName,
       {
@@ -160,20 +199,7 @@ export function createAtriumServer(options: AtriumServerOptions = {}): McpServer
           timeoutMs: z.number().int().positive().max(3_600_000).optional().describe("Optional timeout in milliseconds for the request."),
         },
       },
-      async ({ root, query, glob, exclude, max, timeoutMs }) => toolTextResult(await runSearchWithHandoff(
-        () => searchClient.run({
-          command: spec.command,
-          root,
-          query,
-          ...(spec.regex ? { regex: true } : {}),
-          ...(spec.all ? { all: true } : {}),
-          ...(glob !== undefined ? { glob } : {}),
-          ...(exclude !== undefined ? { exclude } : {}),
-          ...(max !== undefined ? { max } : {}),
-          ...(timeoutMs !== undefined ? { timeoutMs } : {}),
-        }).then((envelope) => normalizeXrayResult(envelope, spec.kind)),
-        backgroundHandoffAfterMs,
-      )),
+      async ({ root, query, glob, exclude, max, timeoutMs }) => runContentSearch(spec, query, root, glob, exclude, max, timeoutMs),
     );
   }
 

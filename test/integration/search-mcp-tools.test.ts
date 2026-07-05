@@ -35,7 +35,7 @@ describe("search MCP tools", () => {
         assert.ok(visibleToolNames.includes(expectedName), `expected ${expectedName} to be listed`);
       }
 
-      for (const toolName of ["grep", "multi-grep", "grep-code", "multi-grep-code"] as const) {
+      for (const toolName of ["grep", "grep-code"] as const) {
         const tool = listedTools.tools.find((candidate) => candidate.name === toolName);
         assert.ok(tool, `expected ${toolName} to be listed`);
         const inputSchema = tool.inputSchema as Record<string, unknown>;
@@ -49,6 +49,24 @@ describe("search MCP tools", () => {
         assert.ok(required?.includes("query"), `${toolName} should require query`);
       }
 
+      for (const toolName of ["multi-grep", "multi-grep-code"] as const) {
+        const tool = listedTools.tools.find((candidate) => candidate.name === toolName);
+        assert.ok(tool, `expected ${toolName} to be listed`);
+        const inputSchema = tool.inputSchema as Record<string, unknown>;
+        const properties = inputSchema.properties as Record<string, unknown> | undefined;
+        assert.ok(properties, `${toolName} should expose properties`);
+        for (const propertyName of ["root", "queries", "glob", "exclude", "max", "timeoutMs"]) {
+          assert.ok(properties?.[propertyName], `${toolName} should define ${propertyName}`);
+        }
+        assert.equal(properties?.query, undefined, `${toolName} should not define a single query`);
+        const queriesSchema = properties?.queries as Record<string, unknown>;
+        assert.equal(queriesSchema.type, "array", `${toolName} queries should be an array`);
+        const required = inputSchema.required as string[] | undefined;
+        assert.ok(required?.includes("root"), `${toolName} should require root`);
+        assert.ok(required?.includes("queries"), `${toolName} should require queries`);
+        assert.ok(!required?.includes("query"), `${toolName} should not require query`);
+      }
+
       const findFiles = listedTools.tools.find((candidate) => candidate.name === "find-files");
       assert.ok(findFiles, "expected find-files to be listed");
       const findFilesSchema = findFiles.inputSchema as Record<string, unknown>;
@@ -58,15 +76,25 @@ describe("search MCP tools", () => {
 
       const contentArguments = { root: "/tmp/x", query: "needle", glob: "**/*.ts", exclude: "**/dist/**", max: 5, timeoutMs: 250 };
       const expectedContentResult = { kind: "content", matches: [{ path: "src/one.ts", line: 7, text: "matched text" }], warnings: [] };
-      const contentRouting = [
+      const singleRouting = [
         { name: "grep", expected: { command: "search", root: "/tmp/x", query: "needle", all: true, glob: "**/*.ts", exclude: "**/dist/**", max: 5, timeoutMs: 250 } },
         { name: "grep-code", expected: { command: "search", root: "/tmp/x", query: "needle", glob: "**/*.ts", exclude: "**/dist/**", max: 5, timeoutMs: 250 } },
-        { name: "multi-grep", expected: { command: "search", root: "/tmp/x", query: "needle", regex: true, all: true, glob: "**/*.ts", exclude: "**/dist/**", max: 5, timeoutMs: 250 } },
-        { name: "multi-grep-code", expected: { command: "search", root: "/tmp/x", query: "needle", regex: true, glob: "**/*.ts", exclude: "**/dist/**", max: 5, timeoutMs: 250 } },
       ] as const;
 
-      for (const routing of contentRouting) {
+      for (const routing of singleRouting) {
         const parsed = await callJson(client, routing.name, contentArguments);
+        assert.deepEqual(parsed, expectedContentResult);
+        assert.deepEqual(fakeClient.calls.at(-1), routing.expected);
+      }
+
+      const multiArguments = { root: "/tmp/x", queries: ["alpha", "beta(x)", "gamma"], glob: "**/*.ts", exclude: "**/dist/**", max: 5, timeoutMs: 250 };
+      const multiRouting = [
+        { name: "multi-grep", expected: { command: "search", root: "/tmp/x", query: "alpha|beta(x)|gamma", regex: true, all: true, glob: "**/*.ts", exclude: "**/dist/**", max: 5, timeoutMs: 250 } },
+        { name: "multi-grep-code", expected: { command: "search", root: "/tmp/x", query: "alpha|beta(x)|gamma", regex: true, glob: "**/*.ts", exclude: "**/dist/**", max: 5, timeoutMs: 250 } },
+      ] as const;
+
+      for (const routing of multiRouting) {
+        const parsed = await callJson(client, routing.name, multiArguments);
         assert.deepEqual(parsed, expectedContentResult);
         assert.deepEqual(fakeClient.calls.at(-1), routing.expected);
       }
