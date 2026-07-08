@@ -31,7 +31,7 @@ describe("search MCP tools", () => {
     try {
       const listedTools = await client.listTools();
       const visibleToolNames = listedTools.tools.map((tool) => tool.name).sort();
-      assert.deepEqual(visibleToolNames, ["find-files", "grep", "grep-code", "operation-wait", "run", "schema"]);
+      assert.deepEqual(visibleToolNames, ["find-files", "grep", "grep-code", "operation-wait", "read", "run", "schema"]);
 
       for (const toolName of ["grep", "grep-code"] as const) {
         const tool = listedTools.tools.find((candidate) => candidate.name === toolName);

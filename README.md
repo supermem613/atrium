@@ -7,6 +7,7 @@ Atrium is an MCP server for agents. It exposes a small surface:
 - `atrium.schema` — discover a tool's invocation shape by asking the tool itself.
 - `atrium.run` — run a named CLI or executable with structured args and JSON results.
 - `atrium.operation-wait` — wait for a durable operation by id, handed off by any Atrium tool.
+- `atrium.read` — read a UTF-8 text file with deterministic line-range clamping.
 - `atrium.find-files`, `atrium.grep`, `atrium.grep-code` — search files through first-class MCP primitives.
 
 Large stdout/stderr is written to temp files and returned as paths, so agents do not dump command output into the conversation context.
@@ -114,6 +115,34 @@ Atrium's MCP server exposes `find-files`, `grep`, and `grep-code` as first-class
 ```
 
 These are MCP tools, not standalone CLI subcommands. The `atrium schema` command remains the catalog for Atrium's CLI commands. See [Search primitives](docs/search-primitives.md) for complete request, result, and long-running handle shapes.
+
+## Read MCP tool
+
+`atrium.read` reads UTF-8 text files by 1-based line range. It clamps ranges instead of failing when the requested end goes past EOF, and the returned `range` plus `meta.totalLines` is the complete paging signal.
+
+```json
+{
+  "ok": true,
+  "path": "C:\\repo\\src\\server.ts",
+  "range": [2, 3],
+  "meta": { "totalLines": 3, "bytes": 14 },
+  "content": "two\nthree\n"
+}
+```
+
+For large ranges, `content` uses the same file-value contract as command output:
+
+```json
+{
+  "ok": true,
+  "path": "C:\\repo\\large.txt",
+  "range": [1, 500],
+  "meta": { "totalLines": 900, "bytes": 50000 },
+  "content": { "file": "C:\\Users\\...\\content.txt", "bytes": 12000 }
+}
+```
+
+Expected non-content outcomes return `ok:false` with `status` and `hint`, for example `not-found`, `unsupported`, or `invalid-args`. Successful reads do not include separate EOF or adjustment flags because `range` and `meta.totalLines` already carry that information. See [Read primitive](docs/read-primitive.md) for the complete contract.
 
 MCP callers can use the same compact file-value contract for inputs and outputs:
 

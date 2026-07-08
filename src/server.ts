@@ -14,6 +14,7 @@ import { ExecutionQueue } from "./core/executionQueue.js";
 import { toolTextResult } from "./mcp/format.js";
 import { createXrayClient } from "./core/search/xrayClient.js";
 import { normalizeXrayResult } from "./core/search/normalize.js";
+import { readTextFileSlice } from "./core/readFile.js";
 import type { XraySearchClientLike } from "./core/search/types.js";
 
 const defaultBackgroundHandoffAfterMs = 45_000;
@@ -168,6 +169,21 @@ export function createAtriumServer(options: AtriumServerOptions = {}): McpServer
       },
     },
     async ({ operationId }) => toolTextResult(await waitForBackgroundRun(operationId, { requestSafeWaitMs: waitTimeoutMs })),
+  );
+
+  server.registerTool(
+    "read",
+    {
+      title: "Read text file range",
+      description: "Read a UTF-8 text file with deterministic line-range clamping. Successful reads return ok, path, range, meta, and content. Large content uses Atrium's {file, bytes} value contract.",
+      inputSchema: {
+        path: z.string().min(1).describe("File path to read."),
+        startLine: z.number().int().positive().optional().describe("First 1-based line to read. Defaults to 1."),
+        endLine: z.number().int().positive().optional().describe("Last 1-based line to read. Mutually exclusive with count."),
+        count: z.number().int().positive().optional().describe("Maximum number of lines to read. Mutually exclusive with endLine."),
+      },
+    },
+    async (input) => toolTextResult(await readTextFileSlice(input)),
   );
 
   const runContentSearch = async (spec: SearchVerbSpec, query: string, regex: boolean, root: string, glob?: string, exclude?: string, max?: number) =>

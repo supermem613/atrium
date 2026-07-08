@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { once } from "node:events";
 import { access, readFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
-import { materializeRunOutput, OutputValue } from "./artifacts.js";
+import { defaultInlineOutputLimitBytes, materializeRunOutput, OutputValue } from "./artifacts.js";
 import { defaultExecutionQueue, ExecutionQueue, ExecutionQueueMetrics } from "./executionQueue.js";
 import { isDeniedShell } from "./shells.js";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
@@ -89,7 +89,6 @@ export interface GenericCommandMetrics {
 }
 
 const defaultTimeoutMs = 60_000;
-const defaultInlineOutputMaxBytes = 8192;
 const resolvedToolCache = new Map<string, string>();
 
 interface SpawnAttempt {
@@ -159,7 +158,7 @@ export async function startExecutableRun(input: RunExecutableInput, options: Sta
 
       const stdout = attempt.stdout;
       const stderr = attempt.stderr;
-      const output = await materializeRunOutput(stdout, stderr, defaultInlineOutputMaxBytes);
+      const output = await materializeRunOutput(stdout, stderr, defaultInlineOutputLimitBytes);
       const timingMs = Date.now() - startedAt;
 
       return {
