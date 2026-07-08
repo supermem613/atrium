@@ -10,7 +10,7 @@ Atrium is an MCP server for agents. It exposes a small surface:
 - `atrium.read` — read a UTF-8 text file with deterministic line-range clamping.
 - `atrium.find-files`, `atrium.grep`, `atrium.grep-code` — search files through first-class MCP primitives.
 
-Large stdout/stderr is written to temp files and returned as paths, so agents do not dump command output into the conversation context.
+Large stdout/stderr and read content are written to temp files and returned as paths, so agents do not dump large text into the conversation context.
 
 Atrium is for **single CLI/executable calls**. It is not a shell replacement and it does not execute arbitrary shell strings. Shell binaries (`pwsh`, `powershell`, `bash`, `cmd`, `sh`, `zsh`) are denied so agents keep structured args instead of falling back to shell command text.
 
@@ -21,7 +21,7 @@ Copilot CLI on Windows often wraps simple CLI calls in PowerShell. That adds pro
 - runs the executable directly from structured args
 - resolves Windows npm shims to their underlying Node entrypoint where possible
 - supports `{ "file": "..." }` input values for UTF-8 file content in `args[]` and `stdin`
-- returns stdout/stderr with a fixed heuristic: empty omitted, 1-8192 bytes inline, larger output as `{ "file": "...", "bytes": n }`
+- returns stdout/stderr and read content with a fixed heuristic: empty omitted when applicable, 1-8192 bytes inline, larger output as `{ "file": "...", "bytes": n }`
 - trims agent-facing results to the fields needed for routing: `ok`, `tool`, `timingMs`, stdout/stderr, and errors
 - limits one MCP server process to 4 concurrent child executions and reports queue metrics in run results
 - discovers tool schemas by trying `<tool> schema`, then falls back to `<tool> --help`
@@ -154,7 +154,7 @@ MCP callers can use the same compact file-value contract for inputs and outputs:
 }
 ```
 
-Small stdout/stderr up to 8192 bytes is returned inline as a string. Larger output is returned as `{ "file": "...", "bytes": n }`.
+Small stdout/stderr and read content up to 8192 bytes are returned inline as strings. Larger output is returned as `{ "file": "...", "bytes": n }`.
 
 `atrium.run` and the search MCP tools have one execution behavior. They return the normal result when the work completes inside the safe MCP window. If the work is still running near 45 seconds, Atrium returns a durable `operationId`, a `resultPath`, and a prescriptive `nextCheck` object. `nextCheck` names exactly what to call next: the `atrium.operation-wait` tool with that `operationId`. Call `atrium.operation-wait`, then repeat while it returns `status: "continue"`. Terminal waits return `status: "completed"` or `status: "failed"` with the final `result` or `error`. Agents do not control operation or wait timeouts; Atrium uses fixed server-side deadlines and a request-safe wait window.
 
@@ -239,6 +239,8 @@ src/
   commands/           # One file per CLI command
 docs/
   architecture.md # Internal execution, schema discovery, and artifact flow
+  read-primitive.md # MCP read contract and range behavior
+  search-primitives.md # MCP search contract and result shapes
 scripts/
   benchmark-atrium.mjs # Performance harness for direct vs PowerShell vs Atrium
 test/

@@ -47,6 +47,8 @@ Output semantics:
 
 - Small stdout/stderr values are returned as inline strings.
 - Large stdout/stderr values are returned as `{ "file": "C:\\path\\output.txt", "bytes": n }`.
+- Small `read` content is returned as an inline string.
+- Large `read` content is returned as `{ "file": "C:\\path\\content.txt", "bytes": n }`.
 - Empty streams are omitted.
 - The inline threshold is fixed at 8192 bytes. There is no caller-controlled output-size knob.
 
@@ -232,13 +234,13 @@ Atrium intentionally does not return debug-only fields such as resolved executab
 
 ## Output and artifact policy
 
-Atrium always captures stdout and stderr for a run. Empty streams are omitted entirely, so zero-byte stderr does not produce a field. Small streams are complete inline strings. Large streams are `{ "file": "...", "bytes": n }` references.
+Atrium always captures stdout and stderr for a run. Empty streams are omitted entirely, so zero-byte stderr does not produce a field. Small streams and small `read` content are complete inline strings. Large streams and large `read` content are `{ "file": "...", "bytes": n }` references.
 
 This is the main context-saving contract:
 
 - The agent can use small outputs directly.
 - The agent can read large file-backed output only if needed.
-- Large command output does not automatically flood the conversation.
+- Large command output and large read content do not automatically flood the conversation.
 
 ## Performance model
 
@@ -264,11 +266,11 @@ npm run benchmark -- --command node-version --iterations 15 --warmup 3
 
 | File | Responsibility |
 | --- | --- |
-| `src\server.ts` | MCP server registration for `schema`, `run`, `read`, and `operation-wait`. |
+| `src\server.ts` | MCP server registration for `schema`, `run`, `read`, `operation-wait`, and search primitives. |
 | `src\core\executionQueue.ts` | In-memory max-concurrency limiter for child process starts. |
 | `src\core\introspect.ts` | Implements `<tool> schema` then `<tool> --help` discovery. |
 | `src\core\runner.ts` | Process spawning, shell denylist, Windows resolution, npm shim handling, timeout, stdout/stderr capture. |
-| `src\core\artifacts.ts` | Materializes stdout/stderr as inline strings or `{file, bytes}` values. |
+| `src\core\artifacts.ts` | Materializes output buffers as inline strings or `{file, bytes}` values. |
 | `src\core\readFile.ts` | Implements `read` text-file range clamping and non-content outcomes. |
 | `src\commands\mcpDebug.ts` | Local debug CLI commands that call Atrium through an MCP client. |
 | `scripts\benchmark-atrium.mjs` | Performance harness comparing direct, PowerShell-wrapped, and Atrium MCP calls. |
