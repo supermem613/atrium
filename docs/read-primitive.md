@@ -23,10 +23,29 @@ Successful reads return only the content contract:
   "ok": true,
   "path": "C:\\repo\\sample.txt",
   "range": [2, 3],
-  "meta": { "totalLines": 3, "bytes": 14 },
+  "meta": {
+    "totalLines": 3,
+    "bytes": 14,
+    "timing": {
+      "totalMs": 2,
+      "statMs": 0,
+      "readMs": 1,
+      "sliceMs": 0,
+      "materializeMs": 1,
+      "contentBytes": 14
+    },
+    "cache": {
+      "hit": false,
+      "reason": "miss"
+    }
+  },
   "content": "two\nthree\n"
 }
 ```
+
+`meta.timing` captures the Atrium-internal read timing breakdown. `meta.timing.totalMs` is the total read time, `statMs` and `readMs` cover file stat and file reads, `sliceMs` covers the range slicing step, and `materializeMs` covers turning the read result into the response shape. `meta.timing.contentBytes` reports the number of bytes in the content payload returned to the caller. `meta.timing` measures Atrium-internal read work and does not include Copilot MCP transport, pre-tool hooks, post-tool hooks, model latency, or agent scheduling; that MCP and hook overhead is excluded from the timing measurements.
+
+For repeated unchanged-file reads, `meta.cache.hit` reports whether Atrium served the read from cache and `meta.cache.reason` explains why. On a cache hit for an unchanged file, `meta.cache.hit` is `true` and `meta.cache.reason` is `"same-file"`.
 
 `range + meta.totalLines` is the paging signal. EOF is `range[1] === meta.totalLines`. More content exists when `range[1] < meta.totalLines`. If the requested range goes past EOF, Atrium returns the served range instead of failing.
 
