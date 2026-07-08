@@ -56,6 +56,17 @@ describe("read MCP tool", () => {
       assert.equal(timing.contentBytes, Buffer.byteLength("two\nthree\n", "utf8"));
       assert.equal(parsed.content, "two\nthree\n");
 
+      const repeated = await callJson(client, "read", { path: filePath, startLine: 2, endLine: 99 });
+      assert.equal(repeated.ok, true);
+      assert.equal(repeated.path, filePath);
+      assert.deepEqual(repeated.range, [2, 3]);
+      assert.equal(repeated.content, "two\nthree\n");
+      const repeatedMeta = repeated.meta as Record<string, unknown>;
+      const repeatedCache = repeatedMeta.cache as Record<string, unknown> | undefined;
+      assert.ok(repeatedCache, "expected repeated read to expose cache metadata");
+      assert.equal(repeatedCache.hit, true);
+      assert.equal(repeatedCache.reason, "same-file");
+
       const missingPath = join(dir, "missing", "nope.txt");
       await mkdir(join(dir, "missing"));
       const missing = await callJson(client, "read", { path: missingPath });

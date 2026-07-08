@@ -1,12 +1,15 @@
 import { constants } from "node:fs";
 import { access, readFile, stat } from "node:fs/promises";
-import { dirname } from "node:path";
+import { dirname, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 import { performance } from "node:perf_hooks";
 import { defaultInlineOutputLimitBytes, materializeOutputValue, OutputValue } from "./artifacts.js";
 import { atriumTempPath } from "./tempPaths.js";
 
 const defaultLineCount = 120;
+const maxCacheEntries = 32;
+const maxCachedFileSizeBytes = 1024 * 1024;
+const readLineSliceCache = new Map<string, CachedLineSliceCacheEntry>();
 
 export interface ReadTextFileSliceInput {
   path: string;
@@ -32,6 +35,10 @@ export interface ReadTextFileSliceSuccess {
       materializeMs: number;
       contentBytes: number;
     };
+    cache: {
+      hit: boolean;
+      reason: "miss" | "same-file";
+    };
   };
   content: OutputValue;
 }
@@ -46,6 +53,12 @@ export interface ReadTextFileSliceFailure {
 interface LineSlice {
   start: number;
   end: number;
+}
+
+interface CachedLineSliceCacheEntry {
+  text: string;
+  lines: LineSlice[];
+  bytes: number;
 }
 
 export async function readTextFileSlice(input: ReadTextFileSliceInput): Promise<ReadTextFileSliceResult> {
@@ -90,24 +103,47 @@ export async function readTextFileSlice(input: ReadTextFileSliceInput): Promise<
     };
   }
 
+  const cacheKey = createCacheKey(input.path, fileStat);
+  const cachedEntry = fileStat.size <= maxCachedFileSizeBytes ? getCachedLineSliceEntry(cacheKey) : undefined;
+
   let readMs = 0;
-  const readStart = performance.now();
-  const buffer = await readFile(input.path);
-  readMs = roundTimingValue(performance.now() - readStart);
-  if (buffer.includes(0)) {
-    return {
-      ok: false,
-      status: "unsupported",
-      path: input.path,
-      hint: "binary content is not supported",
-    };
+  let text = "";
+  let lines: LineSlice[] = [];
+  let bytes = 0;
+  let totalLines = 0;
+  let cacheMeta: ReadTextFileSliceSuccess["meta"]["cache"] = { hit: false, reason: "miss" };
+
+  if (cachedEntry !== undefined) {
+    text = cachedEntry.text;
+    lines = cachedEntry.lines;
+    bytes = cachedEntry.bytes;
+    totalLines = lines.length;
+    cacheMeta = { hit: true, reason: "same-file" };
+  } else {
+    const readStart = performance.now();
+    const buffer = await readFile(input.path);
+    readMs = roundTimingValue(performance.now() - readStart);
+    if (buffer.includes(0)) {
+      return {
+        ok: false,
+        status: "unsupported",
+        path: input.path,
+        hint: "binary content is not supported",
+      };
+    }
+
+    text = buffer.toString("utf8");
+    lines = lineSlices(text);
+    totalLines = lines.length;
+    bytes = buffer.byteLength;
+
+    if (fileStat.size <= maxCachedFileSizeBytes) {
+      setCachedLineSliceEntry(cacheKey, { text, lines, bytes });
+    }
   }
 
   let sliceMs = 0;
   const sliceStart = performance.now();
-  const text = buffer.toString("utf8");
-  const lines = lineSlices(text);
-  const totalLines = lines.length;
   const requestedCount = input.count ?? (input.endLine === undefined ? defaultLineCount : input.endLine - startLine + 1);
   const [servedStart, servedEnd] = clampRange(startLine, requestedCount, totalLines);
   const contentBuffer = Buffer.from(sliceLines(text, lines, servedStart, servedEnd), "utf8");
@@ -124,7 +160,7 @@ export async function readTextFileSlice(input: ReadTextFileSliceInput): Promise<
     range: [servedStart, servedEnd],
     meta: {
       totalLines,
-      bytes: buffer.byteLength,
+      bytes,
       timing: {
         totalMs: roundTimingValue(performance.now() - totalStart),
         statMs,
@@ -133,6 +169,7 @@ export async function readTextFileSlice(input: ReadTextFileSliceInput): Promise<
         materializeMs,
         contentBytes: contentBuffer.byteLength,
       },
+      cache: cacheMeta,
     },
     content,
   };
@@ -182,6 +219,24 @@ function sliceLines(text: string, lines: LineSlice[], startLine: number, endLine
     return "";
   }
   return text.slice(first.start, last.end);
+}
+
+function createCacheKey(path: string, fileStat: { size: number; mtimeMs: number }): string {
+  return `${resolve(path)}:${fileStat.size}:${fileStat.mtimeMs}`;
+}
+
+function getCachedLineSliceEntry(cacheKey: string): CachedLineSliceCacheEntry | undefined {
+  return readLineSliceCache.get(cacheKey);
+}
+
+function setCachedLineSliceEntry(cacheKey: string, entry: CachedLineSliceCacheEntry): void {
+  readLineSliceCache.set(cacheKey, entry);
+  if (readLineSliceCache.size > maxCacheEntries) {
+    const oldestKey = readLineSliceCache.keys().next().value;
+    if (oldestKey !== undefined) {
+      readLineSliceCache.delete(oldestKey);
+    }
+  }
 }
 
 async function nearestExistingAncestor(path: string): Promise<string> {
