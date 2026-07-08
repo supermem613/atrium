@@ -2,6 +2,7 @@ import { constants } from "node:fs";
 import { access, readFile, stat } from "node:fs/promises";
 import { dirname } from "node:path";
 import { randomUUID } from "node:crypto";
+import { performance } from "node:perf_hooks";
 import { defaultInlineOutputLimitBytes, materializeOutputValue, OutputValue } from "./artifacts.js";
 import { atriumTempPath } from "./tempPaths.js";
 
@@ -23,6 +24,14 @@ export interface ReadTextFileSliceSuccess {
   meta: {
     totalLines: number;
     bytes: number;
+    timing: {
+      totalMs: number;
+      statMs: number;
+      readMs: number;
+      sliceMs: number;
+      materializeMs: number;
+      contentBytes: number;
+    };
   };
   content: OutputValue;
 }
@@ -54,12 +63,16 @@ export async function readTextFileSlice(input: ReadTextFileSliceInput): Promise<
     return invalidArgs(input.path, "provide endLine or count, not both");
   }
 
+  const totalStart = performance.now();
+  let statMs = 0;
+  const statStart = performance.now();
   const fileStat = await stat(input.path).catch((error: unknown) => {
     if (isNodeError(error) && error.code === "ENOENT") {
       return null;
     }
     throw error;
   });
+  statMs = roundTimingValue(performance.now() - statStart);
   if (fileStat === null) {
     return {
       ok: false,
@@ -77,7 +90,10 @@ export async function readTextFileSlice(input: ReadTextFileSliceInput): Promise<
     };
   }
 
+  let readMs = 0;
+  const readStart = performance.now();
   const buffer = await readFile(input.path);
+  readMs = roundTimingValue(performance.now() - readStart);
   if (buffer.includes(0)) {
     return {
       ok: false,
@@ -87,12 +103,20 @@ export async function readTextFileSlice(input: ReadTextFileSliceInput): Promise<
     };
   }
 
+  let sliceMs = 0;
+  const sliceStart = performance.now();
   const text = buffer.toString("utf8");
   const lines = lineSlices(text);
   const totalLines = lines.length;
   const requestedCount = input.count ?? (input.endLine === undefined ? defaultLineCount : input.endLine - startLine + 1);
   const [servedStart, servedEnd] = clampRange(startLine, requestedCount, totalLines);
   const contentBuffer = Buffer.from(sliceLines(text, lines, servedStart, servedEnd), "utf8");
+  sliceMs = roundTimingValue(performance.now() - sliceStart);
+
+  let materializeMs = 0;
+  const materializeStart = performance.now();
+  const content = await materializeOutputValue(contentBuffer, defaultInlineOutputLimitBytes, atriumTempPath("reads", randomUUID()), "content.txt");
+  materializeMs = roundTimingValue(performance.now() - materializeStart);
 
   return {
     ok: true,
@@ -101,8 +125,16 @@ export async function readTextFileSlice(input: ReadTextFileSliceInput): Promise<
     meta: {
       totalLines,
       bytes: buffer.byteLength,
+      timing: {
+        totalMs: roundTimingValue(performance.now() - totalStart),
+        statMs,
+        readMs,
+        sliceMs,
+        materializeMs,
+        contentBytes: contentBuffer.byteLength,
+      },
     },
-    content: await materializeOutputValue(contentBuffer, defaultInlineOutputLimitBytes, atriumTempPath("reads", randomUUID()), "content.txt"),
+    content,
   };
 }
 
@@ -177,4 +209,8 @@ async function canAccess(path: string): Promise<boolean> {
 
 function isNodeError(error: unknown): error is NodeJS.ErrnoException {
   return error instanceof Error && "code" in error;
+}
+
+function roundTimingValue(value: number): number {
+  return Number(value.toFixed(3));
 }
