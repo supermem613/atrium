@@ -3,6 +3,8 @@ import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { atriumTempPath } from "./tempPaths.js";
 
+export const defaultInlineOutputLimitBytes = 8192;
+
 export interface FileRef {
   file: string;
   bytes: number;
@@ -15,33 +17,28 @@ export interface RunOutput {
   stderr?: OutputValue;
 }
 
+export async function materializeOutputValue(buffer: Buffer, inlineOutputLimitBytes: number, directory: string, fileName: string): Promise<OutputValue> {
+  if (buffer.byteLength <= inlineOutputLimitBytes) {
+    return buffer.toString("utf8");
+  }
+
+  await mkdir(directory, { recursive: true });
+  const file = join(directory, fileName);
+  await writeFile(file, buffer);
+  return { file, bytes: buffer.byteLength };
+}
+
 export async function materializeRunOutput(stdout: Buffer, stderr: Buffer, inlineOutputLimitBytes: number): Promise<RunOutput> {
   const directory = atriumTempPath("runs", randomUUID());
   const output: RunOutput = {};
-  const writes: Array<Promise<void>> = [];
 
   if (stdout.byteLength > 0) {
-    if (stdout.byteLength <= inlineOutputLimitBytes) {
-      output.stdout = stdout.toString("utf8");
-    } else {
-      await mkdir(directory, { recursive: true });
-      const file = join(directory, "stdout.txt");
-      output.stdout = { file, bytes: stdout.byteLength };
-      writes.push(writeFile(file, stdout));
-    }
+    output.stdout = await materializeOutputValue(stdout, inlineOutputLimitBytes, directory, "stdout.txt");
   }
 
   if (stderr.byteLength > 0) {
-    if (stderr.byteLength <= inlineOutputLimitBytes) {
-      output.stderr = stderr.toString("utf8");
-    } else {
-      await mkdir(directory, { recursive: true });
-      const file = join(directory, "stderr.txt");
-      output.stderr = { file, bytes: stderr.byteLength };
-      writes.push(writeFile(file, stderr));
-    }
+    output.stderr = await materializeOutputValue(stderr, inlineOutputLimitBytes, directory, "stderr.txt");
   }
 
-  await Promise.all(writes);
   return output;
 }
