@@ -38,8 +38,34 @@ describe("read MCP tool", () => {
       assert.equal(parsed.ok, true);
       assert.equal(parsed.path, filePath);
       assert.deepEqual(parsed.range, [2, 3]);
-      assert.deepEqual(parsed.meta, { totalLines: 3, bytes: Buffer.byteLength(fileContent, "utf8") });
+      const meta = parsed.meta as Record<string, unknown>;
+      assert.equal(meta.totalLines, 3);
+      assert.equal(meta.bytes, Buffer.byteLength(fileContent, "utf8"));
+      assert.ok(meta.timing, "expected meta.timing");
+      const timing = meta.timing as Record<string, unknown>;
+      const totalMs = numberField(timing, "totalMs");
+      const statMs = numberField(timing, "statMs");
+      const readMs = numberField(timing, "readMs");
+      const sliceMs = numberField(timing, "sliceMs");
+      const materializeMs = numberField(timing, "materializeMs");
+      assert.equal(totalMs >= 0, true);
+      assert.equal(statMs >= 0, true);
+      assert.equal(readMs >= 0, true);
+      assert.equal(sliceMs >= 0, true);
+      assert.equal(materializeMs >= 0, true);
+      assert.equal(timing.contentBytes, Buffer.byteLength("two\nthree\n", "utf8"));
       assert.equal(parsed.content, "two\nthree\n");
+
+      const repeated = await callJson(client, "read", { path: filePath, startLine: 2, endLine: 99 });
+      assert.equal(repeated.ok, true);
+      assert.equal(repeated.path, filePath);
+      assert.deepEqual(repeated.range, [2, 3]);
+      assert.equal(repeated.content, "two\nthree\n");
+      const repeatedMeta = repeated.meta as Record<string, unknown>;
+      const repeatedCache = repeatedMeta.cache as Record<string, unknown> | undefined;
+      assert.ok(repeatedCache, "expected repeated read to expose cache metadata");
+      assert.equal(repeatedCache.hit, true);
+      assert.equal(repeatedCache.reason, "same-file");
 
       const missingPath = join(dir, "missing", "nope.txt");
       await mkdir(join(dir, "missing"));
@@ -65,4 +91,12 @@ async function callJson(client: Client, name: string, args: Record<string, unkno
   assert.equal("text" in firstContent, true);
   assert.equal(typeof firstContent.text, "string");
   return JSON.parse(firstContent.text) as Record<string, unknown>;
+}
+
+function numberField(record: Record<string, unknown>, key: string): number {
+  const value = record[key];
+  if (typeof value !== "number") {
+    assert.fail(`${key} should be a number`);
+  }
+  return value;
 }
