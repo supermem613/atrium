@@ -5,7 +5,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { doctorCommand } from "./commands/doctor.js";
-import { mcpOperationWaitCommand, mcpRunCommand, mcpSchemaCommand } from "./commands/mcpDebug.js";
+import { mcpOperationWaitCommand, mcpRunCommand, mcpSchemaCommand, type McpRunOptions } from "./commands/mcpDebug.js";
 import { mcpConfigCommand } from "./commands/mcpConfig.js";
 import { schemaCommand } from "./commands/schema.js";
 import { startAtriumServer } from "./server.js";
@@ -56,7 +56,8 @@ program
   .option("--stdin <text>", "stdin content to pass to the command")
   .option("--stdin-file <path>", "Read stdin content from a UTF-8 file")
   .option("--request-timeout-ms <ms>", "MCP client request timeout in milliseconds. Debug command only")
-  .action(mcpRunCommand);
+  .option("--perf", "Emit a CLI-only perf report for the local debug run. Does not change MCP tool responses")
+  .action((tool: string, args: string[] | undefined, options: McpRunOptions) => mcpRunCommand(tool, args, options));
 
 program
   .command("mcp-operation-wait <operationId>")

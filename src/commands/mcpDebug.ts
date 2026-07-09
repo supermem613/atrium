@@ -1,14 +1,17 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { CallToolResultSchema } from "@modelcontextprotocol/sdk/types.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { randomUUID } from "node:crypto";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { createPerfRecorder, type PerfOperationRecorder, type PerfOperationReport } from "../core/perf.js";
 
-interface McpRunOptions {
+export interface McpRunOptions {
   cwd?: string;
   requestTimeoutMs?: string;
   stdin?: string;
   stdinFile?: string;
+  perf?: boolean;
 }
 
 const defaultDebugRequestTimeoutMs = 60_000;
@@ -37,7 +40,10 @@ export async function mcpSchemaCommand(tool: string): Promise<void> {
 
 export async function mcpRunCommand(tool: string, args: string[] | undefined, options: McpRunOptions): Promise<void> {
   const requestTimeoutMs = parseOptionalNumber(options.requestTimeoutMs, "--request-timeout-ms") ?? defaultDebugRequestTimeoutMs;
+  const perfRecorder = createPerfRecorder(options.perf === true);
+  const perfOperation = perfRecorder?.startOperation(randomUUID());
   const response = await withAtriumClient(async (client) => {
+    perfOperation?.addSpan("mcp-run:call-tool");
     const runResponse = await client.callTool({
       name: "run",
       arguments: {
@@ -52,9 +58,9 @@ export async function mcpRunCommand(tool: string, args: string[] | undefined, op
       return runResponse;
     }
 
-    return waitForDebugOperation(client, runPayload.operationId, requestTimeoutMs);
+    return waitForDebugOperation(client, runPayload.operationId, requestTimeoutMs, perfOperation);
   });
-  writeToolResponse(response);
+  writeToolResponse(response, perfOperation?.finish());
 }
 
 export async function mcpOperationWaitCommand(operationId: string): Promise<void> {
@@ -67,14 +73,31 @@ export async function mcpOperationWaitCommand(operationId: string): Promise<void
   writeToolResponse(response);
 }
 
-function writeToolResponse(response: Awaited<ReturnType<Client["callTool"]>>): void {
+function writeToolResponse(response: Awaited<ReturnType<Client["callTool"]>>, perfReport?: PerfOperationReport): void {
   const payload = readToolPayload(response);
-  if (payload !== undefined) {
-    process.stdout.write(`${JSON.stringify(payload)}\n`);
+  const emittedPayload = attachPerf(payload, perfReport);
+  if (emittedPayload !== undefined) {
+    process.stdout.write(`${JSON.stringify(emittedPayload)}\n`);
     return;
   }
 
   process.stdout.write(`${JSON.stringify(response)}\n`);
+}
+
+function attachPerf(payload: unknown, perfReport: PerfOperationReport | undefined): unknown {
+  if (perfReport === undefined) {
+    return payload;
+  }
+
+  if (payload === undefined) {
+    return { perf: perfReport };
+  }
+
+  if (typeof payload === "object" && payload !== null && !Array.isArray(payload)) {
+    return { ...payload, perf: perfReport };
+  }
+
+  return { value: payload, perf: perfReport };
 }
 
 function readToolPayload(response: Awaited<ReturnType<Client["callTool"]>>): unknown {
@@ -116,11 +139,12 @@ function parseOptionalNumber(value: string | undefined, flag: string): number | 
   return parsed;
 }
 
-async function waitForDebugOperation(client: Client, operationId: string, requestTimeoutMs: number): ReturnType<Client["callTool"]> {
+async function waitForDebugOperation(client: Client, operationId: string, requestTimeoutMs: number, perfOperation?: PerfOperationRecorder): ReturnType<Client["callTool"]> {
   const deadline = Date.now() + requestTimeoutMs;
   let response = await callOperationWait(client, operationId, defaultDebugRequestTimeoutMs);
 
   while (Date.now() < deadline) {
+    perfOperation?.addSpan("mcp-run:operation-wait");
     const payload = readToolPayload(response);
     if (!isContinuePayload(payload)) {
       return response;

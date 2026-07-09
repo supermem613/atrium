@@ -130,6 +130,11 @@ export const commandSpecs: CommandSpec[] = [
           summary: "Read stdin content from a UTF-8 file.",
         },
         {
+          name: "--perf",
+          type: "boolean",
+          summary: "Emit a CLI-only perf report for the local debug run. Does not change MCP tool responses.",
+        },
+        {
           name: "--request-timeout-ms",
           type: "number",
           summary: "MCP client request timeout in milliseconds for the local debug client.",
