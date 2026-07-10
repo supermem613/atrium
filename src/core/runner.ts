@@ -188,9 +188,10 @@ export async function startExecutableRun(input: RunExecutableInput, options: Sta
   const result = (async (): Promise<RunExecutableResult> => {
     const permit = await acquireExecutionPermit(options.executionQueue);
     try {
-      let attempt = await spawnOnce(input, input.tool, args, stdin, timeoutMs, progress);
+      const cachedResolvedTool = getCachedResolvedTool(input.tool);
+      let attempt = await spawnOnce(input, cachedResolvedTool ?? input.tool, args, stdin, timeoutMs, progress);
 
-      if (attempt.spawnError !== undefined && shouldResolveAfterFailure(input.tool, attempt.spawnError)) {
+      if (attempt.spawnError !== undefined && cachedResolvedTool === undefined && shouldResolveAfterFailure(input.tool, attempt.spawnError)) {
         const resolved = await resolveTool(input.tool);
         if (resolved !== input.tool) {
           attempt = await spawnOnce(input, resolved, args, stdin, timeoutMs, progress);
@@ -466,12 +467,20 @@ function failedBeforeSpawn(input: RunExecutableInput, args: string[], stdin: str
   };
 }
 
+function getCachedResolvedTool(tool: string): string | undefined {
+  if (process.platform !== "win32" || tool.includes("\\") || tool.includes("/")) {
+    return undefined;
+  }
+
+  return resolvedToolCache.get(tool.toLowerCase());
+}
+
 async function resolveTool(tool: string): Promise<string> {
   if (process.platform !== "win32" || tool.includes("\\") || tool.includes("/")) {
     return tool;
   }
 
-  const cached = resolvedToolCache.get(tool.toLowerCase());
+  const cached = getCachedResolvedTool(tool);
   if (cached !== undefined) {
     return cached;
   }
