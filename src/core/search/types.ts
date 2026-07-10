@@ -29,10 +29,19 @@ export interface XrayMetricsPerfAttributes {
   matchesReturned?: number;
 }
 
+export interface RipgrepMetricsPerfAttributes {
+  searches?: number;
+  bytesSearched?: number;
+  bytesPrinted?: number;
+  matchedLines?: number;
+  matches?: number;
+}
+
 export interface SearchPerfMetadata {
   searchInvocation?: SearchInvocationPerfAttributes;
   normalization?: SearchNormalizationPerfAttributes;
   xrayMetrics?: XrayMetricsPerfAttributes;
+  ripgrepMetrics?: RipgrepMetricsPerfAttributes;
 }
 
 export interface NormalizedContentResult {
@@ -78,6 +87,36 @@ export interface XrayEnvelope {
   metrics?: unknown;
 }
 
+export interface NativeSearchEnvelopeMatch {
+  path?: string;
+  line?: number;
+  text?: string;
+}
+
+export interface NativeSearchEnvelopeSummary {
+  matchCount?: number;
+  fileCount?: number;
+  truncated?: boolean;
+  timedOut?: boolean;
+}
+
+export interface NativeSearchEnvelope {
+  ok: boolean;
+  command?: "search" | "files";
+  kind?: "content" | "files";
+  data?: {
+    matches?: NativeSearchEnvelopeMatch[];
+    summary?: NativeSearchEnvelopeSummary;
+    metrics?: unknown;
+  };
+  warnings?: string[];
+  error?: string;
+  hint?: string;
+  metrics?: {
+    ripgrepMetrics?: RipgrepMetricsPerfAttributes;
+  } | unknown;
+}
+
 export interface XrayRunOptions {
   command: "search" | "files";
   root: string;
@@ -92,6 +131,22 @@ export interface XrayRunOptions {
 
 export interface XraySearchClientLike {
   run(options: XrayRunOptions): Promise<XrayEnvelope>;
+}
+
+export interface SearchClientLike {
+  run(options: XrayRunOptions | NativeSearchRunOptions): Promise<XrayEnvelope | NativeSearchEnvelope>;
+}
+
+export interface NativeSearchRunOptions {
+  command: "search" | "files";
+  root: string;
+  query?: string;
+  regex?: boolean;
+  glob?: string;
+  exclude?: string;
+  all?: boolean;
+  max?: number;
+  timeoutMs?: number;
 }
 
 export type SmartPlanStrategy = "sequential" | "narrowed" | "fanout";
@@ -137,6 +192,7 @@ export interface NativeFileSearchInvocation {
   warnings?: string[];
   timedOut?: boolean;
   truncated?: boolean;
+  metrics?: ContentSearchRunMetrics;
 }
 
 export interface NativeFileSearchRunner {
@@ -158,6 +214,7 @@ export interface NativeFileSearchResult {
   matches: SearchFileMatch[];
   warnings: string[];
   perf?: SearchPerfMetadata;
+  metrics?: ContentSearchRunMetrics;
 }
 
 export interface ContentSearchOptions {
@@ -166,6 +223,8 @@ export interface ContentSearchOptions {
   regex?: boolean;
   max?: number;
   timeoutMs?: number;
+  all?: boolean;
+  globs?: string[];
   excludes?: string[];
   runner?: ContentSearchRunner;
 }

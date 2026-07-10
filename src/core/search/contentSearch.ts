@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { normalizeNativeSearchPath } from "./normalize.js";
 import { resolveBundledRgPath } from "./rgPath.js";
 import { planSmartSearch } from "./smartPlan.js";
 import type { ContentSearchOptions, ContentSearchResult, ContentSearchInvocation, SearchContentMatch, ContentSearchRunMetrics } from "./types.js";
@@ -24,7 +25,11 @@ export async function runContentSearch(options: ContentSearchOptions): Promise<C
   const regex = options.regex ?? false;
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const max = options.max ?? Number.POSITIVE_INFINITY;
-  const excludes = options.excludes ?? [...DEFAULT_CONTENT_SEARCH_EXCLUDES];
+  const all = options.all ?? false;
+  const globs = options.globs ?? [];
+  const excludes = options.excludes === undefined
+    ? (all ? [] : [...DEFAULT_CONTENT_SEARCH_EXCLUDES])
+    : options.excludes;
   const runner = options.runner ?? defaultContentSearchRunner;
   const plan = planSmartSearch({ query, regex });
   const laneArgs = plan.strategy === "sequential" ? [] : (plan.lanes[0]?.args ?? []);
@@ -33,7 +38,7 @@ export async function runContentSearch(options: ContentSearchOptions): Promise<C
   const warnings: string[] = [];
   const seen = new Set<string>();
   const metrics: ContentSearchRunMetrics = { searches: 0 };
-  const args = buildRipgrepArgs({ query, regex, excludes, laneArgs });
+  const args = buildRipgrepArgs({ query, regex, all, globs, excludes, laneArgs });
 
   let invocation: ContentSearchInvocation;
   try {
@@ -63,12 +68,13 @@ export async function runContentSearch(options: ContentSearchOptions): Promise<C
     if (matches.length >= max) {
       break;
     }
-    const id = `${match.path}:${match.line}:${match.text}`;
+    const normalizedPath = normalizeNativeSearchPath(match.path);
+    const id = `${normalizedPath}:${match.line}:${match.text}`;
     if (seen.has(id)) {
       continue;
     }
     seen.add(id);
-    matches.push(match);
+    matches.push({ ...match, path: normalizedPath });
   }
 
   if (max !== Number.POSITIVE_INFINITY && matches.length >= max && !warnings.some((warning) => warning.includes("display capped at"))) {
@@ -78,13 +84,21 @@ export async function runContentSearch(options: ContentSearchOptions): Promise<C
   return { kind: "content", matches, warnings, metrics };
 }
 
-function buildRipgrepArgs(options: { query: string; regex: boolean; excludes: string[]; laneArgs: string[] }): string[] {
+function buildRipgrepArgs(options: { query: string; regex: boolean; all: boolean; globs: string[]; excludes: string[]; laneArgs: string[] }): string[] {
   const args = ["--line-number", "--color=never", "--json", "--max-filesize", DEFAULT_MAX_FILE_SIZE];
   if (!options.regex) {
     args.push("-F");
   }
+  if (options.all) {
+    args.push("--hidden", "--no-ignore");
+  }
   args.push("-e", options.query);
-  args.push(...options.excludes);
+  for (const glob of options.globs) {
+    args.push("--glob", glob);
+  }
+  for (const exclude of options.excludes) {
+    args.push("--glob", exclude.startsWith("!") ? exclude : `!${exclude}`);
+  }
   args.push(...options.laneArgs);
   args.push("--");
   args.push(".");
@@ -162,7 +176,7 @@ async function defaultContentSearchRunner(args: string[], options: { cwd: string
         finish({ args, matches, warnings, timedOut: true, truncated: false, metrics: { searches: 1 } });
         return;
       }
-      if (code !== 0) {
+      if (code !== 0 && code !== 1) {
         finishError(`fatal ripgrep error: exited with code ${String(code)}`);
         return;
       }

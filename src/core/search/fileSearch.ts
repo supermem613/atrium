@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { stat } from "node:fs/promises";
 import { basename, dirname, relative, resolve } from "node:path";
+import { normalizeNativeSearchPath } from "./normalize.js";
 import { resolveBundledRgPath } from "./rgPath.js";
 import type { NativeFileSearchInvocation, NativeFileSearchOptions, NativeFileSearchResult } from "./types.js";
 
@@ -80,7 +81,7 @@ export async function runNativeFileSearch(options: NativeFileSearchOptions): Pro
     warnings.push(`display capped at ${max} files`);
   }
 
-  return { kind: "files", matches: matches.map((path) => ({ path })), warnings };
+  return { kind: "files", matches: matches.map((path) => ({ path })), warnings, metrics: invocation.metrics };
 }
 
 function buildRipgrepArgs(options: { all: boolean; globs: string[]; excludes: string[]; rootIsFile: boolean; rootName?: string }): string[] {
@@ -170,14 +171,14 @@ async function defaultNativeFileSearchRunner(args: string[], options: { cwd: str
       const warnings = stderr.trim().length > 0 ? [stderr.trim()] : [];
       const paths = parseRipgrepFileOutput(stdout);
       if (timedOut) {
-        finish({ paths, warnings, timedOut: true, truncated: false });
+        finish({ paths, warnings, timedOut: true, truncated: false, metrics: { searches: 1 } });
         return;
       }
-      if (code !== 0) {
+      if (code !== 0 && code !== 1) {
         finishError(`fatal ripgrep error: exited with code ${String(code)}`);
         return;
       }
-      finish({ paths, warnings, timedOut: false, truncated: false });
+      finish({ paths, warnings, timedOut: false, truncated: false, metrics: { searches: 1 } });
     });
   });
 }
@@ -187,6 +188,5 @@ function parseRipgrepFileOutput(output: string): string[] {
 }
 
 function normalizePath(filePath: string): string {
-  const normalized = filePath.replaceAll("\\", "/");
-  return normalized.replace(/^\.\//u, "");
+  return normalizeNativeSearchPath(filePath);
 }

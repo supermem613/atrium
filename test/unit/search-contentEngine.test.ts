@@ -18,6 +18,19 @@ test("content search uses fixed-string defaults and exact default exclusions", a
   assert.deepEqual(result.warnings, []);
 });
 
+test("content search forwards explicit globs and excludes through ripgrep --glob args", async () => {
+  const seen: string[][] = [];
+  const runner: ContentSearchRunner = async (args) => {
+    seen.push(args);
+    return { args, matches: [], warnings: [], timedOut: false, truncated: false, metrics: { searches: 1 } };
+  };
+
+  await runContentSearch({ query: "needle", root: "/tmp", all: true, globs: ["**/*.ts"], excludes: ["**/vendor/**"], runner });
+
+  assert.deepEqual(seen[0].filter((arg) => arg === "--hidden" || arg === "--no-ignore"), ["--hidden", "--no-ignore"]);
+  assert.deepEqual(seen[0].filter((arg) => arg === "**/*.ts" || arg === "!**/vendor/**"), ["**/*.ts", "!**/vendor/**"]);
+});
+
 test("content search deduplicates matches and caps the global result set", async () => {
   const runner: ContentSearchRunner = async () => ({
     args: [],

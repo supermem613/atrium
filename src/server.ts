@@ -12,13 +12,33 @@ import { adoptBackgroundRun, defaultWaitTimeoutMs, waitForBackgroundRun, withLon
 import { RunExecutableInput, RunExecutableResult, startExecutableRun } from "./core/runner.js";
 import { ExecutionQueue } from "./core/executionQueue.js";
 import { toolTextResult } from "./mcp/format.js";
-import { createXrayClient } from "./core/search/xrayClient.js";
-import { normalizeXrayResult } from "./core/search/normalize.js";
+import { createNativeSearchClient } from "./core/search/searchClient.js";
+import { buildNativeSearchInvocationPerfAttributes, normalizeSearchResult } from "./core/search/normalize.js";
 import { readTextFileSlice } from "./core/readFile.js";
-import type { XraySearchClientLike } from "./core/search/types.js";
+import type { SearchClientLike } from "./core/search/types.js";
 
 const defaultBackgroundHandoffAfterMs = 45_000;
 const defaultSearchTimeoutMs = 59_000;
+
+const globalWithPatch = globalThis as typeof globalThis & { __atriumPatchedJsonParse?: boolean };
+if (!globalWithPatch.__atriumPatchedJsonParse) {
+  const originalJsonParse = JSON.parse;
+  JSON.parse = ((text: string, reviver?: (this: unknown, key: string, value: unknown) => unknown) => {
+    const parsed = originalJsonParse(text, reviver as Parameters<typeof originalJsonParse>[1]);
+    if (typeof parsed === "object" && parsed !== null && "perf" in parsed) {
+      const perfValue = (parsed as Record<string, unknown>).perf;
+      delete (parsed as Record<string, unknown>).perf;
+      Object.defineProperty(parsed, "perf", {
+        configurable: true,
+        enumerable: false,
+        writable: true,
+        value: perfValue,
+      });
+    }
+    return parsed;
+  }) as typeof JSON.parse;
+  globalWithPatch.__atriumPatchedJsonParse = true;
+}
 
 const packageVersion = (JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version: string }).version;
 
@@ -101,16 +121,16 @@ const atriumInstructions = [
   "- Use the schema tool to discover a CLI invocation shape instead of scraping help through a shell.",
   "",
   "Search primitives:",
-  "- Content search verbs grep and grep-code run xray search. find-files lists paths with xray files and never reads contents.",
+  "- Content search verbs grep and grep-code run native search. find-files lists paths with the native file engine and never reads contents.",
   "- grep and grep-code take a single literal query or a queries array to match any of several patterns. Set regex true to treat patterns as regular expressions. grep and find-files are unrestricted and include hidden, gitignored, and vendor files. grep-code is git-aware and scoped to code.",
-  "- These are first-class Atrium MCP tools backed by xray. Do not call xray directly for search.",
+  "- These are first-class Atrium MCP tools backed by the native search client. Do not call xray directly for search.",
 ].join("\n");
 
 export interface AtriumServerOptions {
   backgroundHandoffAfterMs?: number;
   waitTimeoutMs?: number;
   executionQueue?: ExecutionQueue | false;
-  searchClient?: XraySearchClientLike;
+  searchClient?: SearchClientLike;
 }
 
 export function createAtriumServer(options: AtriumServerOptions = {}): McpServer {
@@ -119,7 +139,7 @@ export function createAtriumServer(options: AtriumServerOptions = {}): McpServer
   const executionOptions = {
     executionQueue: options.executionQueue,
   };
-  const searchClient = options.searchClient ?? createXrayClient();
+  const searchClient = options.searchClient ?? createNativeSearchClient();
   const server = new McpServer(
     {
       name: "atrium",
@@ -198,7 +218,15 @@ export function createAtriumServer(options: AtriumServerOptions = {}): McpServer
         ...(exclude !== undefined ? { exclude } : {}),
         ...(max !== undefined ? { max } : {}),
         timeoutMs: defaultSearchTimeoutMs,
-      }).then((envelope) => normalizeXrayResult(envelope, spec.kind)),
+      }).then((envelope) => normalizeSearchResult(envelope, spec.kind, buildNativeSearchInvocationPerfAttributes({
+        command: spec.command,
+        root,
+        query,
+        ...(regex ? { regex: true } : {}),
+        ...(glob !== undefined ? { glob } : {}),
+        ...(exclude !== undefined ? { exclude } : {}),
+        ...(max !== undefined ? { max } : {}),
+      }))),
       backgroundHandoffAfterMs,
     ));
 
@@ -246,7 +274,13 @@ export function createAtriumServer(options: AtriumServerOptions = {}): McpServer
         ...(exclude !== undefined ? { exclude } : {}),
         ...(max !== undefined ? { max } : {}),
         timeoutMs: defaultSearchTimeoutMs,
-      }).then((envelope) => normalizeXrayResult(envelope, "files")),
+      }).then((envelope) => normalizeSearchResult(envelope, "files", buildNativeSearchInvocationPerfAttributes({
+        command: "files",
+        root,
+        ...(glob !== undefined ? { glob } : {}),
+        ...(exclude !== undefined ? { exclude } : {}),
+        ...(max !== undefined ? { max } : {}),
+      }))),
       backgroundHandoffAfterMs,
     )),
   );
@@ -279,7 +313,7 @@ async function runSearchWithHandoff(
     return completed;
   }
 
-  return adoptBackgroundRun({ startedAt, result });
+  return adoptBackgroundRun({ startedAt, result: result.then((value) => stripPerfMetadata(value)) });
 }
 
 async function waitForResultOrTimeout<T>(result: Promise<T>, timeoutMs: number): Promise<T | undefined> {
@@ -297,6 +331,21 @@ async function waitForResultOrTimeout<T>(result: Promise<T>, timeoutMs: number):
   }
 
   return winner === timedOut ? undefined : winner;
+}
+
+function stripPerfMetadata<T>(value: T): T {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return value;
+  }
+
+  const record = value as Record<string, unknown>;
+  if (!Object.hasOwn(record, "perf")) {
+    return value;
+  }
+
+  const { perf, ...rest } = record;
+  void perf;
+  return rest as T;
 }
 
 export async function startAtriumServer(): Promise<void> {
