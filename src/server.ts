@@ -121,7 +121,7 @@ const atriumInstructions = [
   "- Use the schema tool to discover a CLI invocation shape instead of scraping help through a shell.",
   "",
   "Search primitives:",
-  "- Content search verbs grep and grep-code use Atrium's native bundled-ripgrep implementation. find-files lists paths with Atrium's native file engine and never reads contents.",
+  "- Content search verbs grep and grep-code use Atrium's native search implementation backed by bundled-ripgrep. find-files lists paths with Atrium's native file engine and never reads contents.",
   "- grep and grep-code take a single literal query or a queries array of one or more patterns to match any of several patterns. Set regex true to treat patterns as regular expressions. grep and find-files are unrestricted and include hidden, gitignored, and vendor files. grep-code is ignore-aware and skips hidden, gitignored, and vendor files.",
   "- These are first-class Atrium MCP tools. Use them for search instead of shelling out.",
 ].join("\n");
