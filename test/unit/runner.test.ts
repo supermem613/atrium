@@ -1,11 +1,26 @@
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
+import { execFileSync } from "node:child_process";
 import { access, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { setTimeout as waitForPollInterval } from "node:timers/promises";
 import { ExecutionQueue } from "../../src/core/executionQueue.js";
-import { runExecutable, startExecutableRun } from "../../src/core/runner.js";
 import { atriumTempPath } from "../../src/core/tempPaths.js";
+import type { RunExecutableInput, StartExecutableRunOptions } from "../../src/core/runner.js";
+
+async function loadRunnerModule() {
+  return import("../../src/core/runner.js");
+}
+
+async function runExecutable(input: RunExecutableInput, options?: StartExecutableRunOptions) {
+  const runnerModule = await loadRunnerModule();
+  return runnerModule.runExecutable(input, options);
+}
+
+async function startExecutableRun(input: RunExecutableInput, options?: StartExecutableRunOptions) {
+  const runnerModule = await loadRunnerModule();
+  return runnerModule.startExecutableRun(input, options);
+}
 
 describe("runner", () => {
   it("inlines small stdout and omits empty stderr", async () => {
@@ -32,6 +47,89 @@ describe("runner", () => {
 
     assert.equal(result.ok, false);
     assert.equal(result.error?.code, "DeniedShell");
+  });
+
+  it("uses a cached Windows tool resolution before the first spawn attempt", { skip: process.platform !== "win32" }, async () => {
+    const resolvedTool = "C:\\repo\\bin\\tool.cmd";
+    const childScript = `
+      import { createRequire } from "node:module";
+      import { EventEmitter } from "node:events";
+
+      const require = createRequire(import.meta.url);
+      const childProcessModule = require("node:child_process");
+      const spawnCalls = [];
+
+      function createFakeChildProcess(stdoutText, stderrText, exitCode) {
+        const child = new EventEmitter();
+        const stdout = new EventEmitter();
+        const stderr = new EventEmitter();
+        stderr.resume = () => {};
+        child.stdout = stdout;
+        child.stderr = stderr;
+        child.stdin = { end() {} };
+        child.kill = () => {};
+        queueMicrotask(() => {
+          if (stdoutText.length > 0) {
+            stdout.emit("data", Buffer.from(stdoutText));
+          }
+          if (stderrText.length > 0) {
+            stderr.emit("data", Buffer.from(stderrText));
+          }
+          child.emit("close", exitCode, null);
+        });
+        return child;
+      }
+
+      const mockSpawn = (command, args = []) => {
+        spawnCalls.push({ command, args: [...args] });
+        if (command === "tool") {
+          const error = new Error("spawn tool ENOENT");
+          error.code = "ENOENT";
+          throw error;
+        }
+
+        if (command === "where.exe") {
+          return createFakeChildProcess(${JSON.stringify(`${resolvedTool}\n`)}, "", 0);
+        }
+
+        if (command === "cmd.exe") {
+          return createFakeChildProcess("", "", 0);
+        }
+
+        throw new Error(\`unexpected command \${command}\`);
+      };
+
+      childProcessModule.spawn = mockSpawn;
+      const runnerModule = await import("./src/core/runner.ts?cached-resolution-test=${Date.now()}");
+      const firstRun = await runnerModule.runExecutable({ tool: "tool" });
+      const firstRunCallCount = spawnCalls.length;
+      const secondRun = await runnerModule.runExecutable({ tool: "tool" });
+      const secondRunCalls = spawnCalls.slice(firstRunCallCount);
+      process.stdout.write(JSON.stringify({
+        firstRunOk: firstRun.ok,
+        secondRunOk: secondRun.ok,
+        secondRunCalls,
+      }));
+    `;
+
+    const stdout = execFileSync(process.execPath, ["--import", "tsx", "-e", childScript], {
+      cwd: process.cwd(),
+      encoding: "utf8",
+    });
+    const payload = JSON.parse(stdout) as {
+      firstRunOk: boolean;
+      secondRunOk: boolean;
+      secondRunCalls: Array<{ command: string; args: string[] }>;
+    };
+
+    assert.equal(payload.firstRunOk, true);
+    assert.equal(payload.secondRunOk, true);
+    assert.equal(payload.secondRunCalls.length, 1);
+    assert.equal(payload.secondRunCalls[0].command, "cmd.exe");
+    assert.equal(payload.secondRunCalls[0].args[0], "/d");
+    assert.equal(payload.secondRunCalls[0].args[1], "/s");
+    assert.equal(payload.secondRunCalls[0].args[2], "/c");
+    assert.ok(payload.secondRunCalls[0].args[3].includes(resolvedTool));
   });
 
   it("captures non-zero exits without throwing", async () => {
@@ -106,8 +204,8 @@ describe("runner", () => {
     assert.ok((secondResult.metrics.queueWaitMs ?? 0) > 0);
   });
 
-  it("emits redacted xray search metrics for trace analysis", { skip: process.platform !== "win32" }, async () => {
-    const { shimFile } = await createNodeCmdShim("Program Files xray-metrics-", [
+  it("emits generic executable semantics for command runs without xray search parsing", { skip: process.platform !== "win32" }, async () => {
+    const { shimFile } = await createNodeCmdShim("Program Files native-search-metrics-", [
       "@ECHO off",
       "SETLOCAL",
       "SET \"NODE_EXE=%~dp0\\node.exe\"",
@@ -126,17 +224,9 @@ describe("runner", () => {
     assert.equal(simulated.ok, true);
     assert.equal(simulated.metrics.childTool, "xray");
     assert.equal(simulated.metrics.argShape.includes("secret query text"), false);
-    assert.equal(simulated.metrics.semantic?.kind, "xray.search");
-    if (simulated.metrics.semantic?.kind !== "xray.search") {
-      assert.fail("expected xray.search semantic metrics");
-    }
-    assert.equal(simulated.metrics.semantic.queryLength, "secret query text".length);
-    assert.equal("query" in simulated.metrics.semantic, false);
-    assert.equal(simulated.metrics.semantic.globCount, 1);
-    assert.equal(simulated.metrics.semantic.context, 2);
-    assert.equal(simulated.metrics.semantic.max, 50);
-    assert.equal(simulated.metrics.semantic.regex, true);
-    assert.equal(typeof simulated.metrics.semantic.scanScopeHash, "string");
+    assert.equal(simulated.metrics.semantic?.kind, "generic.command");
+    assert.equal(typeof simulated.metrics.semantic?.commandHash, "string");
+    assert.equal(simulated.metrics.semantic?.commandLength, "search".length);
   });
 
   it("writes large stdout as a file value", async () => {

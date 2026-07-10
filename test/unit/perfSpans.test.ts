@@ -12,11 +12,54 @@ import {
   mcpRunCommand,
 } from "../../src/commands/mcpDebug.js";
 import { defaultLongRunningTimeoutMs } from "../../src/core/backgroundRuns.js";
+import { createPerfRecorder, type PerfClock } from "../../src/core/perf.js";
 import type { RunExecutableInput, RunExecutableResult } from "../../src/core/runner.js";
 import type { XraySearchClientLike } from "../../src/core/search/types.js";
 import { atriumTempPath } from "../../src/core/tempPaths.js";
 
 describe("CLI perf spans and search metrics", { concurrency: false }, () => {
+  it("does not sample clocks when perf recording is disabled", () => {
+    let samples = 0;
+    const clock: PerfClock = {
+      wallNow: () => {
+        samples += 1;
+        return 0;
+      },
+      monotonicNow: () => {
+        samples += 1;
+        return 0;
+      },
+    };
+
+    assert.equal(createPerfRecorder(false, clock), undefined);
+    assert.equal(samples, 0);
+  });
+
+  it("records deterministic wall timestamps and precise monotonic span durations", () => {
+    const wallSamples = [1_000, 1_010, 1_025, 1_040];
+    const monotonicSamples = [10, 20, 27.25, 50];
+    const clock: PerfClock = {
+      wallNow: () => wallSamples.shift() ?? 1_040,
+      monotonicNow: () => monotonicSamples.shift() ?? 50,
+    };
+    const operation = createPerfRecorder(true, clock)?.startOperation("precise-span");
+    assert.ok(operation);
+
+    const span = operation.startSpan("search");
+    span.finish({ phase: "ripgrep" });
+    const report = operation.finish();
+
+    assert.equal(report.durationMs, 40);
+    assert.equal(report.spans.length, 1);
+    assert.deepEqual(report.spans[0], {
+      name: "search",
+      startedAt: new Date(1_010).toISOString(),
+      endedAt: new Date(1_025).toISOString(),
+      durationMs: 7.25,
+      attributes: { phase: "ripgrep" },
+    });
+  });
+
   it("mcp-read --perf reports stat, read, slice, and materialize spans", async () => {
     const fixture = await withTempFile("alpha\nbeta\ngamma\n");
     const payload = runCliJson([
@@ -82,7 +125,7 @@ describe("CLI perf spans and search metrics", { concurrency: false }, () => {
     assert.equal(capturedInput?.timeoutMs, defaultLongRunningTimeoutMs);
   });
 
-  it("mcp-grep --perf preserves search invocation, normalization, and xray metrics from fake xray output", async () => {
+  it("mcp-grep --perf preserves native search invocation, normalization, and bundled-ripgrep perf metadata", async () => {
     const fixture = await withTempFixture();
     const fakeSearchClient: XraySearchClientLike = {
       async run() {
@@ -93,7 +136,16 @@ describe("CLI perf spans and search metrics", { concurrency: false }, () => {
             matches: [{ path: join(fixture.root, "sample.txt"), line: 1, text: "alpha" }],
             summary: { matchCount: 1 },
           },
-          metrics: { elapsedMs: 7, filesScanned: 1, matchesReturned: 1 },
+          metrics: {
+            ripgrepMetrics: {
+              searches: 1,
+              spawnCallMs: 1,
+              spawnReadyMs: 2,
+              childRunMs: 3,
+              childTotalMs: 6,
+              parseMs: 0.5,
+            },
+          },
         };
       },
     };
@@ -110,7 +162,20 @@ describe("CLI perf spans and search metrics", { concurrency: false }, () => {
     const attributes = collectPerfAttributes(perf);
     assert.ok("searchInvocation" in attributes, "expected search invocation attributes");
     assert.ok("normalization" in attributes, "expected normalization attributes");
-    assert.ok("xrayMetrics" in attributes, "expected xray metrics attributes");
+    assert.ok("nativeSearch" in attributes, "expected native Atrium search perf attributes");
+    assert.ok("bundledRipgrep" in attributes, "expected bundled-ripgrep perf attributes");
+    assert.ok("ripgrepMetrics" in attributes, "expected detailed ripgrep metrics");
+    const spans = perf.spans as Array<Record<string, unknown>>;
+    const searchSpan = spans.find((span) => span.name === "search");
+    const normalizeSpan = spans.find((span) => span.name === "normalize");
+    assert.ok(searchSpan);
+    assert.ok(normalizeSpan);
+    assert.ok((searchSpan.durationMs as number) > 0, "expected search work to have a measured duration");
+    assert.ok((normalizeSpan.durationMs as number) >= 0, "expected normalization to be measured separately");
+    const ripgrepMetrics = (searchSpan.attributes as Record<string, unknown>).ripgrepMetrics as Record<string, unknown>;
+    for (const field of ["spawnCallMs", "spawnReadyMs", "childRunMs", "childTotalMs", "parseMs"]) {
+      assert.equal(typeof ripgrepMetrics[field], "number", `expected numeric ${field}`);
+    }
   });
 
   it("perf search reruns preserve each MCP verb's scope and timeout", async () => {
@@ -161,6 +226,7 @@ describe("CLI perf spans and search metrics", { concurrency: false }, () => {
         glob: "**/*.txt",
         exclude: "**/vendor/**",
         timeoutMs: 59_000,
+        perf: true,
       },
       {
         command: "search",
@@ -171,6 +237,7 @@ describe("CLI perf spans and search metrics", { concurrency: false }, () => {
         glob: "**/*.txt",
         exclude: "**/vendor/**",
         timeoutMs: 59_000,
+        perf: true,
       },
       {
         command: "search",
@@ -180,12 +247,14 @@ describe("CLI perf spans and search metrics", { concurrency: false }, () => {
         glob: "**/*.ts",
         exclude: "**/dist/**",
         timeoutMs: 59_000,
+        perf: true,
       },
       {
         command: "search",
         root: fixture.root,
         query: "literal.pattern",
         timeoutMs: 59_000,
+        perf: true,
       },
     ]);
   });

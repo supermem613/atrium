@@ -41,6 +41,16 @@ npm run benchmark -- --command node-version --iterations 15 --warmup 3
 
 Interpret the benchmark output as a benchmark-owned aggregate report. Interpret the CLI `--perf` output as a CLI-owned per-operation report.
 
+## All-verb evals
+
+Use this exact command for the aggregate eval suite:
+
+```bash
+npm run benchmark -- --suite all-verbs
+```
+
+It runs serially against realistic temporary fixtures for all seven MCP verbs (`schema`, `run`, `operation-wait`, `read`, `find-files`, `grep`, and `grep-code`). The search cases exercise Atrium's native bundled-ripgrep-backed implementation for `find-files`, `grep`, and `grep-code`. Treat the resulting aggregate report as the measurement baseline for comparable before/after Speedify runs. Keep CLI `--perf` as the single-operation diagnostic path when you need a trace for one verb instead of the suite-level eval report.
+
 ## Examples
 
 ### `mcp-run`
@@ -62,6 +72,16 @@ atrium mcp-grep /tmp --query alpha --max 5 --perf
 ```
 
 Search reruns accept the same scope controls as their MCP verbs. Use `--queries`, `--regex`, `--glob`, and `--exclude` when those arguments shaped the original request. `mcp-find-files` also accepts `--exclude`.
+
+Search traces separate the native operation into a timed `search` span and a timed `normalize` span. The `search` span includes `ripgrepMetrics`:
+
+- `spawnCallMs`: synchronous time spent creating the child process.
+- `spawnReadyMs`: time from the spawn call returning until Node reports the child as spawned.
+- `childRunMs`: time from the spawned event until the child closes.
+- `childTotalMs`: total time from starting the spawn call until the child closes.
+- `parseMs`: time spent parsing ripgrep output after the child closes.
+
+These clocks, lifecycle measurements, and search perf metadata are enabled only for CLI `--perf` reruns. Normal MCP search and CLI search without `--perf` do not calculate or return them.
 
 ### `mcp-operation-wait`
 

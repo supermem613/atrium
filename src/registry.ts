@@ -205,7 +205,7 @@ export const commandSpecs: CommandSpec[] = [
   },
   {
     path: ["mcp-find-files"],
-    summary: "Investigate an MCP find-files call locally; rerun through the Atrium CLI with --perf for a CLI-only detailed trace.",
+    summary: "Investigate an MCP find-files call locally with Atrium's native file discovery; rerun through the Atrium CLI with --perf for a CLI-only detailed trace.",
     effect: "read",
     input: {
       positionals: ["root"],
@@ -213,7 +213,7 @@ export const commandSpecs: CommandSpec[] = [
         {
           name: "--glob",
           type: "string",
-          summary: "Glob pattern to match files.",
+          summary: "Glob pattern to constrain file paths.",
         },
         {
           name: "--exclude",
@@ -240,7 +240,7 @@ export const commandSpecs: CommandSpec[] = [
   },
   {
     path: ["mcp-grep"],
-    summary: "Investigate an MCP grep call locally; rerun through the Atrium CLI with --perf for a CLI-only detailed trace.",
+    summary: "Investigate an MCP grep call locally with Atrium's native bundled-ripgrep search; rerun through the Atrium CLI with --perf for a CLI-only detailed trace.",
     effect: "read",
     input: {
       positionals: ["root"],
@@ -248,7 +248,7 @@ export const commandSpecs: CommandSpec[] = [
         {
           name: "--query",
           type: "string",
-          summary: "Query string to search for.",
+          summary: "Single query string to search for.",
         },
         {
           name: "--queries",
@@ -263,7 +263,7 @@ export const commandSpecs: CommandSpec[] = [
         {
           name: "--glob",
           type: "string",
-          summary: "Glob pattern to constrain the search.",
+          summary: "Glob pattern to constrain searched paths.",
         },
         {
           name: "--exclude",
@@ -290,7 +290,7 @@ export const commandSpecs: CommandSpec[] = [
   },
   {
     path: ["mcp-grep-code"],
-    summary: "Investigate an MCP grep-code call locally; rerun through the Atrium CLI with --perf for a CLI-only detailed trace.",
+    summary: "Investigate an MCP grep-code call locally with Atrium's native ignore-aware search; rerun through the Atrium CLI with --perf for a CLI-only detailed trace.",
     effect: "read",
     input: {
       positionals: ["root"],
@@ -298,7 +298,7 @@ export const commandSpecs: CommandSpec[] = [
         {
           name: "--query",
           type: "string",
-          summary: "Query string to search for.",
+          summary: "Single query string to search for.",
         },
         {
           name: "--queries",
@@ -313,7 +313,7 @@ export const commandSpecs: CommandSpec[] = [
         {
           name: "--glob",
           type: "string",
-          summary: "Glob pattern to constrain the search.",
+          summary: "Glob pattern to constrain searched paths.",
         },
         {
           name: "--exclude",

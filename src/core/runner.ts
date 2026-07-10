@@ -78,22 +78,7 @@ export interface RunExecutableMetrics {
   queueDepthAtEnqueue?: number;
   queueActiveAtEnqueue?: number;
   queueActiveAtStart?: number;
-  semantic?: RunSemanticMetrics;
-}
-
-export type RunSemanticMetrics = XraySearchMetrics | GenericCommandMetrics;
-
-export interface XraySearchMetrics {
-  kind: "xray.search";
-  queryHash: string;
-  queryLength: number;
-  regex: boolean;
-  context: number | null;
-  max: number | null;
-  globCount: number;
-  typeCount: number;
-  rootHash?: string;
-  scanScopeHash: string;
+  semantic?: GenericCommandMetrics;
 }
 
 export interface GenericCommandMetrics {
@@ -188,9 +173,10 @@ export async function startExecutableRun(input: RunExecutableInput, options: Sta
   const result = (async (): Promise<RunExecutableResult> => {
     const permit = await acquireExecutionPermit(options.executionQueue);
     try {
-      let attempt = await spawnOnce(input, input.tool, args, stdin, timeoutMs, progress);
+      const cachedResolvedTool = getCachedResolvedTool(input.tool);
+      let attempt = await spawnOnce(input, cachedResolvedTool ?? input.tool, args, stdin, timeoutMs, progress);
 
-      if (attempt.spawnError !== undefined && shouldResolveAfterFailure(input.tool, attempt.spawnError)) {
+      if (attempt.spawnError !== undefined && cachedResolvedTool === undefined && shouldResolveAfterFailure(input.tool, attempt.spawnError)) {
         const resolved = await resolveTool(input.tool);
         if (resolved !== input.tool) {
           attempt = await spawnOnce(input, resolved, args, stdin, timeoutMs, progress);
@@ -466,12 +452,20 @@ function failedBeforeSpawn(input: RunExecutableInput, args: string[], stdin: str
   };
 }
 
+function getCachedResolvedTool(tool: string): string | undefined {
+  if (process.platform !== "win32" || tool.includes("\\") || tool.includes("/")) {
+    return undefined;
+  }
+
+  return resolvedToolCache.get(tool.toLowerCase());
+}
+
 async function resolveTool(tool: string): Promise<string> {
   if (process.platform !== "win32" || tool.includes("\\") || tool.includes("/")) {
     return tool;
   }
 
-  const cached = resolvedToolCache.get(tool.toLowerCase());
+  const cached = getCachedResolvedTool(tool);
   if (cached !== undefined) {
     return cached;
   }
@@ -620,105 +614,13 @@ function buildRunMetrics(
   };
 }
 
-function buildSemanticMetrics(tool: string, args: string[], cwd: string | undefined): RunSemanticMetrics {
-  const toolName = normalizeToolName(tool);
-  if (toolName === "xray" && args[0] === "search") {
-    return buildXraySearchMetrics(args, cwd);
-  }
-
+function buildSemanticMetrics(_tool: string, args: string[], _cwd: string | undefined): GenericCommandMetrics {
+  const command = args[0] ?? "";
   return {
     kind: "generic.command",
-    commandHash: shortHash(args[0] ?? ""),
-    commandLength: args[0]?.length ?? 0,
+    commandHash: shortHash(command),
+    commandLength: command.length,
   };
-}
-
-function buildXraySearchMetrics(args: string[], cwd: string | undefined): XraySearchMetrics {
-  const parsed = parseXraySearchArgs(args);
-  const scope = {
-    cwdHash: cwd === undefined ? null : shortHash(resolve(cwd)),
-    rootHash: parsed.root === undefined ? null : shortHash(resolve(cwd ?? process.cwd(), parsed.root)),
-    globs: parsed.globs.slice().sort(),
-    types: parsed.types.slice().sort(),
-    regex: parsed.regex,
-  };
-  return {
-    kind: "xray.search",
-    queryHash: shortHash(parsed.query ?? ""),
-    queryLength: parsed.query?.length ?? 0,
-    regex: parsed.regex,
-    context: parsed.context,
-    max: parsed.max,
-    globCount: parsed.globs.length,
-    typeCount: parsed.types.length,
-    ...(parsed.root === undefined ? {} : { rootHash: shortHash(resolve(cwd ?? process.cwd(), parsed.root)) }),
-    scanScopeHash: shortHash(JSON.stringify(scope)),
-  };
-}
-
-function parseXraySearchArgs(args: string[]): {
-  query: string | undefined;
-  regex: boolean;
-  context: number | null;
-  max: number | null;
-  globs: string[];
-  types: string[];
-  root: string | undefined;
-} {
-  const globs: string[] = [];
-  const types: string[] = [];
-  let query: string | undefined;
-  let context: number | null = null;
-  let max: number | null = null;
-  let root: string | undefined;
-  let expectValueFor: string | null = null;
-
-  for (let index = 1; index < args.length; index++) {
-    const arg = args[index];
-    if (expectValueFor !== null) {
-      if (expectValueFor === "--query") {
-        query = arg;
-      } else if (expectValueFor === "--glob") {
-        globs.push(arg);
-      } else if (expectValueFor === "--type") {
-        types.push(arg);
-      } else if (expectValueFor === "--root") {
-        root = arg;
-      } else if (expectValueFor === "--context") {
-        context = parseNullableInt(arg);
-      } else if (expectValueFor === "--max") {
-        max = parseNullableInt(arg);
-      }
-      expectValueFor = null;
-      continue;
-    }
-
-    if (["--query", "--glob", "--type", "--root", "--context", "--max"].includes(arg)) {
-      expectValueFor = arg;
-      continue;
-    }
-    if (arg === "--regex") {
-      continue;
-    }
-    if (!arg.startsWith("-") && query === undefined) {
-      query = arg;
-    }
-  }
-
-  return {
-    query,
-    regex: args.includes("--regex"),
-    context,
-    max,
-    globs,
-    types,
-    root,
-  };
-}
-
-function parseNullableInt(value: string): number | null {
-  const parsed = Number.parseInt(value, 10);
-  return Number.isFinite(parsed) ? parsed : null;
 }
 
 function shapeArg(args: string[], arg: string, index: number): string {

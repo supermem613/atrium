@@ -12,10 +12,10 @@ import { adoptBackgroundRun, defaultWaitTimeoutMs, waitForBackgroundRun, withLon
 import { RunExecutableInput, RunExecutableResult, startExecutableRun } from "./core/runner.js";
 import { ExecutionQueue } from "./core/executionQueue.js";
 import { toolTextResult } from "./mcp/format.js";
-import { createXrayClient } from "./core/search/xrayClient.js";
-import { normalizeXrayResult } from "./core/search/normalize.js";
+import { createNativeSearchClient } from "./core/search/searchClient.js";
+import { normalizeSearchResult } from "./core/search/normalize.js";
 import { readTextFileSlice } from "./core/readFile.js";
-import type { XraySearchClientLike } from "./core/search/types.js";
+import type { SearchClientLike } from "./core/search/types.js";
 
 const defaultBackgroundHandoffAfterMs = 45_000;
 const defaultSearchTimeoutMs = 59_000;
@@ -34,32 +34,32 @@ const contentVerbs: Record<"grep" | "grep-code", SearchVerbSpec> = {
   "grep": {
     command: "search", all: true, kind: "content",
     title: "Grep files",
-    description: "Unrestricted content search across the filesystem, including hidden, gitignored, and vendor files. Pass a single literal query, or a queries array to match any of several patterns. Set regex true to treat patterns as regular expressions. For code-aware search prefer grep-code.",
+    description: "Unrestricted content search across the filesystem, including hidden, gitignored, and vendor files. Pass a single literal query, or a queries array of one or more patterns. Set regex true to treat patterns as regular expressions. For ignore-aware code search prefer grep-code.",
   },
   "grep-code": {
     command: "search", all: false, kind: "content",
     title: "Grep code",
-    description: "Git-aware content search over code that skips hidden, gitignored, and vendor files. Pass a single literal query, or a queries array to match any of several patterns. Set regex true to treat patterns as regular expressions. Prefer this first for symbols, APIs, tests, command handlers, error strings, and docs related to code.",
+    description: "Ignore-aware content search that skips hidden, gitignored, and vendor files. Pass a single literal query, or a queries array of one or more patterns. Set regex true to treat patterns as regular expressions. Prefer this first for symbols, APIs, tests, command handlers, error strings, and docs related to code.",
   },
 };
 
 const findFilesVerb: SearchVerbSpec = {
   command: "files", all: true, kind: "files",
   title: "Find files",
-  description: "List file paths under a root, filtered by glob or type. Path discovery only; it never reads file contents. Includes hidden, gitignored, and vendor files.",
+  description: "List file paths under a root, filtered by glob and exclude. Path discovery only; it never reads file contents. Includes hidden, gitignored, and vendor files. The tool exposes glob but not a type option.",
 };
 
 // Escapes regex metacharacters so a literal pattern matches itself when several
-// literal patterns are combined into one xray alternation.
+// literal patterns are combined into one native-search alternation.
 function escapeRegExp(pattern: string): string {
   return pattern.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-// Resolves query/queries/regex into one xray query plus whether xray runs in
-// regex mode. A lone literal query stays a plain literal search so grep and
-// grep-code keep their prior single-pattern behavior. Multiple literal patterns
-// are escaped and joined into an alternation. When regex is set, patterns are
-// joined verbatim. Exactly one of query or queries must be present.
+// Resolves query/queries/regex into one native-search query plus whether native
+// search runs in regex mode. A lone literal query stays a plain literal search so
+// grep and grep-code keep their prior single-pattern behavior. Multiple literal
+// patterns are escaped and joined into an alternation. When regex is set,
+// patterns are joined verbatim. Exactly one of query or queries must be present.
 function resolveSearchQuery(
   toolName: string,
   query: string | undefined,
@@ -101,16 +101,16 @@ const atriumInstructions = [
   "- Use the schema tool to discover a CLI invocation shape instead of scraping help through a shell.",
   "",
   "Search primitives:",
-  "- Content search verbs grep and grep-code run xray search. find-files lists paths with xray files and never reads contents.",
-  "- grep and grep-code take a single literal query or a queries array to match any of several patterns. Set regex true to treat patterns as regular expressions. grep and find-files are unrestricted and include hidden, gitignored, and vendor files. grep-code is git-aware and scoped to code.",
-  "- These are first-class Atrium MCP tools backed by xray. Do not call xray directly for search.",
+  "- Content search verbs grep and grep-code use Atrium's native search implementation backed by bundled-ripgrep. find-files lists paths with Atrium's native file engine and never reads contents.",
+  "- grep and grep-code take a single literal query or a queries array of one or more patterns to match any of several patterns. Set regex true to treat patterns as regular expressions. grep and find-files are unrestricted and include hidden, gitignored, and vendor files. grep-code is ignore-aware and skips hidden, gitignored, and vendor files.",
+  "- These are first-class Atrium MCP tools. Use them for search instead of shelling out.",
 ].join("\n");
 
 export interface AtriumServerOptions {
   backgroundHandoffAfterMs?: number;
   waitTimeoutMs?: number;
   executionQueue?: ExecutionQueue | false;
-  searchClient?: XraySearchClientLike;
+  searchClient?: SearchClientLike;
 }
 
 export function createAtriumServer(options: AtriumServerOptions = {}): McpServer {
@@ -119,7 +119,7 @@ export function createAtriumServer(options: AtriumServerOptions = {}): McpServer
   const executionOptions = {
     executionQueue: options.executionQueue,
   };
-  const searchClient = options.searchClient ?? createXrayClient();
+  const searchClient = options.searchClient ?? createNativeSearchClient();
   const server = new McpServer(
     {
       name: "atrium",
@@ -198,7 +198,7 @@ export function createAtriumServer(options: AtriumServerOptions = {}): McpServer
         ...(exclude !== undefined ? { exclude } : {}),
         ...(max !== undefined ? { max } : {}),
         timeoutMs: defaultSearchTimeoutMs,
-      }).then((envelope) => normalizeXrayResult(envelope, spec.kind)),
+      }).then((envelope) => normalizeSearchResult(envelope, spec.kind)),
       backgroundHandoffAfterMs,
     ));
 
@@ -211,9 +211,9 @@ export function createAtriumServer(options: AtriumServerOptions = {}): McpServer
         inputSchema: {
           root: z.string().min(1).describe("Root path to search from."),
           query: z.string().min(1).optional().describe("A single search pattern. Provide either query or queries, not both."),
-          queries: z.array(z.string().min(1)).min(1).optional().describe("Two or more patterns to match any of. Atrium combines them into one alternation. Provide either query or queries, not both."),
+          queries: z.array(z.string().min(1)).min(1).optional().describe("One or more patterns to match any of. Atrium combines them into one alternation. Provide either query or queries, not both."),
           regex: z.boolean().optional().describe("Treat the patterns as regular expressions. Defaults to false, which matches patterns literally."),
-          glob: z.string().min(1).optional().describe("Optional glob to constrain the search."),
+          glob: z.string().min(1).optional().describe("Optional glob to constrain the search by path or name."),
           exclude: z.string().min(1).optional().describe("Optional exclude pattern applied as a negated glob."),
           max: z.number().int().positive().optional().describe("Optional maximum number of results to return."),
         },
@@ -246,7 +246,7 @@ export function createAtriumServer(options: AtriumServerOptions = {}): McpServer
         ...(exclude !== undefined ? { exclude } : {}),
         ...(max !== undefined ? { max } : {}),
         timeoutMs: defaultSearchTimeoutMs,
-      }).then((envelope) => normalizeXrayResult(envelope, "files")),
+      }).then((envelope) => normalizeSearchResult(envelope, "files")),
       backgroundHandoffAfterMs,
     )),
   );
@@ -279,7 +279,7 @@ async function runSearchWithHandoff(
     return completed;
   }
 
-  return adoptBackgroundRun({ startedAt, result });
+  return adoptBackgroundRun({ startedAt, result: result.then((value) => stripPerfMetadata(value)) });
 }
 
 async function waitForResultOrTimeout<T>(result: Promise<T>, timeoutMs: number): Promise<T | undefined> {
@@ -297,6 +297,21 @@ async function waitForResultOrTimeout<T>(result: Promise<T>, timeoutMs: number):
   }
 
   return winner === timedOut ? undefined : winner;
+}
+
+function stripPerfMetadata<T>(value: T): T {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return value;
+  }
+
+  const record = value as Record<string, unknown>;
+  if (!Object.hasOwn(record, "perf")) {
+    return value;
+  }
+
+  const { perf, ...rest } = record;
+  void perf;
+  return rest as T;
 }
 
 export async function startAtriumServer(): Promise<void> {

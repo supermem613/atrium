@@ -1,6 +1,6 @@
 # Search primitives
 
-Atrium exposes `find-files`, `grep`, and `grep-code` as first-class MCP tools for local search. These are the public search surface. Atrium routes them to [xray](https://github.com/supermem613/xray) (bundled ripgrep): the content verbs run `xray search` and `find-files` runs `xray files`. xray must be on `PATH`. Callers should not invoke xray directly; use these MCP tools.
+Atrium exposes `find-files`, `grep`, and `grep-code` as first-class MCP tools for local search. These are the public search surface. Atrium implements them with its own native search client and bundled ripgrep directly.
 
 These are MCP tools, not standalone CLI subcommands and not entries in `atrium schema`. The `schema` command documents Atrium's CLI commands. MCP clients discover these tools from the MCP tool list.
 
@@ -18,7 +18,7 @@ The two content verbs (`grep`, `grep-code`) share one input shape. Pass a single
 }
 ```
 
-Or pass a `queries` array to match any of several patterns. Atrium escapes each pattern and joins them into one alternation before running xray:
+Or pass a `queries` array of one or more patterns. Atrium escapes each pattern and joins them into one alternation before running the native search:
 
 ```json
 {
@@ -40,7 +40,7 @@ Provide exactly one of `query` or `queries`; sending both or neither is rejected
 }
 ```
 
-`find-files` is path discovery only and takes the same shape **without** `query` or `queries`. It never reads file contents; narrow the listing by `glob` and `exclude` instead:
+`find-files` is path discovery only and takes the same shape **without** `query` or `queries`. It never reads file contents; it exposes `glob` for path discovery and does not expose a `type` option. Narrow the listing by `glob` and `exclude` instead:
 
 ```json
 {
@@ -71,9 +71,9 @@ Atrium applies a fixed internal search deadline. Callers cannot tune search time
 | --- | --- | --- |
 | Find paths and file names | `find-files` | unrestricted |
 | Broad content search across the filesystem | `grep` | unrestricted |
-| Code-oriented implementation investigation | `grep-code` | git-aware, code only |
+| Code-oriented implementation investigation | `grep-code` | ignore-aware content search across nonignored files |
 
-`grep` and `find-files` are **unrestricted**: they include hidden, gitignored, and vendor files such as `node_modules`. `grep-code` is **git-aware** and skips hidden, gitignored, and vendor files. Prefer `grep-code` for symbols, APIs, tests, command handlers, error strings, and docs related to code. Use `grep` for broad filesystem content or generated and dependency artifacts. There is no `find-code` tool; use `find-files` for path discovery.
+`grep` and `find-files` are **unrestricted**: they include hidden, gitignored, and vendor files such as `node_modules`. `grep-code` is **ignore-aware** and skips hidden, gitignored, and vendor files. Prefer `grep-code` for symbols, APIs, tests, command handlers, error strings, and docs related to code. Use `grep` for broad filesystem content or generated and dependency artifacts. There is no `find-code` tool; use `find-files` for path discovery.
 
 ## Result shapes
 
@@ -101,7 +101,7 @@ Atrium applies a fixed internal search deadline. Callers cannot tune search time
 }
 ```
 
-Warnings from xray, including truncated and timed-out results, are surfaced in `warnings`. Callers should show them instead of treating a partial result as clean.
+Warnings from the native search engine, including truncated and timed-out results, are surfaced in `warnings`. Callers should show them instead of treating a partial result as clean.
 
 ## Long-running contract
 

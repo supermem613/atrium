@@ -4,7 +4,7 @@ import { describe, it } from "node:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { createAtriumServer } from "../../src/server.js";
-import type { XrayEnvelope, XrayRunOptions, XraySearchClientLike } from "../../src/core/search/types.js";
+import type { NativeSearchEnvelope, NativeSearchRunOptions, XrayEnvelope, XrayRunOptions, XraySearchClientLike } from "../../src/core/search/types.js";
 
 class FakeXrayClient implements XraySearchClientLike {
   public calls: XrayRunOptions[] = [];
@@ -18,8 +18,35 @@ class FakeXrayClient implements XraySearchClientLike {
   }
 }
 
+class FakeNativeSearchClient {
+  public calls: NativeSearchRunOptions[] = [];
+
+  async run(options: NativeSearchRunOptions): Promise<NativeSearchEnvelope> {
+    this.calls.push(options);
+    return {
+      ok: true,
+      command: options.command,
+      kind: options.command === "files" ? "files" : "content",
+      data: {
+        matches: options.command === "files"
+          ? [{ path: "src/native.ts" }]
+          : [{ path: "src/native.ts", line: 11, text: "native hit" }],
+        summary: { fileCount: 1, matchCount: 1 },
+      },
+      warnings: ["native warning"],
+      metrics: {
+        ripgrepMetrics: {
+          searches: 2,
+          bytesSearched: 4096,
+          matches: 1,
+        },
+      },
+    };
+  }
+}
+
 describe("search MCP tools", () => {
-  it("exposes the three search verbs with stable schemas and routes calls to xray", async () => {
+  it("exposes the three search verbs with stable schemas and routes calls through the injected search client", async () => {
     const fakeClient = new FakeXrayClient();
     const server = createAtriumServer({ searchClient: fakeClient });
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
@@ -58,7 +85,7 @@ describe("search MCP tools", () => {
 
       const expectedContentResult = { kind: "content", matches: [{ path: "src/one.ts", line: 7, text: "matched text" }], warnings: [] };
 
-      // A single query stays a literal xray search, so grep and grep-code behavior is unchanged.
+      // A single query stays a literal native search, so grep and grep-code behavior is unchanged.
       const singleLiteralRouting = [
         { name: "grep", args: { root: "/tmp/x", query: "needle", glob: "**/*.ts", exclude: "**/dist/**", max: 5 }, expected: { command: "search", root: "/tmp/x", query: "needle", all: true, glob: "**/*.ts", exclude: "**/dist/**", max: 5, timeoutMs: 59_000 } },
         { name: "grep-code", args: { root: "/tmp/x", query: "needle", glob: "**/*.ts", exclude: "**/dist/**", max: 5 }, expected: { command: "search", root: "/tmp/x", query: "needle", glob: "**/*.ts", exclude: "**/dist/**", max: 5, timeoutMs: 59_000 } },
@@ -140,6 +167,25 @@ describe("search MCP tools", () => {
       const completed = await waitForOperation(client, started.operationId);
       assert.equal(completed.status, "completed");
       assert.deepEqual(completed.result, { kind: "files", matches: [{ path: "src/slow.ts" }], warnings: [] });
+    } finally {
+      await client.close();
+      await serverTransport.close();
+    }
+  });
+
+  it("does not expose injected native metrics in normal MCP responses", async () => {
+    const fakeClient = new FakeNativeSearchClient();
+    const server = createAtriumServer({ searchClient: fakeClient as unknown as XraySearchClientLike });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const client = new Client({ name: "test-client", version: "1.0.0" });
+
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+
+    try {
+      const parsed = await callJson(client, "grep", { root: "/tmp/x", query: "needle" });
+      assert.deepEqual(parsed, { kind: "content", matches: [{ path: "src/native.ts", line: 11, text: "native hit" }], warnings: ["native warning"] });
+      assert.equal(fakeClient.calls.at(-1)?.perf, undefined);
     } finally {
       await client.close();
       await serverTransport.close();

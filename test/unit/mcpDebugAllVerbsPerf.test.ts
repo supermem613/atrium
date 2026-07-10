@@ -152,8 +152,11 @@ describe("mcp debug CLI verbs expose stable payloads and perf reports", () => {
         const cliPayload = runCliDebug(scenario.buildCliArgs(true, fixture));
         assert.equal(typeof cliPayload.perf, "object");
         assert.notEqual(cliPayload.perf, null);
-        const perfReport = cliPayload.perf as { operationId?: unknown };
+        const perfReport = cliPayload.perf as { operationId?: unknown; spans?: Array<{ attributes?: Record<string, unknown> }> };
         assert.equal(typeof perfReport.operationId, "string");
+        if (scenario.name === "find-files" || scenario.name === "grep" || scenario.name === "grep-code") {
+          assertSearchPerfTelemetry(perfReport);
+        }
         const payloadWithoutPerf = { ...cliPayload };
         delete payloadWithoutPerf.perf;
         assert.deepEqual(normalizePayload(payloadWithoutPerf), normalizePayload(expectedPayload));
@@ -177,6 +180,12 @@ function parseJsonPayload(stdout: string): CliPayload {
   const trimmed = stdout.trim();
   assert.notEqual(trimmed, "", "expected CLI output");
   return JSON.parse(trimmed) as CliPayload;
+}
+
+function assertSearchPerfTelemetry(perfReport: { spans?: Array<{ attributes?: Record<string, unknown> }> }): void {
+  const spans = perfReport.spans ?? [];
+  assert.ok(spans.some((span) => span.attributes?.ripgrepMetrics !== undefined), "expected native ripgrep metrics in perf spans");
+  assert.ok(spans.every((span) => span.attributes?.xrayMetrics === undefined), "expected no xray metrics in native perf spans");
 }
 
 function normalizePayload(value: unknown): unknown {

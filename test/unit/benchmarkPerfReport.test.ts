@@ -1,5 +1,8 @@
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 type VerbName = "schema" | "run" | "operation-wait" | "read" | "find-files" | "grep" | "grep-code";
 
@@ -68,11 +71,32 @@ type BenchmarkPerfReportOptions = {
 
 type AllVerbBuilder = (request: AllVerbSuiteRequest) => BenchmarkPerfReport | Promise<BenchmarkPerfReport>;
 
+type RealAllVerbSuiteRunner = (request: {
+  suite: string;
+  fixtureData: Record<string, unknown>;
+}) => Promise<BenchmarkPerfReport>;
+
+type CliSuiteRouter = (args: string[]) => Promise<BenchmarkPerfReport>;
+
 function isAllVerbBuilder(value: unknown): value is AllVerbBuilder {
   return typeof value === "function";
 }
 
 function isCompatBuilder(value: unknown): value is (options: BenchmarkPerfReportOptions) => BenchmarkPerfReport {
+  return typeof value === "function";
+}
+
+function isRealAllVerbSuiteRunner(value: unknown): value is RealAllVerbSuiteRunner {
+  return typeof value === "function";
+}
+
+function isCliSuiteRouter(value: unknown): value is CliSuiteRouter {
+  return typeof value === "function";
+}
+
+type BenchmarkRunScript = (options?: { args?: string[] }) => Promise<unknown>;
+
+function isBenchmarkRunScript(value: unknown): value is BenchmarkRunScript {
   return typeof value === "function";
 }
 
@@ -123,6 +147,78 @@ describe("benchmark-owned all-verb aggregate reports", { concurrency: false }, (
         assert.notEqual(cliDetail, null);
       }
     }
+  });
+
+  it("runs a real all-verb suite against temporary fixtures", async () => {
+    const fixture = await createRealFixtureDirectory();
+    try {
+      const runner = await resolveRealAllVerbSuiteRunner();
+      assert.ok(runner !== undefined, "expected benchmark module to expose a real all-verb suite runner");
+
+      const report = await runner({
+        suite: "all-verbs",
+        fixtureData: {
+          root: fixture.root,
+          files: [
+            { path: join(fixture.root, "README.md"), contents: "# sample\n" },
+            { path: join(fixture.root, "src", "entry.ts"), contents: "export const value = 1;\n" },
+            { path: join(fixture.root, "src", "nested", "helper.ts"), contents: "export const helper = true;\n" },
+          ],
+        },
+      });
+
+      const verbs: VerbName[] = ["schema", "run", "operation-wait", "read", "find-files", "grep", "grep-code"];
+      assert.equal(report.suite, "all-verbs");
+      assert.equal(report.status, "pass");
+      assert.equal(report.totals.pass, 7);
+      assert.equal(report.totals.fail, 0);
+      assert.equal(report.cases.length, 7);
+      assert.deepEqual(report.cases.map((entry) => entry.name), verbs);
+      for (const caseEntry of report.cases) {
+        assert.equal(caseEntry.ok, true);
+        assert.equal(typeof caseEntry.elapsedMs, "number");
+        assert.ok(caseEntry.elapsedMs >= 0);
+      }
+      assert.deepEqual(Object.keys(report.perOperation).sort(), verbs.slice().sort());
+      for (const verb of verbs) {
+        assert.equal(report.perOperation[verb].ok, true);
+      }
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
+  it("routes --suite all-verbs through the CLI while preserving compatibility fields", async () => {
+    const router = await resolveCliSuiteRouter();
+    assert.ok(router !== undefined, "expected benchmark module to expose a CLI suite router");
+
+    const report = await router(["--suite", "all-verbs", "--operation-id", "cli-op"]);
+
+    assert.equal(report.suite, "all-verbs");
+    assert.equal(report.operationId, "cli-op");
+    assert.equal(report.status, "pass");
+    assert.equal(report.totals.pass, 7);
+    assert.equal(report.totals.fail, 0);
+    assert.equal(report.cases.length, 7);
+    assert.equal(report.cases[0].name, "schema");
+    assert.equal(report.perOperation.schema.ok, true);
+    assert.equal(typeof report.startedAt, "string");
+    assert.equal(typeof report.endedAt, "string");
+    assert.equal(typeof report.durationMs, "number");
+    assert.equal(typeof report.elapsedMs, "number");
+  });
+
+  it("routes search benchmarking through the all-verbs suite and retires xray-small", async () => {
+    const benchmarkModule = await loadBenchmarkModule();
+    const runBenchmarkScript = benchmarkModule.runBenchmarkScript;
+    if (!isBenchmarkRunScript(runBenchmarkScript)) {
+      throw new Error("expected benchmark module to expose runBenchmarkScript");
+    }
+
+    await assert.rejects(
+      () => runBenchmarkScript({ args: ["--command", "xray-small"] }),
+      /Unknown --command xray-small/,
+    );
   });
 
   it("keeps single-command benchmark compatibility", async () => {
@@ -190,12 +286,44 @@ async function resolveAllVerbSuiteBuilder(): Promise<AllVerbBuilder | undefined>
     : undefined;
 }
 
+async function resolveRealAllVerbSuiteRunner(): Promise<RealAllVerbSuiteRunner | undefined> {
+  const benchmarkModule = await loadBenchmarkModule();
+  return isRealAllVerbSuiteRunner(benchmarkModule.runRealAllVerbBenchmarkSuite)
+    ? benchmarkModule.runRealAllVerbBenchmarkSuite
+    : undefined;
+}
+
+async function resolveCliSuiteRouter(): Promise<CliSuiteRouter | undefined> {
+  const benchmarkModule = await loadBenchmarkModule();
+  return isCliSuiteRouter(benchmarkModule.runBenchmarkSuiteFromCliArgs)
+    ? benchmarkModule.runBenchmarkSuiteFromCliArgs
+    : undefined;
+}
+
 async function buildSpeedifyCompatiblePerfReport(options: BenchmarkPerfReportOptions): Promise<BenchmarkPerfReport> {
   const benchmarkModule = await loadBenchmarkModule();
   if (!isCompatBuilder(benchmarkModule.buildSpeedifyCompatiblePerfReport)) {
     throw new Error("expected benchmark module to expose buildSpeedifyCompatiblePerfReport");
   }
   return benchmarkModule.buildSpeedifyCompatiblePerfReport(options);
+}
+
+async function createRealFixtureDirectory(): Promise<{ root: string; cleanup: () => Promise<void> }> {
+  const root = await mkdtemp(join(tmpdir(), "atrium-benchmark-"));
+  const workspace = join(root, "workspace");
+  await mkdir(workspace, { recursive: true });
+  const nestedDir = join(workspace, "src", "nested");
+  await mkdir(nestedDir, { recursive: true });
+  await writeFile(join(workspace, "README.md"), "# sample\n");
+  await writeFile(join(workspace, "package.json"), JSON.stringify({ name: "fixture-project" }, null, 2));
+  await writeFile(join(workspace, "src", "entry.ts"), "export const value = 1;\n");
+  await writeFile(join(nestedDir, "helper.ts"), "export const helper = true;\n");
+  return {
+    root: workspace,
+    cleanup: async () => {
+      await rm(root, { recursive: true, force: true });
+    },
+  };
 }
 
 async function loadBenchmarkModule(): Promise<Record<string, unknown>> {
