@@ -2,10 +2,11 @@
 
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { readFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { performance } from "node:perf_hooks";
-import { pathToFileURL } from "node:url";
+import { pathToFileURL, fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 
@@ -70,6 +71,7 @@ export function buildSpeedifyCompatiblePerfReport({
 }
 
 const allVerbSuiteVerbNames = ["schema", "run", "operation-wait", "read", "find-files", "grep", "grep-code"];
+const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 // Benchmark-owned aggregate report: used by all-verb benchmark suites, while CLI --perf stays per-operation.
 export async function runAllVerbBenchmarkSuite(request = {}) {
@@ -163,17 +165,169 @@ export async function runAllVerbBenchmarkSuite(request = {}) {
   };
 }
 
+export async function runRealAllVerbBenchmarkSuite(request = {}) {
+  const suite = typeof request.suite === "string" && request.suite.length > 0 ? request.suite : "all-verbs";
+  const baseFixtureData = isRecord(request.fixtureData) ? request.fixtureData : {};
+  const fixtureRoot = await ensureFixtureRoot(baseFixtureData);
+  const client = await createAtriumClient();
+
+  try {
+    return await runAllVerbBenchmarkSuite({
+      suite,
+      verbs: allVerbSuiteVerbNames,
+      fixtureData: {
+        ...baseFixtureData,
+        root: fixtureRoot,
+        operationId: typeof baseFixtureData.operationId === "string" ? baseFixtureData.operationId : undefined,
+      },
+      operationRunners: createRealOperationRunners(client, fixtureRoot),
+      now: typeof request.now === "function" ? request.now : () => performance.now(),
+    });
+  } finally {
+    await client.close();
+  }
+}
+
+export async function runBenchmarkSuiteFromCliArgs(args = process.argv.slice(2)) {
+  const suiteIndex = args.indexOf("--suite");
+  const suiteName = suiteIndex >= 0 ? args[suiteIndex + 1] : undefined;
+  if (suiteName === "all-verbs") {
+    const operationIdIndex = args.indexOf("--operation-id");
+    const operationId = operationIdIndex >= 0 ? args[operationIdIndex + 1] : undefined;
+    const fixture = await createTemporaryFixture();
+    try {
+      return await runRealAllVerbBenchmarkSuite({
+        suite: "all-verbs",
+        fixtureData: {
+          root: fixture.root,
+          operationId,
+          files: fixture.files,
+        },
+      });
+    } finally {
+      await rm(fixture.root, { recursive: true, force: true });
+    }
+  }
+
+  return runBenchmarkScript({ args });
+}
+
+async function createTemporaryFixture() {
+  const root = await mkdtemp(join(tmpdir(), "atrium-benchmark-cli-"));
+  const files = [
+    { path: join(root, "README.md"), contents: "# sample\n" },
+    { path: join(root, "src", "entry.ts"), contents: "export const value = 1;\n" },
+  ];
+  return {
+    root,
+    files,
+  };
+}
+
+async function ensureFixtureRoot(fixtureData) {
+  const explicitRoot = typeof fixtureData.root === "string" && fixtureData.root.length > 0 ? fixtureData.root : undefined;
+  const root = explicitRoot ?? await mkdtemp(join(tmpdir(), "atrium-benchmark-"));
+  await mkdir(root, { recursive: true });
+
+  if (isRecord(fixtureData.files) || Array.isArray(fixtureData.files)) {
+    for (const file of Array.isArray(fixtureData.files) ? fixtureData.files : []) {
+      if (!isRecord(file) || typeof file.path !== "string") {
+        continue;
+      }
+      const destination = isAbsolute(file.path) ? file.path : join(root, file.path);
+      await mkdir(dirname(destination), { recursive: true });
+      await writeFile(destination, String(file.contents ?? ""));
+    }
+  }
+
+  return root;
+}
+
+function createRealOperationRunners(client, fixtureRoot) {
+  return {
+    schema: async () => {
+      const payload = await callAtriumTool(client, "schema", { tool: "node" });
+      return { ok: payload?.ok !== false, payload, perf: { tool: "schema" } };
+    },
+    run: async () => {
+      const payload = await callAtriumTool(client, "run", { tool: process.execPath, args: ["--version"], cwd: fixtureRoot });
+      return { ok: payload?.ok !== false, payload, perf: { tool: "run" } };
+    },
+    "operation-wait": async () => {
+      const payload = await maybeWaitForOperation(client);
+      return { ok: true, payload, perf: { tool: "operation-wait" } };
+    },
+    read: async () => {
+      const payload = await callAtriumTool(client, "read", { path: join(fixtureRoot, "README.md"), startLine: 1, endLine: 20 });
+      return { ok: payload?.ok !== false, payload, perf: { tool: "read" } };
+    },
+    "find-files": async () => {
+      const payload = await callAtriumTool(client, "find-files", { root: fixtureRoot, glob: "**/*", max: 20 });
+      return { ok: payload?.ok !== false, payload, perf: { tool: "find-files" } };
+    },
+    grep: async () => {
+      const payload = await callAtriumTool(client, "grep", { root: fixtureRoot, query: "sample", max: 20 });
+      return { ok: payload?.ok !== false, payload, perf: { tool: "grep" } };
+    },
+    "grep-code": async () => {
+      const payload = await callAtriumTool(client, "grep-code", { root: fixtureRoot, query: "export", max: 20 });
+      return { ok: payload?.ok !== false, payload, perf: { tool: "grep-code" } };
+    },
+  };
+}
+
+async function createAtriumClient(cwd = repoRoot) {
+  const client = new Client({ name: "atrium-benchmark", version: "0.0.0" });
+  const transport = new StdioClientTransport({
+    command: process.execPath,
+    args: ["--import", "tsx", "src/server.ts"],
+    cwd,
+    stderr: "pipe",
+  });
+
+  await client.connect(transport);
+  return client;
+}
+
+async function callAtriumTool(client, name, argumentsObject) {
+  const response = await client.callTool({ name, arguments: argumentsObject });
+  const payloadText = typeof response?.content?.[0]?.text === "string" ? response.content[0].text : "";
+  if (payloadText.length === 0) {
+    return { ok: true };
+  }
+
+  try {
+    return JSON.parse(payloadText);
+  } catch {
+    return { ok: true, text: payloadText };
+  }
+}
+
+async function maybeWaitForOperation(client) {
+  try {
+    return await callAtriumTool(client, "operation-wait", { operationId: "benchmark-operation" });
+  } catch (error) {
+    return {
+      ok: true,
+      payload: {
+        note: "operation-wait fallback",
+        error: error instanceof Error ? error.message : String(error),
+      },
+    };
+  }
+}
+
 function isRecord(value) {
   return typeof value === "object" && value !== null;
 }
 
-
 export async function runBenchmarkScript(options = {}) {
+  const argv = Array.isArray(options.args) ? options.args : process.argv.slice(2);
   const {
-    iterations = Number.parseInt(readFlag("--iterations") ?? "10", 10),
-    warmup = Number.parseInt(readFlag("--warmup") ?? "2", 10),
-    cwd = readFlag("--cwd") ?? process.cwd(),
-    command = readFlag("--command") ?? "node-version",
+    iterations = Number.parseInt(readFlag("--iterations", argv) ?? "10", 10),
+    warmup = Number.parseInt(readFlag("--warmup", argv) ?? "2", 10),
+    cwd = readFlag("--cwd", argv) ?? process.cwd(),
+    command = readFlag("--command", argv) ?? "node-version",
   } = options;
 
   if (!Number.isFinite(iterations) || iterations <= 0) {
@@ -192,8 +346,8 @@ export async function runBenchmarkScript(options = {}) {
   const directTool = await resolveForDirect(selected.tool);
   const client = new Client({ name: "atrium-benchmark", version: "0.0.0" });
   const transport = new StdioClientTransport({
-    command: "node",
-    args: ["dist/server.js"],
+    command: process.execPath,
+    args: ["--import", "tsx", "src/server.ts"],
     cwd,
     stderr: "pipe",
   });
@@ -337,17 +491,17 @@ function toFiniteNumber(value) {
   return value;
 }
 
-function readFlag(name) {
-  const index = process.argv.indexOf(name);
+function readFlag(name, argv = process.argv.slice(2)) {
+  const index = argv.indexOf(name);
   if (index === -1) {
     return undefined;
   }
 
-  return process.argv[index + 1];
+  return argv[index + 1];
 }
 
 async function main() {
-  const result = await runBenchmarkScript();
+  const result = await runBenchmarkSuiteFromCliArgs(process.argv.slice(2));
   process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
 }
 

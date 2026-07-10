@@ -41,6 +41,16 @@ npm run benchmark -- --command node-version --iterations 15 --warmup 3
 
 Interpret the benchmark output as a benchmark-owned aggregate report. Interpret the CLI `--perf` output as a CLI-owned per-operation report.
 
+## All-verb evals
+
+Use this exact command for the aggregate eval suite:
+
+```bash
+npm run benchmark -- --suite all-verbs
+```
+
+It runs serially against realistic temporary fixtures for all seven MCP verbs (`schema`, `run`, `operation-wait`, `read`, `find-files`, `grep`, and `grep-code`). Treat the resulting aggregate report as the measurement baseline for comparable before/after Speedify runs. Keep CLI `--perf` as the single-operation diagnostic path when you need a trace for one verb instead of the suite-level eval report.
+
 ## Examples
 
 ### `mcp-run`
