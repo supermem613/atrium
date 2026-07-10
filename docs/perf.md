@@ -61,6 +61,8 @@ atrium mcp-read /tmp/file.txt --perf
 atrium mcp-grep /tmp --query alpha --max 5 --perf
 ```
 
+Search reruns accept the same scope controls as their MCP verbs. Use `--queries`, `--regex`, `--glob`, and `--exclude` when those arguments shaped the original request. `mcp-find-files` also accepts `--exclude`.
+
 ### `mcp-operation-wait`
 
 ```bash

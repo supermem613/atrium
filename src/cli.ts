@@ -92,6 +92,7 @@ program
   .command("mcp-find-files <root>")
   .description("Investigate an MCP find-files call locally; rerun with --perf for a CLI-only detailed trace")
   .option("--glob <pattern>", "Glob pattern to match files")
+  .option("--exclude <pattern>", "Glob pattern to exclude")
   .option("--max <count>", "Maximum number of matches to return")
   .option("--perf", "Emit a CLI-only detailed report for this single CLI rerun. Normal MCP responses stay token-light")
   .action((root: string, options: McpFindFilesOptions) => mcpFindFilesCommand(root, options));
@@ -100,6 +101,10 @@ program
   .command("mcp-grep <root>")
   .description("Investigate an MCP grep call locally; rerun with --perf for a CLI-only detailed trace")
   .option("--query <pattern>", "Query string to search for")
+  .option("--queries <patterns...>", "One or more query strings to match")
+  .option("--regex", "Treat query patterns as regular expressions")
+  .option("--glob <pattern>", "Glob pattern to constrain the search")
+  .option("--exclude <pattern>", "Glob pattern to exclude")
   .option("--max <count>", "Maximum number of matches to return")
   .option("--perf", "Emit a CLI-only detailed report for this single CLI rerun. Normal MCP responses stay token-light")
   .action((root: string, options: McpGrepOptions) => mcpGrepCommand(root, options));
@@ -108,6 +113,10 @@ program
   .command("mcp-grep-code <root>")
   .description("Investigate an MCP grep-code call locally; rerun with --perf for a CLI-only detailed trace")
   .option("--query <pattern>", "Query string to search for")
+  .option("--queries <patterns...>", "One or more query strings to match")
+  .option("--regex", "Treat query patterns as regular expressions")
+  .option("--glob <pattern>", "Glob pattern to constrain the search")
+  .option("--exclude <pattern>", "Glob pattern to exclude")
   .option("--max <count>", "Maximum number of matches to return")
   .option("--perf", "Emit a CLI-only detailed report for this single CLI rerun. Normal MCP responses stay token-light")
   .action((root: string, options: McpGrepCodeOptions) => mcpGrepCodeCommand(root, options));

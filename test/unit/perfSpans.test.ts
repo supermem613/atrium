@@ -4,6 +4,16 @@ import { spawnSync } from "node:child_process";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import {
+  mcpFindFilesCommand,
+  mcpGrepCodeCommand,
+  mcpGrepCommand,
+  mcpOperationWaitCommand,
+  mcpRunCommand,
+} from "../../src/commands/mcpDebug.js";
+import { defaultLongRunningTimeoutMs } from "../../src/core/backgroundRuns.js";
+import type { RunExecutableInput, RunExecutableResult } from "../../src/core/runner.js";
+import type { XraySearchClientLike } from "../../src/core/search/types.js";
 import { atriumTempPath } from "../../src/core/tempPaths.js";
 
 describe("CLI perf spans and search metrics", { concurrency: false }, () => {
@@ -44,30 +54,55 @@ describe("CLI perf spans and search metrics", { concurrency: false }, () => {
     assert.ok("semantic" in attributes, "expected semantic metrics attribute");
   });
 
+  it("mcp-run --perf preserves the MCP long-running execution timeout", async () => {
+    let capturedInput: RunExecutableInput | undefined;
+    const execute = async (input: RunExecutableInput): Promise<RunExecutableResult> => {
+      capturedInput = input;
+      return {
+        ok: true,
+        tool: input.tool,
+        timingMs: 1,
+        metrics: {
+          childTool: input.tool,
+          durationMs: 1,
+          exitCode: 0,
+          signal: null,
+          timedOut: false,
+          stdoutBytes: 0,
+          stderrBytes: 0,
+          stdinBytes: 0,
+          argCount: input.args?.length ?? 0,
+          argHash: "test",
+          argShape: [],
+        },
+      };
+    };
+
+    await captureJsonOutput(() => mcpRunCommand("node", [], { perf: true, requestTimeoutMs: "1" }, execute));
+    assert.equal(capturedInput?.timeoutMs, defaultLongRunningTimeoutMs);
+  });
+
   it("mcp-grep --perf preserves search invocation, normalization, and xray metrics from fake xray output", async () => {
     const fixture = await withTempFixture();
-    const fakeXrayDir = await makeFakeXrayExecutable({
-      command: "search",
-      data: {
-        matches: [{ path: join(fixture.root, "sample.txt"), line: 1, text: "alpha" }],
-        summary: { totalMatches: 1 },
+    const fakeSearchClient: XraySearchClientLike = {
+      async run() {
+        return {
+          ok: true,
+          command: "search",
+          data: {
+            matches: [{ path: join(fixture.root, "sample.txt"), line: 1, text: "alpha" }],
+            summary: { matchCount: 1 },
+          },
+          metrics: { elapsedMs: 7, filesScanned: 1, matchesReturned: 1 },
+        };
       },
-      metrics: {
-        searchInvocation: { command: "search", root: fixture.root, query: "alpha", regex: false, max: 5 },
-        normalization: { kind: "content", matchCount: 1 },
-        xrayMetrics: { elapsedMs: 7, filesScanned: 1, matchesReturned: 1 },
-      },
-    });
+    };
 
-    const payload = runCliJson([
-      "mcp-grep",
-      "--perf",
+    const payload = await captureJsonOutput(() => mcpGrepCommand(
       fixture.root,
-      "--query",
-      "alpha",
-      "--max",
-      "5",
-    ], { ...process.env, PATH: `${fakeXrayDir}${pathSeparator()}${process.env.PATH ?? ""}` });
+      { perf: true, query: "alpha", max: "5" },
+      fakeSearchClient,
+    ));
 
     assert.equal(payload.kind, "content");
     const perf = readPerfReport(payload);
@@ -78,6 +113,83 @@ describe("CLI perf spans and search metrics", { concurrency: false }, () => {
     assert.ok("xrayMetrics" in attributes, "expected xray metrics attributes");
   });
 
+  it("perf search reruns preserve each MCP verb's scope and timeout", async () => {
+    const invocations: Array<{
+      command: string;
+      all?: boolean;
+      exclude?: string;
+      glob?: string;
+      query?: string;
+      regex?: boolean;
+      root?: string;
+      timeoutMs?: number;
+    }> = [];
+    const fakeSearchClient: XraySearchClientLike = {
+      async run(options) {
+        invocations.push(options);
+        return { ok: true, command: options.command, data: { matches: [] } };
+      },
+    };
+    const fixture = await withTempFixture();
+
+    await captureJsonOutput(() => mcpFindFilesCommand(
+      fixture.root,
+      { perf: true, glob: "**/*.txt", exclude: "**/vendor/**" },
+      fakeSearchClient,
+    ));
+    await captureJsonOutput(() => mcpGrepCommand(
+      fixture.root,
+      { perf: true, queries: ["a.b", "c"], glob: "**/*.txt", exclude: "**/vendor/**" },
+      fakeSearchClient,
+    ));
+    await captureJsonOutput(() => mcpGrepCodeCommand(
+      fixture.root,
+      { perf: true, queries: ["a.b", "c"], regex: true, glob: "**/*.ts", exclude: "**/dist/**" },
+      fakeSearchClient,
+    ));
+    await captureJsonOutput(() => mcpGrepCodeCommand(
+      fixture.root,
+      { perf: true, queries: ["literal.pattern"] },
+      fakeSearchClient,
+    ));
+
+    assert.deepEqual(invocations, [
+      {
+        command: "files",
+        root: fixture.root,
+        all: true,
+        glob: "**/*.txt",
+        exclude: "**/vendor/**",
+        timeoutMs: 59_000,
+      },
+      {
+        command: "search",
+        root: fixture.root,
+        query: "a\\.b|c",
+        regex: true,
+        all: true,
+        glob: "**/*.txt",
+        exclude: "**/vendor/**",
+        timeoutMs: 59_000,
+      },
+      {
+        command: "search",
+        root: fixture.root,
+        query: "a.b|c",
+        regex: true,
+        glob: "**/*.ts",
+        exclude: "**/dist/**",
+        timeoutMs: 59_000,
+      },
+      {
+        command: "search",
+        root: fixture.root,
+        query: "literal.pattern",
+        timeoutMs: 59_000,
+      },
+    ]);
+  });
+
   it("operation-wait reports continue, completed, and failed status spans from local persisted snapshots", async () => {
     for (const scenario of [
       { status: "running" as const, expectedStatus: "continue", expectedName: "continue" },
@@ -85,7 +197,11 @@ describe("CLI perf spans and search metrics", { concurrency: false }, () => {
       { status: "failed" as const, expectedStatus: "failed", expectedName: "failed" },
     ]) {
       await withFakeOperationSnapshot(scenario.status, async (operationId) => {
-        const payload = runCliJson(["mcp-operation-wait", "--perf", operationId]);
+        const payload = await captureJsonOutput(() => mcpOperationWaitCommand(
+          operationId,
+          { perf: true },
+          { requestSafeWaitMs: 1 },
+        ));
         assert.equal(payload.ok, scenario.status !== "failed");
         assert.equal(payload.status, scenario.expectedStatus);
         assert.equal(payload.operationId, operationId);
@@ -102,16 +218,30 @@ function parseJsonPayload(stdout: string): Record<string, unknown> {
   return JSON.parse(trimmed) as Record<string, unknown>;
 }
 
-function runCliJson(args: string[], env: NodeJS.ProcessEnv = process.env): Record<string, unknown> {
+function runCliJson(args: string[]): Record<string, unknown> {
   const cliPath = join(process.cwd(), "dist", "cli.js");
   const result = spawnSync(process.execPath, [cliPath, ...args], {
     cwd: process.cwd(),
     encoding: "utf8",
-    env,
   });
 
   assert.equal(result.status, 0, result.stderr || result.stdout);
   return parseJsonPayload(result.stdout);
+}
+
+async function captureJsonOutput(callback: () => Promise<void>): Promise<Record<string, unknown>> {
+  const chunks: string[] = [];
+  const originalWrite = process.stdout.write;
+  process.stdout.write = ((chunk: string | Uint8Array) => {
+    chunks.push(typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8"));
+    return true;
+  }) as typeof process.stdout.write;
+  try {
+    await callback();
+  } finally {
+    process.stdout.write = originalWrite;
+  }
+  return parseJsonPayload(chunks.join(""));
 }
 
 function readPerfReport(payload: Record<string, unknown>): Record<string, unknown> {
@@ -190,27 +320,6 @@ async function withTempFixture(): Promise<{ root: string }> {
     await rm(root, { recursive: true, force: true });
     throw error;
   }
-}
-
-async function makeFakeXrayExecutable(options: { command: string; data: Record<string, unknown>; metrics: Record<string, unknown> }): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), "atrium-fake-xray-"));
-  const payload = JSON.stringify({
-    ok: true,
-    command: options.command,
-    data: options.data,
-    metrics: options.metrics,
-  });
-  const cmdPath = join(dir, "xray.cmd");
-  await writeFile(cmdPath, [
-    "@echo off",
-    "node -e \"const fs=require('fs'); process.stdout.write(fs.readFileSync(process.argv[1], 'utf8'));\" \"%~dp0xray.json\"",
-  ].join("\r\n"), "utf8");
-  await writeFile(join(dir, "xray.json"), payload, "utf8");
-  return dir;
-}
-
-function pathSeparator(): string {
-  return process.platform === "win32" ? ";" : ":";
 }
 
 async function withFakeOperationSnapshot<T>(status: "running" | "completed" | "failed", callback: (operationId: string) => Promise<T>): Promise<T> {

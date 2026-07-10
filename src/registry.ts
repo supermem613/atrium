@@ -216,6 +216,11 @@ export const commandSpecs: CommandSpec[] = [
           summary: "Glob pattern to match files.",
         },
         {
+          name: "--exclude",
+          type: "string",
+          summary: "Glob pattern to exclude.",
+        },
+        {
           name: "--max",
           type: "number",
           summary: "Maximum number of matches to return.",
@@ -246,6 +251,26 @@ export const commandSpecs: CommandSpec[] = [
           summary: "Query string to search for.",
         },
         {
+          name: "--queries",
+          type: "string",
+          summary: "One or more query strings to match.",
+        },
+        {
+          name: "--regex",
+          type: "boolean",
+          summary: "Treat query patterns as regular expressions.",
+        },
+        {
+          name: "--glob",
+          type: "string",
+          summary: "Glob pattern to constrain the search.",
+        },
+        {
+          name: "--exclude",
+          type: "string",
+          summary: "Glob pattern to exclude.",
+        },
+        {
           name: "--max",
           type: "number",
           summary: "Maximum number of matches to return.",
@@ -274,6 +299,26 @@ export const commandSpecs: CommandSpec[] = [
           name: "--query",
           type: "string",
           summary: "Query string to search for.",
+        },
+        {
+          name: "--queries",
+          type: "string",
+          summary: "One or more query strings to match.",
+        },
+        {
+          name: "--regex",
+          type: "boolean",
+          summary: "Treat query patterns as regular expressions.",
+        },
+        {
+          name: "--glob",
+          type: "string",
+          summary: "Glob pattern to constrain the search.",
+        },
+        {
+          name: "--exclude",
+          type: "string",
+          summary: "Glob pattern to exclude.",
         },
         {
           name: "--max",

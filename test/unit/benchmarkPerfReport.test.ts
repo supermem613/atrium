@@ -10,6 +10,7 @@ type AllVerbSuiteRequest = {
   verbs: VerbName[];
   fixtureData: Record<string, unknown>;
   operationRunners: Record<VerbName, OperationRunner>;
+  now: () => number;
 };
 
 type BenchmarkPerfCase = {
@@ -83,7 +84,7 @@ describe("benchmark-owned all-verb aggregate reports", { concurrency: false }, (
     const verbs: VerbName[] = ["schema", "run", "operation-wait", "read", "find-files", "grep", "grep-code"];
 
     assert.equal(typeof report.elapsedMs, "number");
-    assert.ok(report.elapsedMs >= 0);
+    assert.equal(report.elapsedMs, 75);
     assert.equal(typeof report.concurrency, "number");
     assert.ok(report.concurrency >= 1);
 
@@ -93,7 +94,7 @@ describe("benchmark-owned all-verb aggregate reports", { concurrency: false }, (
       assert.equal(typeof caseEntry.ok, "boolean");
       assert.equal(caseEntry.ok, true);
       assert.equal(typeof caseEntry.elapsedMs, "number");
-      assert.ok(caseEntry.elapsedMs >= 0);
+      assert.equal(caseEntry.elapsedMs, 5);
       assert.equal(typeof caseEntry.timings, "object");
       assert.notEqual(caseEntry.timings, null);
       const cliDetail = caseEntry.cliPerf ?? caseEntry.cliPerfDetail ?? caseEntry.perf ?? caseEntry.perfDetail;
@@ -112,6 +113,7 @@ describe("benchmark-owned all-verb aggregate reports", { concurrency: false }, (
       assert.ok(verb in perOperation, `expected perOperation entry for ${verb}`);
       const operationEntry = perOperation[verb];
       assert.equal(typeof operationEntry.elapsedMs, "number");
+      assert.equal(operationEntry.elapsedMs, 5);
       assert.equal(operationEntry.ok, true);
       assert.equal(typeof operationEntry.timings, "object");
       assert.notEqual(operationEntry.timings, null);
@@ -160,7 +162,7 @@ async function buildAllVerbAggregateReport(): Promise<BenchmarkPerfReport> {
       operationId: "fixture-op",
     },
     operationRunners: {
-      schema: async () => ({ ok: true, payload: { verb: "schema" } }),
+      schema: async () => ({ ok: true, payload: { verb: "schema" }, perf: { operationId: "schema-op" } }),
       run: async () => ({ ok: true, payload: { verb: "run" } }),
       "operation-wait": async () => ({ ok: true, payload: { verb: "operation-wait" } }),
       read: async () => ({ ok: true, payload: { verb: "read" } }),
@@ -168,33 +170,39 @@ async function buildAllVerbAggregateReport(): Promise<BenchmarkPerfReport> {
       grep: async () => ({ ok: true, payload: { verb: "grep" } }),
       "grep-code": async () => ({ ok: true, payload: { verb: "grep-code" } }),
     },
+    now: (() => {
+      let current = 0;
+      return () => {
+        const value = current;
+        current += 5;
+        return value;
+      };
+    })(),
   };
 
   return await builder(request);
 }
 
 async function resolveAllVerbSuiteBuilder(): Promise<AllVerbBuilder | undefined> {
-  // @ts-expect-error - benchmark-atrium.mjs does not ship authoring-time declaration metadata in this test context
-  const benchmarkModule = await import("../../scripts/benchmark-atrium.mjs");
-  const candidates: Array<AllVerbBuilder | undefined> = [
-    isAllVerbBuilder(benchmarkModule.buildSpeedifyCompatibleAggregatePerfReport) ? benchmarkModule.buildSpeedifyCompatibleAggregatePerfReport : undefined,
-    isAllVerbBuilder(benchmarkModule.buildAllVerbAggregatePerfReport) ? benchmarkModule.buildAllVerbAggregatePerfReport : undefined,
-    isAllVerbBuilder(benchmarkModule.buildAllVerbBenchmarkReport) ? benchmarkModule.buildAllVerbBenchmarkReport : undefined,
-    isAllVerbBuilder(benchmarkModule.buildAggregatePerfReport) ? benchmarkModule.buildAggregatePerfReport : undefined,
-    isAllVerbBuilder(benchmarkModule.buildBenchmarkAggregateReport) ? benchmarkModule.buildBenchmarkAggregateReport : undefined,
-    isAllVerbBuilder(benchmarkModule.buildAllVerbSuiteReport) ? benchmarkModule.buildAllVerbSuiteReport : undefined,
-    isAllVerbBuilder(benchmarkModule.runAllVerbSuite) ? benchmarkModule.runAllVerbSuite : undefined,
-    isAllVerbBuilder(benchmarkModule.runAllVerbBenchmarkSuite) ? benchmarkModule.runAllVerbBenchmarkSuite : undefined,
-  ];
-
-  return candidates.find((candidate): candidate is AllVerbBuilder => typeof candidate === "function");
+  const benchmarkModule = await loadBenchmarkModule();
+  return isAllVerbBuilder(benchmarkModule.runAllVerbBenchmarkSuite)
+    ? benchmarkModule.runAllVerbBenchmarkSuite
+    : undefined;
 }
 
 async function buildSpeedifyCompatiblePerfReport(options: BenchmarkPerfReportOptions): Promise<BenchmarkPerfReport> {
-  // @ts-expect-error - benchmark-atrium.mjs does not ship authoring-time declaration metadata in this test context
-  const benchmarkModule = await import("../../scripts/benchmark-atrium.mjs");
+  const benchmarkModule = await loadBenchmarkModule();
   if (!isCompatBuilder(benchmarkModule.buildSpeedifyCompatiblePerfReport)) {
     throw new Error("expected benchmark module to expose buildSpeedifyCompatiblePerfReport");
   }
   return benchmarkModule.buildSpeedifyCompatiblePerfReport(options);
+}
+
+async function loadBenchmarkModule(): Promise<Record<string, unknown>> {
+  const moduleUrl = new URL("../../scripts/benchmark-atrium.mjs", import.meta.url).href;
+  const benchmarkModule: unknown = await import(moduleUrl);
+  if (typeof benchmarkModule !== "object" || benchmarkModule === null) {
+    throw new Error("expected benchmark module exports");
+  }
+  return benchmarkModule as Record<string, unknown>;
 }

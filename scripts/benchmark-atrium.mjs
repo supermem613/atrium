@@ -72,24 +72,24 @@ export function buildSpeedifyCompatiblePerfReport({
 const allVerbSuiteVerbNames = ["schema", "run", "operation-wait", "read", "find-files", "grep", "grep-code"];
 
 // Benchmark-owned aggregate report: used by all-verb benchmark suites, while CLI --perf stays per-operation.
-export async function buildAllVerbAggregatePerfReport(request = {}) {
+export async function runAllVerbBenchmarkSuite(request = {}) {
   const suite = typeof request.suite === "string" && request.suite.length > 0 ? request.suite : "all-verbs";
   const verbs = Array.isArray(request.verbs) && request.verbs.length > 0 ? request.verbs : allVerbSuiteVerbNames;
   const fixtureData = isRecord(request.fixtureData) ? request.fixtureData : {};
   const operationRunners = isRecord(request.operationRunners) ? request.operationRunners : {};
+  const now = typeof request.now === "function" ? request.now : () => performance.now();
   const cases = [];
   const perOperation = {};
-  const startedAt = new Date(0).toISOString();
-  let elapsedMs = 0;
+  const startedAt = new Date().toISOString();
+  const suiteStartedAt = now();
   let passCount = 0;
   let failCount = 0;
 
-  for (const [index, verb] of verbs.entries()) {
-    const operationElapsedMs = deriveDeterministicElapsedMs(verb, fixtureData, index);
-    elapsedMs += operationElapsedMs;
+  for (const verb of verbs) {
     let result = {};
     let ok = true;
     const runner = operationRunners[verb];
+    const operationStartedAt = now();
 
     if (typeof runner === "function") {
       try {
@@ -111,6 +111,7 @@ export async function buildAllVerbAggregatePerfReport(request = {}) {
         error: `missing operation runner for ${verb}`,
       };
     }
+    const operationElapsedMs = Math.max(0, now() - operationStartedAt);
 
     if (typeof result.ok === "boolean") {
       ok = result.ok;
@@ -118,23 +119,22 @@ export async function buildAllVerbAggregatePerfReport(request = {}) {
 
     const timings = {
       totalMs: operationElapsedMs,
-      fixtureMs: Math.max(1, Math.floor(operationElapsedMs / 2)),
-      runnerMs: Math.max(1, Math.ceil(operationElapsedMs / 2)),
+      runnerMs: operationElapsedMs,
     };
-    const cliPerfDetail = createDeterministicCliPerfDetail(verb, fixtureData, operationElapsedMs);
+    const cliPerfDetail = isRecord(result.perf) ? result.perf : undefined;
     const caseEntry = {
       name: verb,
       ok,
       elapsedMs: operationElapsedMs,
       timings,
-      cliPerf: cliPerfDetail,
+      ...(cliPerfDetail === undefined ? {} : { cliPerf: cliPerfDetail }),
     };
     cases.push(caseEntry);
     perOperation[verb] = {
       elapsedMs: operationElapsedMs,
       ok,
       timings,
-      cliPerf: cliPerfDetail,
+      ...(cliPerfDetail === undefined ? {} : { cliPerf: cliPerfDetail }),
     };
 
     if (ok) {
@@ -143,12 +143,13 @@ export async function buildAllVerbAggregatePerfReport(request = {}) {
       failCount += 1;
     }
   }
+  const elapsedMs = Math.max(0, now() - suiteStartedAt);
 
   return {
     suite,
     operationId: fixtureData.operationId ?? `${suite}-aggregate`,
     startedAt,
-    endedAt: new Date(new Date(0).getTime() + elapsedMs).toISOString(),
+    endedAt: new Date().toISOString(),
     durationMs: elapsedMs,
     elapsedMs,
     concurrency: 1,
@@ -162,55 +163,10 @@ export async function buildAllVerbAggregatePerfReport(request = {}) {
   };
 }
 
-export const buildSpeedifyCompatibleAggregatePerfReport = buildAllVerbAggregatePerfReport;
-export const buildAllVerbBenchmarkReport = buildAllVerbAggregatePerfReport;
-export const buildAggregatePerfReport = buildAllVerbAggregatePerfReport;
-export const buildBenchmarkAggregateReport = buildAllVerbAggregatePerfReport;
-export const buildAllVerbSuiteReport = buildAllVerbAggregatePerfReport;
-export const runAllVerbSuite = buildAllVerbAggregatePerfReport;
-export const runAllVerbBenchmarkSuite = buildAllVerbAggregatePerfReport;
-
 function isRecord(value) {
   return typeof value === "object" && value !== null;
 }
 
-function deriveDeterministicElapsedMs(verb, fixtureData, index) {
-  const rootLength = typeof fixtureData.root === "string" ? fixtureData.root.length : 0;
-  const fileCount = Array.isArray(fixtureData.files) ? fixtureData.files.length : 0;
-  const operationWeight = getVerbWeight(verb);
-  return Math.max(1, rootLength + fileCount * 2 + operationWeight + index * 3);
-}
-
-function getVerbWeight(verb) {
-  switch (verb) {
-    case "schema":
-      return 1;
-    case "run":
-      return 2;
-    case "operation-wait":
-      return 3;
-    case "read":
-      return 4;
-    case "find-files":
-      return 5;
-    case "grep":
-      return 6;
-    case "grep-code":
-      return 7;
-    default:
-      return 3;
-  }
-}
-
-function createDeterministicCliPerfDetail(verb, fixtureData, operationElapsedMs) {
-  const root = typeof fixtureData.root === "string" ? fixtureData.root : "/fixture";
-  return {
-    command: `bench:${verb}`,
-    args: [root, String(operationElapsedMs)],
-    cwd: root,
-    deterministic: true,
-  };
-}
 
 export async function runBenchmarkScript(options = {}) {
   const {

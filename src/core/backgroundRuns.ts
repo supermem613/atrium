@@ -1,6 +1,7 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { mkdir, readFile, rename, rm, watch, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { randomUUID } from "node:crypto";
+import { setImmediate as waitForImmediate } from "node:timers/promises";
 import { sanitizePerfAttributes } from "./perf.js";
 import { RunExecutableInput, RunningExecutable } from "./runner.js";
 import { atriumTempPath } from "./tempPaths.js";
@@ -125,7 +126,7 @@ export async function waitForBackgroundRun(operationId: string, options: Backgro
   if (record === undefined) {
     const persisted = await readPersistedSnapshot(operationId);
     if (persisted.status === "running") {
-      return toContinue(persisted);
+      return waitForPersistedSnapshot(operationId, persisted, waitMs);
     }
 
     return persisted;
@@ -141,6 +142,49 @@ export async function waitForBackgroundRun(operationId: string, options: Backgro
   }
 
   return toContinue(toSnapshot(record));
+}
+
+async function waitForPersistedSnapshot(
+  operationId: string,
+  initial: BackgroundRunSnapshot,
+  waitMs: number,
+): Promise<BackgroundRunWaitResult> {
+  const signal = AbortSignal.timeout(waitMs);
+  try {
+    const changes = watch(dirname(initial.resultPath), { signal });
+    const current = await readAvailablePersistedSnapshot(operationId);
+    if (current.status !== "running") {
+      return current;
+    }
+    for await (const change of changes) {
+      if (change.filename !== null && change.filename.toString() !== "result.json") {
+        continue;
+      }
+      const snapshot = await readAvailablePersistedSnapshot(operationId);
+      if (snapshot.error?.code === "UnknownRun") {
+        continue;
+      }
+      if (snapshot.status !== "running") {
+        return snapshot;
+      }
+    }
+  } catch (error) {
+    if (!(error instanceof Error) || error.name !== "AbortError") {
+      throw error;
+    }
+  }
+  const latest = await readAvailablePersistedSnapshot(operationId);
+  return latest.status === "running" ? toContinue(latest) : latest;
+}
+
+async function readAvailablePersistedSnapshot(operationId: string): Promise<BackgroundRunSnapshot> {
+  const deadline = Date.now() + 100;
+  let snapshot = await readPersistedSnapshot(operationId);
+  while (snapshot.error?.code === "UnknownRun" && Date.now() < deadline) {
+    await waitForImmediate();
+    snapshot = await readPersistedSnapshot(operationId);
+  }
+  return snapshot;
 }
 
 export function withLongRunningDefault(input: RunExecutableInput): RunExecutableInput {
@@ -175,7 +219,30 @@ async function executeBackgroundRun(record: BackgroundRunRecord, running: Runnin
 }
 
 async function persistSnapshot(record: BackgroundRunRecord): Promise<void> {
-  await writeFile(record.resultPath, `${JSON.stringify(toSnapshot(record))}\n`, "utf8");
+  const temporaryPath = `${record.resultPath}.${randomUUID()}.tmp`;
+  const previousPath = `${record.resultPath}.previous`;
+  await writeFile(temporaryPath, `${JSON.stringify(toSnapshot(record))}\n`, "utf8");
+  await rm(previousPath, { force: true });
+  let movedPrevious = false;
+  try {
+    await rename(record.resultPath, previousPath);
+    movedPrevious = true;
+  } catch (error) {
+    if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) {
+      throw error;
+    }
+  }
+  try {
+    await rename(temporaryPath, record.resultPath);
+  } catch (error) {
+    if (movedPrevious) {
+      await rename(previousPath, record.resultPath);
+    }
+    throw error;
+  }
+  if (movedPrevious) {
+    await rm(previousPath, { force: true });
+  }
 }
 
 function toHandle(record: BackgroundRunRecord): BackgroundRunHandle {
@@ -216,16 +283,26 @@ function toSnapshot(record: BackgroundRunRecord): BackgroundRunSnapshot {
 async function readPersistedSnapshot(operationId: string): Promise<BackgroundRunSnapshot> {
   const resultPath = join(atriumTempPath("background-runs", operationId), "result.json");
   try {
-    const parsed = JSON.parse(await readFile(resultPath, "utf8")) as PersistedSnapshot;
-    const snapshot = normalizePersistedSnapshot(parsed);
-    if (snapshot !== undefined) {
-      return snapshot;
-    }
-
-    return unknownRun(operationId, resultPath, "Persisted background run snapshot is malformed.");
+    return await readSnapshotPath(operationId, resultPath);
   } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+      try {
+        return await readSnapshotPath(operationId, `${resultPath}.previous`);
+      } catch (previousError) {
+        return unknownRun(operationId, resultPath, previousError instanceof Error ? previousError.message : String(previousError));
+      }
+    }
     return unknownRun(operationId, resultPath, error instanceof Error ? error.message : String(error));
   }
+}
+
+async function readSnapshotPath(operationId: string, path: string): Promise<BackgroundRunSnapshot> {
+  const parsed = JSON.parse(await readFile(path, "utf8")) as PersistedSnapshot;
+  const snapshot = normalizePersistedSnapshot(parsed);
+  if (snapshot !== undefined) {
+    return snapshot;
+  }
+  return unknownRun(operationId, path, "Persisted background run snapshot is malformed.");
 }
 
 type PersistedSnapshot = Partial<BackgroundRunSnapshot> & { runId?: string };

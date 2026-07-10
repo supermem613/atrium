@@ -4,11 +4,22 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { randomUUID } from "node:crypto";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { buildBackgroundRunPerfSpans, waitForBackgroundRun } from "../core/backgroundRuns.js";
+import {
+  buildBackgroundRunPerfSpans,
+  waitForBackgroundRun,
+  withLongRunningDefault,
+  type BackgroundRunWaitOptions,
+} from "../core/backgroundRuns.js";
 import { createPerfRecorder, type PerfOperationRecorder, type PerfOperationReport } from "../core/perf.js";
 import { buildReadTextFileSlicePerfSpans, readTextFileSlice } from "../core/readFile.js";
-import { buildRunExecutablePerfSpans, runExecutable } from "../core/runner.js";
+import {
+  buildRunExecutablePerfSpans,
+  runExecutable,
+  type RunExecutableInput,
+  type RunExecutableResult,
+} from "../core/runner.js";
 import { normalizeXrayResult } from "../core/search/normalize.js";
+import type { XraySearchClientLike } from "../core/search/types.js";
 import { buildXraySearchInvocationPerfAttributes, createXrayClient } from "../core/search/xrayClient.js";
 
 export interface McpDebugOptions {
@@ -28,21 +39,24 @@ export interface McpReadOptions extends McpDebugOptions {
 }
 
 export interface McpFindFilesOptions extends McpDebugOptions {
+  exclude?: string;
   glob?: string;
   max?: string;
 }
 
 export interface McpGrepOptions extends McpDebugOptions {
+  exclude?: string;
+  glob?: string;
   query?: string;
+  queries?: string[];
+  regex?: boolean;
   max?: string;
 }
 
-export interface McpGrepCodeOptions extends McpDebugOptions {
-  query?: string;
-  max?: string;
-}
+export type McpGrepCodeOptions = McpGrepOptions;
 
 const defaultDebugRequestTimeoutMs = 60_000;
+const defaultSearchTimeoutMs = 59_000;
 
 async function withAtriumClient<T>(callback: (client: Client) => Promise<T>): Promise<T> {
   const serverPath = join(dirname(fileURLToPath(import.meta.url)), "..", "server.js");
@@ -68,18 +82,22 @@ export async function mcpSchemaCommand(tool: string, options: McpDebugOptions = 
   writeToolResponse(response, perfOperation?.finish());
 }
 
-export async function mcpRunCommand(tool: string, args: string[] | undefined, options: McpRunOptions): Promise<void> {
+export async function mcpRunCommand(
+  tool: string,
+  args: string[] | undefined,
+  options: McpRunOptions,
+  execute: (input: RunExecutableInput) => Promise<RunExecutableResult> = runExecutable,
+): Promise<void> {
   const requestTimeoutMs = parseOptionalNumber(options.requestTimeoutMs, "--request-timeout-ms") ?? defaultDebugRequestTimeoutMs;
   const perfRecorder = createPerfRecorder(options.perf === true);
   const perfOperation = perfRecorder?.startOperation(randomUUID());
   if (options.perf === true) {
-    const result = await runExecutable({
+    const result = await execute(withLongRunningDefault({
       tool,
       args: args ?? [],
       cwd: options.cwd,
       stdin: options.stdinFile === undefined ? options.stdin : { file: options.stdinFile },
-      timeoutMs: requestTimeoutMs,
-    });
+    }));
     for (const span of buildRunExecutablePerfSpans(result)) {
       perfOperation?.addSpan(span.name, span.attributes);
     }
@@ -116,11 +134,15 @@ export async function mcpRunCommand(tool: string, args: string[] | undefined, op
   writeToolResponse(response, perfOperation?.finish());
 }
 
-export async function mcpOperationWaitCommand(operationId: string, options: McpDebugOptions = {}): Promise<void> {
+export async function mcpOperationWaitCommand(
+  operationId: string,
+  options: McpDebugOptions = {},
+  waitOptions?: BackgroundRunWaitOptions,
+): Promise<void> {
   const perfRecorder = createPerfRecorder(options.perf === true);
   const perfOperation = perfRecorder?.startOperation(randomUUID());
   if (options.perf === true) {
-    const snapshot = await waitForBackgroundRun(operationId);
+    const snapshot = await waitForBackgroundRun(operationId, waitOptions);
     for (const span of buildBackgroundRunPerfSpans(snapshot)) {
       perfOperation?.addSpan(span.name, span.attributes);
     }
@@ -167,16 +189,19 @@ export async function mcpReadCommand(path: string, options: McpReadOptions = {})
   writeToolResponse(response, perfOperation?.finish());
 }
 
-export async function mcpFindFilesCommand(root: string, options: McpFindFilesOptions = {}): Promise<void> {
+export async function mcpFindFilesCommand(root: string, options: McpFindFilesOptions = {}, searchClient?: XraySearchClientLike): Promise<void> {
   const perfRecorder = createPerfRecorder(options.perf === true);
   const perfOperation = perfRecorder?.startOperation(randomUUID());
   if (options.perf === true) {
-    const client = createXrayClient();
+    const client = searchClient ?? createXrayClient();
     const envelope = await client.run({
       command: "files",
       root,
+      all: true,
       ...(options.glob !== undefined ? { glob: options.glob } : {}),
+      ...(options.exclude !== undefined ? { exclude: options.exclude } : {}),
       ...(parseOptionalInteger(options.max, "--max") !== undefined ? { max: parseOptionalInteger(options.max, "--max") } : {}),
+      timeoutMs: defaultSearchTimeoutMs,
     });
     const normalized = normalizeXrayResult(envelope, "files", buildXraySearchInvocationPerfAttributes({
       command: "files",
@@ -197,21 +222,30 @@ export async function mcpFindFilesCommand(root: string, options: McpFindFilesOpt
   writeToolResponse(response, perfOperation?.finish());
 }
 
-export async function mcpGrepCommand(root: string, options: McpGrepOptions = {}): Promise<void> {
+export async function mcpGrepCommand(root: string, options: McpGrepOptions = {}, searchClient?: XraySearchClientLike): Promise<void> {
   const perfRecorder = createPerfRecorder(options.perf === true);
   const perfOperation = perfRecorder?.startOperation(randomUUID());
   if (options.perf === true) {
-    const client = createXrayClient();
+    const search = resolveCliSearchQuery(options);
+    const client = searchClient ?? createXrayClient();
     const envelope = await client.run({
       command: "search",
       root,
-      query: options.query,
+      query: search.query,
+      ...(search.regex ? { regex: true } : {}),
+      all: true,
+      ...(options.glob !== undefined ? { glob: options.glob } : {}),
+      ...(options.exclude !== undefined ? { exclude: options.exclude } : {}),
       ...(parseOptionalInteger(options.max, "--max") !== undefined ? { max: parseOptionalInteger(options.max, "--max") } : {}),
+      timeoutMs: defaultSearchTimeoutMs,
     });
     const normalized = normalizeXrayResult(envelope, "content", buildXraySearchInvocationPerfAttributes({
       command: "search",
       root,
-      query: options.query,
+      query: search.query,
+      ...(search.regex ? { regex: true } : {}),
+      ...(options.glob !== undefined ? { glob: options.glob } : {}),
+      ...(options.exclude !== undefined ? { exclude: options.exclude } : {}),
       ...(parseOptionalInteger(options.max, "--max") !== undefined ? { max: parseOptionalInteger(options.max, "--max") } : {}),
     }));
     perfOperation?.addSpan("search", { searchInvocation: normalized.perf?.searchInvocation, normalization: normalized.perf?.normalization, xrayMetrics: normalized.perf?.xrayMetrics });
@@ -227,21 +261,29 @@ export async function mcpGrepCommand(root: string, options: McpGrepOptions = {})
   writeToolResponse(response, perfOperation?.finish());
 }
 
-export async function mcpGrepCodeCommand(root: string, options: McpGrepCodeOptions = {}): Promise<void> {
+export async function mcpGrepCodeCommand(root: string, options: McpGrepCodeOptions = {}, searchClient?: XraySearchClientLike): Promise<void> {
   const perfRecorder = createPerfRecorder(options.perf === true);
   const perfOperation = perfRecorder?.startOperation(randomUUID());
   if (options.perf === true) {
-    const client = createXrayClient();
+    const search = resolveCliSearchQuery(options);
+    const client = searchClient ?? createXrayClient();
     const envelope = await client.run({
       command: "search",
       root,
-      query: options.query,
+      query: search.query,
+      ...(search.regex ? { regex: true } : {}),
+      ...(options.glob !== undefined ? { glob: options.glob } : {}),
+      ...(options.exclude !== undefined ? { exclude: options.exclude } : {}),
       ...(parseOptionalInteger(options.max, "--max") !== undefined ? { max: parseOptionalInteger(options.max, "--max") } : {}),
+      timeoutMs: defaultSearchTimeoutMs,
     });
     const normalized = normalizeXrayResult(envelope, "content", buildXraySearchInvocationPerfAttributes({
       command: "search",
       root,
-      query: options.query,
+      query: search.query,
+      ...(search.regex ? { regex: true } : {}),
+      ...(options.glob !== undefined ? { glob: options.glob } : {}),
+      ...(options.exclude !== undefined ? { exclude: options.exclude } : {}),
       ...(parseOptionalInteger(options.max, "--max") !== undefined ? { max: parseOptionalInteger(options.max, "--max") } : {}),
     }));
     perfOperation?.addSpan("search", { searchInvocation: normalized.perf?.searchInvocation, normalization: normalized.perf?.normalization, xrayMetrics: normalized.perf?.xrayMetrics });
@@ -312,6 +354,9 @@ function readPayload(result: Awaited<ReturnType<typeof readTextFileSlice>>): unk
 
 function buildFindFilesArguments(root: string, options: McpFindFilesOptions): Record<string, unknown> {
   const args: Record<string, unknown> = { root };
+  if (options.exclude !== undefined) {
+    args.exclude = options.exclude;
+  }
   if (options.glob !== undefined) {
     args.glob = options.glob;
   }
@@ -324,8 +369,20 @@ function buildFindFilesArguments(root: string, options: McpFindFilesOptions): Re
 
 function buildGrepArguments(root: string, options: McpGrepOptions): Record<string, unknown> {
   const args: Record<string, unknown> = { root };
+  if (options.exclude !== undefined) {
+    args.exclude = options.exclude;
+  }
+  if (options.glob !== undefined) {
+    args.glob = options.glob;
+  }
   if (options.query !== undefined) {
     args.query = options.query;
+  }
+  if (options.queries !== undefined) {
+    args.queries = options.queries;
+  }
+  if (options.regex === true) {
+    args.regex = true;
   }
   const max = parseOptionalInteger(options.max, "--max");
   if (max !== undefined) {
@@ -335,15 +392,29 @@ function buildGrepArguments(root: string, options: McpGrepOptions): Record<strin
 }
 
 function buildGrepCodeArguments(root: string, options: McpGrepCodeOptions): Record<string, unknown> {
-  const args: Record<string, unknown> = { root };
+  return buildGrepArguments(root, options);
+}
+
+function resolveCliSearchQuery(options: McpGrepOptions): { query: string; regex: boolean } {
+  if ((options.query === undefined) === (options.queries === undefined)) {
+    throw new Error("Provide exactly one of --query or --queries");
+  }
   if (options.query !== undefined) {
-    args.query = options.query;
+    return { query: options.query, regex: options.regex === true };
   }
-  const max = parseOptionalInteger(options.max, "--max");
-  if (max !== undefined) {
-    args.max = max;
+  const queries = options.queries ?? [];
+  if (queries.length === 0) {
+    throw new Error("--queries requires at least one pattern");
   }
-  return args;
+  if (options.regex !== true && queries.length === 1) {
+    return { query: queries[0], regex: false };
+  }
+  return {
+    query: options.regex === true
+      ? queries.join("|")
+      : queries.map((query) => query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|"),
+    regex: true,
+  };
 }
 
 function readToolPayload(response: Awaited<ReturnType<Client["callTool"]>>): unknown {
