@@ -64,7 +64,7 @@ test("content search surfaces timeout warnings and ripgrep metrics", async () =>
     metrics: { searches: 2, bytesSearched: 4096, bytesPrinted: 256, matchedLines: 1, matches: 1 },
   });
 
-  const result = await runContentSearch({ query: "needle", root: "/tmp", timeoutMs: 59000, runner });
+  const result = await runContentSearch({ query: "needle", root: "/tmp", timeoutMs: 59000, perf: true, runner });
 
   assert.ok(result.warnings.some((warning) => warning.includes("search stopped after 59000 ms")));
   assert.equal(result.metrics?.searches, 2);

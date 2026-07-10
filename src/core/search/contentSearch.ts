@@ -38,7 +38,7 @@ export async function runContentSearch(options: ContentSearchOptions): Promise<C
   const matches: SearchContentMatch[] = [];
   const warnings: string[] = [];
   const seen = new Set<string>();
-  const metrics: ContentSearchRunMetrics = { searches: 0 };
+  const metrics: ContentSearchRunMetrics | undefined = options.perf === true ? { searches: 0 } : undefined;
   const args = buildRipgrepArgs({ query, regex, all, globs, excludes, laneArgs });
 
   let invocation: ContentSearchInvocation;
@@ -49,16 +49,18 @@ export async function runContentSearch(options: ContentSearchOptions): Promise<C
     throw new Error(`fatal ripgrep error: ${message}`);
   }
 
-  metrics.searches = invocation.metrics?.searches ?? 1;
-  metrics.bytesSearched = invocation.metrics?.bytesSearched;
-  metrics.bytesPrinted = invocation.metrics?.bytesPrinted;
-  metrics.matchedLines = invocation.metrics?.matchedLines;
-  metrics.matches = invocation.metrics?.matches;
-  metrics.spawnCallMs = invocation.metrics?.spawnCallMs;
-  metrics.spawnReadyMs = invocation.metrics?.spawnReadyMs;
-  metrics.childRunMs = invocation.metrics?.childRunMs;
-  metrics.childTotalMs = invocation.metrics?.childTotalMs;
-  metrics.parseMs = invocation.metrics?.parseMs;
+  if (metrics !== undefined) {
+    metrics.searches = invocation.metrics?.searches ?? 1;
+    metrics.bytesSearched = invocation.metrics?.bytesSearched;
+    metrics.bytesPrinted = invocation.metrics?.bytesPrinted;
+    metrics.matchedLines = invocation.metrics?.matchedLines;
+    metrics.matches = invocation.metrics?.matches;
+    metrics.spawnCallMs = invocation.metrics?.spawnCallMs;
+    metrics.spawnReadyMs = invocation.metrics?.spawnReadyMs;
+    metrics.childRunMs = invocation.metrics?.childRunMs;
+    metrics.childTotalMs = invocation.metrics?.childTotalMs;
+    metrics.parseMs = invocation.metrics?.parseMs;
+  }
 
   if (invocation.timedOut) {
     warnings.push(`search stopped after ${timeoutMs} ms`);
@@ -87,7 +89,12 @@ export async function runContentSearch(options: ContentSearchOptions): Promise<C
     warnings.push(`display capped at ${max} matches`);
   }
 
-  return { kind: "content", matches, warnings, metrics };
+  return {
+    kind: "content",
+    matches,
+    warnings,
+    ...(metrics === undefined ? {} : { metrics }),
+  };
 }
 
 function buildRipgrepArgs(options: { query: string; regex: boolean; all: boolean; globs: string[]; excludes: string[]; laneArgs: string[] }): string[] {
@@ -199,7 +206,7 @@ async function defaultContentSearchRunner(args: string[], options: { cwd: string
           childTotalMs: (childClosedAt ?? 0) - (spawnStartedAt ?? 0),
           parseMs: (parseEndedAt ?? 0) - (parseStartedAt ?? 0),
         }
-        : { searches: 1 };
+        : undefined;
       if (timedOut) {
         finish({ args, matches, warnings, timedOut: true, truncated: false, metrics });
         return;

@@ -4,7 +4,7 @@ import { createNativeSearchClient } from "../../src/core/search/searchClient.js"
 import type { ContentSearchOptions, ContentSearchResult, NativeFileSearchResult } from "../../src/core/search/types.js";
 
 describe("createNativeSearchClient", () => {
-  it("routes content queries to the native content engine and preserves ripgrep metrics", async () => {
+  it("emits ripgrep metrics only for explicit perf requests", async () => {
     const seen: ContentSearchOptions[] = [];
     const client = createNativeSearchClient({
       runContentSearch: async (options) => {
@@ -27,7 +27,37 @@ describe("createNativeSearchClient", () => {
     assert.equal(envelope.kind, "content");
     assert.deepEqual(envelope.data?.matches, [{ path: "src/a.ts", line: 3, text: "needle" }]);
     assert.deepEqual(envelope.warnings, ["native warning"]);
-    assert.deepEqual(envelope.metrics, { ripgrepMetrics: { searches: 2, bytesSearched: 123, bytesPrinted: undefined, matchedLines: undefined, matches: 1 } });
+    assert.equal(envelope.metrics, undefined);
+
+    const perfEnvelope = await client.run({
+      command: "search",
+      root: "/repo",
+      query: "needle",
+      regex: true,
+      max: 3,
+      timeoutMs: 2500,
+      exclude: "**/dist/**",
+      perf: true,
+    });
+
+    assert.deepEqual(seen[1], {
+      query: "needle",
+      root: "/repo",
+      regex: true,
+      max: 3,
+      timeoutMs: 2500,
+      excludes: ["**/dist/**"],
+      perf: true,
+    });
+    assert.deepEqual(perfEnvelope.metrics, {
+      ripgrepMetrics: {
+        searches: 2,
+        bytesSearched: 123,
+        bytesPrinted: undefined,
+        matchedLines: undefined,
+        matches: 1,
+      },
+    });
   });
 
   it("routes file lookups to the native file engine", async () => {
@@ -52,6 +82,6 @@ describe("createNativeSearchClient", () => {
     assert.equal(envelope.kind, "files");
     assert.deepEqual(envelope.data?.matches, [{ path: "src/b.ts" }]);
     assert.deepEqual(envelope.warnings, ["file warning"]);
-    assert.deepEqual(envelope.metrics, { ripgrepMetrics: undefined });
+    assert.equal(envelope.metrics, undefined);
   });
 });

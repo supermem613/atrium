@@ -173,7 +173,7 @@ describe("search MCP tools", () => {
     }
   });
 
-  it("surfaces native ripgrep metrics instead of xray metrics for injected native clients", async () => {
+  it("does not expose injected native metrics in normal MCP responses", async () => {
     const fakeClient = new FakeNativeSearchClient();
     const server = createAtriumServer({ searchClient: fakeClient as unknown as XraySearchClientLike });
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
@@ -183,10 +183,9 @@ describe("search MCP tools", () => {
     await client.connect(clientTransport);
 
     try {
-      const parsed = await callJson(client, "grep", { root: "/tmp/x", query: "needle" }) as Record<string, unknown> & { perf?: { ripgrepMetrics?: unknown; xrayMetrics?: unknown } };
-      assert.deepEqual(parsed as unknown, { kind: "content", matches: [{ path: "src/native.ts", line: 11, text: "native hit" }], warnings: ["native warning"] } as unknown);
-      assert.deepEqual(parsed.perf?.ripgrepMetrics, { searches: 2, bytesSearched: 4096, matches: 1 });
-      assert.equal(parsed.perf?.xrayMetrics, undefined);
+      const parsed = await callJson(client, "grep", { root: "/tmp/x", query: "needle" });
+      assert.deepEqual(parsed, { kind: "content", matches: [{ path: "src/native.ts", line: 11, text: "native hit" }], warnings: ["native warning"] });
+      assert.equal(fakeClient.calls.at(-1)?.perf, undefined);
     } finally {
       await client.close();
       await serverTransport.close();

@@ -81,7 +81,7 @@ Search traces separate the native operation into a timed `search` span and a tim
 - `childTotalMs`: total time from starting the spawn call until the child closes.
 - `parseMs`: time spent parsing ripgrep output after the child closes.
 
-These clocks and lifecycle measurements are enabled only for CLI `--perf` reruns. Normal MCP search does not sample them.
+These clocks, lifecycle measurements, and search perf metadata are enabled only for CLI `--perf` reruns. Normal MCP search and CLI search without `--perf` do not calculate or return them.
 
 ### `mcp-operation-wait`
 

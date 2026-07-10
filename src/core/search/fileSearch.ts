@@ -82,7 +82,12 @@ export async function runNativeFileSearch(options: NativeFileSearchOptions): Pro
     warnings.push(`display capped at ${max} files`);
   }
 
-  return { kind: "files", matches: matches.map((path) => ({ path })), warnings, metrics: invocation.metrics };
+  return {
+    kind: "files",
+    matches: matches.map((path) => ({ path })),
+    warnings,
+    ...(options.perf === true && invocation.metrics !== undefined ? { metrics: invocation.metrics } : {}),
+  };
 }
 
 function buildRipgrepArgs(options: { all: boolean; globs: string[]; excludes: string[]; rootIsFile: boolean; rootName?: string }): string[] {
@@ -192,7 +197,7 @@ async function defaultNativeFileSearchRunner(args: string[], options: { cwd: str
           childTotalMs: (childClosedAt ?? 0) - (spawnStartedAt ?? 0),
           parseMs: (parseEndedAt ?? 0) - (parseStartedAt ?? 0),
         }
-        : { searches: 1 };
+        : undefined;
       if (timedOut) {
         finish({ paths, warnings, timedOut: true, truncated: false, metrics });
         return;

@@ -44,9 +44,11 @@ export function createNativeSearchClient(dependencies: NativeSearchClientDepende
             summary: { fileCount: result.matches.length, truncated: false, timedOut: false },
           },
           warnings: result.warnings,
-          metrics: {
-            ripgrepMetrics: buildRipgrepMetrics(result),
-          },
+          ...(options.perf === true ? {
+            metrics: {
+              ripgrepMetrics: buildRipgrepMetrics(result),
+            },
+          } : {}),
         };
       }
 
@@ -71,9 +73,11 @@ export function createNativeSearchClient(dependencies: NativeSearchClientDepende
           summary: { matchCount: result.matches.length, truncated: false, timedOut: false },
         },
         warnings: result.warnings,
-        metrics: {
-          ripgrepMetrics: buildRipgrepMetrics(result),
-        },
+        ...(options.perf === true ? {
+          metrics: {
+            ripgrepMetrics: buildRipgrepMetrics(result),
+          },
+        } : {}),
       };
     },
   };

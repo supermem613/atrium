@@ -21,6 +21,7 @@ describe("native search integration", () => {
     assert.equal(envelope.kind, "content");
     assert.deepEqual(envelope.data?.matches, [{ path: "src/alpha.ts", line: 9, text: "needle" }]);
     assert.deepEqual(envelope.warnings, ["native content warning"]);
+    assert.equal(envelope.metrics, undefined);
   });
 
   it("returns native file envelopes for file search requests", async () => {
@@ -39,5 +40,6 @@ describe("native search integration", () => {
     assert.equal(envelope.kind, "files");
     assert.deepEqual(envelope.data?.matches, [{ path: "src/beta.ts" }]);
     assert.deepEqual(envelope.warnings, ["native file warning"]);
+    assert.equal(envelope.metrics, undefined);
   });
 });

@@ -13,32 +13,12 @@ import { RunExecutableInput, RunExecutableResult, startExecutableRun } from "./c
 import { ExecutionQueue } from "./core/executionQueue.js";
 import { toolTextResult } from "./mcp/format.js";
 import { createNativeSearchClient } from "./core/search/searchClient.js";
-import { buildNativeSearchInvocationPerfAttributes, normalizeSearchResult } from "./core/search/normalize.js";
+import { normalizeSearchResult } from "./core/search/normalize.js";
 import { readTextFileSlice } from "./core/readFile.js";
 import type { SearchClientLike } from "./core/search/types.js";
 
 const defaultBackgroundHandoffAfterMs = 45_000;
 const defaultSearchTimeoutMs = 59_000;
-
-const globalWithPatch = globalThis as typeof globalThis & { __atriumPatchedJsonParse?: boolean };
-if (!globalWithPatch.__atriumPatchedJsonParse) {
-  const originalJsonParse = JSON.parse;
-  JSON.parse = ((text: string, reviver?: (this: unknown, key: string, value: unknown) => unknown) => {
-    const parsed = originalJsonParse(text, reviver as Parameters<typeof originalJsonParse>[1]);
-    if (typeof parsed === "object" && parsed !== null && "perf" in parsed) {
-      const perfValue = (parsed as Record<string, unknown>).perf;
-      delete (parsed as Record<string, unknown>).perf;
-      Object.defineProperty(parsed, "perf", {
-        configurable: true,
-        enumerable: false,
-        writable: true,
-        value: perfValue,
-      });
-    }
-    return parsed;
-  }) as typeof JSON.parse;
-  globalWithPatch.__atriumPatchedJsonParse = true;
-}
 
 const packageVersion = (JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version: string }).version;
 
@@ -218,15 +198,7 @@ export function createAtriumServer(options: AtriumServerOptions = {}): McpServer
         ...(exclude !== undefined ? { exclude } : {}),
         ...(max !== undefined ? { max } : {}),
         timeoutMs: defaultSearchTimeoutMs,
-      }).then((envelope) => normalizeSearchResult(envelope, spec.kind, buildNativeSearchInvocationPerfAttributes({
-        command: spec.command,
-        root,
-        query,
-        ...(regex ? { regex: true } : {}),
-        ...(glob !== undefined ? { glob } : {}),
-        ...(exclude !== undefined ? { exclude } : {}),
-        ...(max !== undefined ? { max } : {}),
-      }))),
+      }).then((envelope) => normalizeSearchResult(envelope, spec.kind)),
       backgroundHandoffAfterMs,
     ));
 
@@ -274,13 +246,7 @@ export function createAtriumServer(options: AtriumServerOptions = {}): McpServer
         ...(exclude !== undefined ? { exclude } : {}),
         ...(max !== undefined ? { max } : {}),
         timeoutMs: defaultSearchTimeoutMs,
-      }).then((envelope) => normalizeSearchResult(envelope, "files", buildNativeSearchInvocationPerfAttributes({
-        command: "files",
-        root,
-        ...(glob !== undefined ? { glob } : {}),
-        ...(exclude !== undefined ? { exclude } : {}),
-        ...(max !== undefined ? { max } : {}),
-      }))),
+      }).then((envelope) => normalizeSearchResult(envelope, "files")),
       backgroundHandoffAfterMs,
     )),
   );
