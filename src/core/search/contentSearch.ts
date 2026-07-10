@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { performance } from "node:perf_hooks";
 import { normalizeNativeSearchPath } from "./normalize.js";
 import { resolveBundledRgPath } from "./rgPath.js";
 import { planSmartSearch } from "./smartPlan.js";
@@ -42,7 +43,7 @@ export async function runContentSearch(options: ContentSearchOptions): Promise<C
 
   let invocation: ContentSearchInvocation;
   try {
-    invocation = await runner(args, { cwd: root, timeoutMs, query, regex });
+    invocation = await runner(args, { cwd: root, timeoutMs, query, regex, perf: options.perf === true });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     throw new Error(`fatal ripgrep error: ${message}`);
@@ -53,6 +54,11 @@ export async function runContentSearch(options: ContentSearchOptions): Promise<C
   metrics.bytesPrinted = invocation.metrics?.bytesPrinted;
   metrics.matchedLines = invocation.metrics?.matchedLines;
   metrics.matches = invocation.metrics?.matches;
+  metrics.spawnCallMs = invocation.metrics?.spawnCallMs;
+  metrics.spawnReadyMs = invocation.metrics?.spawnReadyMs;
+  metrics.childRunMs = invocation.metrics?.childRunMs;
+  metrics.childTotalMs = invocation.metrics?.childTotalMs;
+  metrics.parseMs = invocation.metrics?.parseMs;
 
   if (invocation.timedOut) {
     warnings.push(`search stopped after ${timeoutMs} ms`);
@@ -105,18 +111,21 @@ function buildRipgrepArgs(options: { query: string; regex: boolean; all: boolean
   return args;
 }
 
-async function defaultContentSearchRunner(args: string[], options: { cwd: string; timeoutMs: number; query: string; regex: boolean }): Promise<ContentSearchInvocation> {
+async function defaultContentSearchRunner(args: string[], options: { cwd: string; timeoutMs: number; query: string; regex: boolean; perf: boolean }): Promise<ContentSearchInvocation> {
   const rgPath = resolveBundledRgPath();
   if (rgPath === null) {
     throw new Error("fatal ripgrep error: ripgrep binary not available");
   }
 
   return new Promise((resolve, reject) => {
+    const spawnStartedAt = options.perf ? performance.now() : undefined;
     const child = spawn(rgPath, args, {
       cwd: options.cwd,
       stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,
     });
+    const spawnReturnedAt = options.perf ? performance.now() : undefined;
+    let spawnReadyAt = spawnReturnedAt;
 
     let stdout = "";
     let stderr = "";
@@ -158,6 +167,12 @@ async function defaultContentSearchRunner(args: string[], options: { cwd: string
       stderr += String(chunk);
     });
 
+    if (options.perf) {
+      child.on("spawn", () => {
+        spawnReadyAt = performance.now();
+      });
+    }
+
     if (options.timeoutMs > 0) {
       timer = setTimeout(() => {
         timedOut = true;
@@ -170,17 +185,30 @@ async function defaultContentSearchRunner(args: string[], options: { cwd: string
     });
 
     child.on("close", (code: number | null) => {
+      const childClosedAt = options.perf ? performance.now() : undefined;
       const warnings = stderr.trim().length > 0 ? [stderr.trim()] : [];
+      const parseStartedAt = options.perf ? performance.now() : undefined;
       const matches = parseRipgrepJsonOutput(stdout);
+      const parseEndedAt = options.perf ? performance.now() : undefined;
+      const metrics = options.perf
+        ? {
+          searches: 1,
+          spawnCallMs: (spawnReturnedAt ?? 0) - (spawnStartedAt ?? 0),
+          spawnReadyMs: (spawnReadyAt ?? 0) - (spawnReturnedAt ?? 0),
+          childRunMs: (childClosedAt ?? 0) - (spawnReadyAt ?? 0),
+          childTotalMs: (childClosedAt ?? 0) - (spawnStartedAt ?? 0),
+          parseMs: (parseEndedAt ?? 0) - (parseStartedAt ?? 0),
+        }
+        : { searches: 1 };
       if (timedOut) {
-        finish({ args, matches, warnings, timedOut: true, truncated: false, metrics: { searches: 1 } });
+        finish({ args, matches, warnings, timedOut: true, truncated: false, metrics });
         return;
       }
       if (code !== 0 && code !== 1) {
         finishError(`fatal ripgrep error: exited with code ${String(code)}`);
         return;
       }
-      finish({ args, matches, warnings, timedOut: false, truncated: false, metrics: { searches: 1 } });
+      finish({ args, matches, warnings, timedOut: false, truncated: false, metrics });
     });
   });
 }

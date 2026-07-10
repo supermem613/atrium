@@ -35,6 +35,11 @@ export interface RipgrepMetricsPerfAttributes {
   bytesPrinted?: number;
   matchedLines?: number;
   matches?: number;
+  spawnCallMs?: number;
+  spawnReadyMs?: number;
+  childRunMs?: number;
+  childTotalMs?: number;
+  parseMs?: number;
 }
 
 export interface SearchPerfMetadata {
@@ -147,6 +152,7 @@ export interface NativeSearchRunOptions {
   all?: boolean;
   max?: number;
   timeoutMs?: number;
+  perf?: boolean;
 }
 
 export type SmartPlanStrategy = "sequential" | "narrowed" | "fanout";
@@ -176,6 +182,11 @@ export interface ContentSearchRunMetrics {
   bytesPrinted?: number;
   matchedLines?: number;
   matches?: number;
+  spawnCallMs?: number;
+  spawnReadyMs?: number;
+  childRunMs?: number;
+  childTotalMs?: number;
+  parseMs?: number;
 }
 
 export interface ContentSearchInvocation {
@@ -196,7 +207,7 @@ export interface NativeFileSearchInvocation {
 }
 
 export interface NativeFileSearchRunner {
-  (args: string[], options: { cwd: string; timeoutMs: number; max: number }): Promise<NativeFileSearchInvocation>;
+  (args: string[], options: { cwd: string; timeoutMs: number; max: number; perf: boolean }): Promise<NativeFileSearchInvocation>;
 }
 
 export interface NativeFileSearchOptions {
@@ -206,6 +217,7 @@ export interface NativeFileSearchOptions {
   globs?: string[];
   excludes?: string[];
   all?: boolean;
+  perf?: boolean;
   runner?: NativeFileSearchRunner;
 }
 
@@ -226,10 +238,11 @@ export interface ContentSearchOptions {
   all?: boolean;
   globs?: string[];
   excludes?: string[];
+  perf?: boolean;
   runner?: ContentSearchRunner;
 }
 
-export type ContentSearchRunner = (args: string[], options: { cwd: string; timeoutMs: number; query: string; regex: boolean }) => Promise<ContentSearchInvocation>;
+export type ContentSearchRunner = (args: string[], options: { cwd: string; timeoutMs: number; query: string; regex: boolean; perf: boolean }) => Promise<ContentSearchInvocation>;
 
 export interface ContentSearchResult {
   kind: "content";

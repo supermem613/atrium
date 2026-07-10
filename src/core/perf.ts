@@ -1,3 +1,5 @@
+import { performance } from "node:perf_hooks";
+
 export interface PerfSpan {
   name: string;
   startedAt: string;
@@ -20,15 +22,30 @@ export interface PerfRecorder {
 
 export interface PerfOperationRecorder {
   addSpan(name: string, attributes?: Record<string, unknown>): void;
+  startSpan(name: string): PerfSpanRecorder;
   finish(): PerfOperationReport;
 }
 
-export function createPerfRecorder(enabled: boolean): PerfRecorder | undefined {
+export interface PerfSpanRecorder {
+  finish(attributes?: Record<string, unknown>): void;
+}
+
+export interface PerfClock {
+  wallNow(): number;
+  monotonicNow(): number;
+}
+
+const defaultPerfClock: PerfClock = {
+  wallNow: () => Date.now(),
+  monotonicNow: () => performance.now(),
+};
+
+export function createPerfRecorder(enabled: boolean, clock: PerfClock = defaultPerfClock): PerfRecorder | undefined {
   if (!enabled) {
     return undefined;
   }
 
-  return new PerfRecorderImpl();
+  return new PerfRecorderImpl(clock);
 }
 
 export function sanitizePerfAttributes(attributes: Record<string, unknown>): Record<string, unknown> {
@@ -40,20 +57,29 @@ export function sanitizePerfAttributes(attributes: Record<string, unknown>): Rec
 }
 
 class PerfRecorderImpl implements PerfRecorder {
+  constructor(private readonly clock: PerfClock) {
+  }
+
   startOperation(operationId: string): PerfOperationRecorder {
-    return new PerfOperationRecorderImpl(operationId);
+    return new PerfOperationRecorderImpl(operationId, this.clock);
   }
 }
 
 class PerfOperationRecorderImpl implements PerfOperationRecorder {
-  private readonly startedAt = Date.now();
+  private readonly startedAt: number;
+  private readonly startedAtMonotonic: number;
   private readonly spans: PerfSpan[] = [];
 
-  constructor(private readonly operationId: string) {
+  constructor(
+    private readonly operationId: string,
+    private readonly clock: PerfClock,
+  ) {
+    this.startedAt = clock.wallNow();
+    this.startedAtMonotonic = clock.monotonicNow();
   }
 
   addSpan(name: string, attributes?: Record<string, unknown>): void {
-    const startedAtMs = Date.now();
+    const startedAtMs = this.clock.wallNow();
     const endedAtMs = startedAtMs;
     this.spans.push({
       name,
@@ -64,13 +90,37 @@ class PerfOperationRecorderImpl implements PerfOperationRecorder {
     });
   }
 
+  startSpan(name: string): PerfSpanRecorder {
+    const startedAtMs = this.clock.wallNow();
+    const startedAtMonotonic = this.clock.monotonicNow();
+    let finished = false;
+    return {
+      finish: (attributes?: Record<string, unknown>) => {
+        if (finished) {
+          return;
+        }
+        finished = true;
+        const endedAtMs = this.clock.wallNow();
+        const endedAtMonotonic = this.clock.monotonicNow();
+        this.spans.push({
+          name,
+          startedAt: new Date(startedAtMs).toISOString(),
+          endedAt: new Date(endedAtMs).toISOString(),
+          durationMs: Math.max(0, endedAtMonotonic - startedAtMonotonic),
+          ...(attributes === undefined ? {} : { attributes: sanitizePerfAttributes(attributes) }),
+        });
+      },
+    };
+  }
+
   finish(): PerfOperationReport {
-    const endedAtMs = Date.now();
+    const endedAtMs = this.clock.wallNow();
+    const endedAtMonotonic = this.clock.monotonicNow();
     return {
       operationId: this.operationId,
       startedAt: new Date(this.startedAt).toISOString(),
       endedAt: new Date(endedAtMs).toISOString(),
-      durationMs: Math.max(0, endedAtMs - this.startedAt),
+      durationMs: Math.max(0, endedAtMonotonic - this.startedAtMonotonic),
       spans: this.spans,
     };
   }

@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { stat } from "node:fs/promises";
 import { basename, dirname, relative, resolve } from "node:path";
+import { performance } from "node:perf_hooks";
 import { normalizeNativeSearchPath } from "./normalize.js";
 import { resolveBundledRgPath } from "./rgPath.js";
 import type { NativeFileSearchInvocation, NativeFileSearchOptions, NativeFileSearchResult } from "./types.js";
@@ -50,7 +51,7 @@ export async function runNativeFileSearch(options: NativeFileSearchOptions): Pro
   let invocation: NativeFileSearchInvocation;
 
   try {
-    invocation = await runner(args, { cwd, timeoutMs, max });
+    invocation = await runner(args, { cwd, timeoutMs, max, perf: options.perf === true });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     throw new Error(`fatal ripgrep error: ${message}`);
@@ -103,18 +104,21 @@ function buildRipgrepArgs(options: { all: boolean; globs: string[]; excludes: st
   return args;
 }
 
-async function defaultNativeFileSearchRunner(args: string[], options: { cwd: string; timeoutMs: number; max: number }): Promise<NativeFileSearchInvocation> {
+async function defaultNativeFileSearchRunner(args: string[], options: { cwd: string; timeoutMs: number; max: number; perf: boolean }): Promise<NativeFileSearchInvocation> {
   const rgPath = resolveBundledRgPath();
   if (rgPath === null) {
     throw new Error("fatal ripgrep error: ripgrep binary not available");
   }
 
   return new Promise((resolve, reject) => {
+    const spawnStartedAt = options.perf ? performance.now() : undefined;
     const child = spawn(rgPath, args, {
       cwd: options.cwd,
       stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,
     });
+    const spawnReturnedAt = options.perf ? performance.now() : undefined;
+    let spawnReadyAt = spawnReturnedAt;
 
     let stdout = "";
     let stderr = "";
@@ -156,6 +160,12 @@ async function defaultNativeFileSearchRunner(args: string[], options: { cwd: str
       stderr += String(chunk);
     });
 
+    if (options.perf) {
+      child.on("spawn", () => {
+        spawnReadyAt = performance.now();
+      });
+    }
+
     if (options.timeoutMs > 0) {
       timer = setTimeout(() => {
         timedOut = true;
@@ -168,17 +178,30 @@ async function defaultNativeFileSearchRunner(args: string[], options: { cwd: str
     });
 
     child.on("close", (code: number | null) => {
+      const childClosedAt = options.perf ? performance.now() : undefined;
       const warnings = stderr.trim().length > 0 ? [stderr.trim()] : [];
+      const parseStartedAt = options.perf ? performance.now() : undefined;
       const paths = parseRipgrepFileOutput(stdout);
+      const parseEndedAt = options.perf ? performance.now() : undefined;
+      const metrics = options.perf
+        ? {
+          searches: 1,
+          spawnCallMs: (spawnReturnedAt ?? 0) - (spawnStartedAt ?? 0),
+          spawnReadyMs: (spawnReadyAt ?? 0) - (spawnReturnedAt ?? 0),
+          childRunMs: (childClosedAt ?? 0) - (spawnReadyAt ?? 0),
+          childTotalMs: (childClosedAt ?? 0) - (spawnStartedAt ?? 0),
+          parseMs: (parseEndedAt ?? 0) - (parseStartedAt ?? 0),
+        }
+        : { searches: 1 };
       if (timedOut) {
-        finish({ paths, warnings, timedOut: true, truncated: false, metrics: { searches: 1 } });
+        finish({ paths, warnings, timedOut: true, truncated: false, metrics });
         return;
       }
       if (code !== 0 && code !== 1) {
         finishError(`fatal ripgrep error: exited with code ${String(code)}`);
         return;
       }
-      finish({ paths, warnings, timedOut: false, truncated: false, metrics: { searches: 1 } });
+      finish({ paths, warnings, timedOut: false, truncated: false, metrics });
     });
   });
 }

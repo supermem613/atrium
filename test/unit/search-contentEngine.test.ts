@@ -1,5 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { runContentSearch, DEFAULT_CONTENT_SEARCH_EXCLUDES } from "../../src/core/search/contentSearch.js";
 import type { ContentSearchRunner } from "../../src/core/search/types.js";
 
@@ -79,3 +82,28 @@ test("content search turns fatal ripgrep errors into explicit failures", async (
     /fatal ripgrep error/u,
   );
 });
+
+test("content search emits complete ripgrep lifecycle metrics only when perf is enabled", async () => {
+  const root = await mkdtemp(join(tmpdir(), "atrium-content-perf-"));
+  try {
+    await writeFile(join(root, "sample.txt"), "needle\n", "utf8");
+
+    const withoutPerf = await runContentSearch({ query: "needle", root });
+    const withPerf = await runContentSearch({ query: "needle", root, perf: true });
+
+    assert.equal(withoutPerf.metrics?.spawnCallMs, undefined);
+    assert.equal(withoutPerf.metrics?.childTotalMs, undefined);
+    assertLifecycleMetrics(withPerf.metrics);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+function assertLifecycleMetrics(metrics: Awaited<ReturnType<typeof runContentSearch>>["metrics"]): void {
+  assert.ok(metrics);
+  for (const field of ["spawnCallMs", "spawnReadyMs", "childRunMs", "childTotalMs", "parseMs"] as const) {
+    assert.equal(typeof metrics[field], "number", `expected numeric ${field}`);
+    assert.ok((metrics[field] ?? -1) >= 0, `expected nonnegative ${field}`);
+  }
+  assert.ok((metrics.childTotalMs ?? 0) >= (metrics.spawnCallMs ?? 0) + (metrics.spawnReadyMs ?? 0) + (metrics.childRunMs ?? 0));
+}

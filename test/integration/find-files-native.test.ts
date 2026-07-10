@@ -128,3 +128,29 @@ test("surfaces timeout warnings", async () => {
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("emits complete ripgrep lifecycle metrics only when perf is enabled", async () => {
+  const root = await mkdtemp(join(tmpdir(), "atrium-native-files-perf-"));
+  try {
+    await writeFile(join(root, "one.txt"), "one\n", "utf8");
+
+    const withoutPerf = await runNativeFileSearch({ root });
+    const withPerf = await runNativeFileSearch({ root, perf: true });
+
+    assert.equal(withoutPerf.metrics?.spawnCallMs, undefined);
+    assert.equal(withoutPerf.metrics?.childTotalMs, undefined);
+    assert.ok(withPerf.metrics);
+    for (const field of ["spawnCallMs", "spawnReadyMs", "childRunMs", "childTotalMs", "parseMs"] as const) {
+      assert.equal(typeof withPerf.metrics[field], "number", `expected numeric ${field}`);
+      assert.ok((withPerf.metrics[field] ?? -1) >= 0, `expected nonnegative ${field}`);
+    }
+    assert.ok(
+      (withPerf.metrics.childTotalMs ?? 0)
+        >= (withPerf.metrics.spawnCallMs ?? 0)
+          + (withPerf.metrics.spawnReadyMs ?? 0)
+          + (withPerf.metrics.childRunMs ?? 0),
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

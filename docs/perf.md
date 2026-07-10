@@ -73,6 +73,16 @@ atrium mcp-grep /tmp --query alpha --max 5 --perf
 
 Search reruns accept the same scope controls as their MCP verbs. Use `--queries`, `--regex`, `--glob`, and `--exclude` when those arguments shaped the original request. `mcp-find-files` also accepts `--exclude`.
 
+Search traces separate the native operation into a timed `search` span and a timed `normalize` span. The `search` span includes `ripgrepMetrics`:
+
+- `spawnCallMs`: synchronous time spent creating the child process.
+- `spawnReadyMs`: time from the spawn call returning until Node reports the child as spawned.
+- `childRunMs`: time from the spawned event until the child closes.
+- `childTotalMs`: total time from starting the spawn call until the child closes.
+- `parseMs`: time spent parsing ripgrep output after the child closes.
+
+These clocks and lifecycle measurements are enabled only for CLI `--perf` reruns. Normal MCP search does not sample them.
+
 ### `mcp-operation-wait`
 
 ```bash

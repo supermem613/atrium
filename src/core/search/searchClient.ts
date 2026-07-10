@@ -11,7 +11,7 @@ import type {
 
 export interface NativeSearchClientDependencies {
   runContentSearch?: (options: ContentSearchOptions) => Promise<ContentSearchResult>;
-  runFileSearch?: (options: { root: string; max?: number; timeoutMs?: number; globs?: string[]; excludes?: string[]; all?: boolean }) => Promise<NativeFileSearchResult>;
+  runFileSearch?: (options: { root: string; max?: number; timeoutMs?: number; globs?: string[]; excludes?: string[]; all?: boolean; perf?: boolean }) => Promise<NativeFileSearchResult>;
 }
 
 export interface NativeSearchClientLike {
@@ -32,6 +32,7 @@ export function createNativeSearchClient(dependencies: NativeSearchClientDepende
           ...(options.glob === undefined ? {} : { globs: [options.glob] }),
           ...(options.exclude === undefined ? {} : { excludes: [options.exclude] }),
           ...(options.all === true ? { all: true } : {}),
+          ...(options.perf === true ? { perf: true } : {}),
         });
 
         return {
@@ -58,6 +59,7 @@ export function createNativeSearchClient(dependencies: NativeSearchClientDepende
         ...(options.all === true ? { all: true } : {}),
         ...(options.glob === undefined ? {} : { globs: [options.glob] }),
         ...(options.exclude === undefined ? {} : { excludes: [options.exclude] }),
+        ...(options.perf === true ? { perf: true } : {}),
       });
 
       return {
@@ -85,10 +87,20 @@ function buildRipgrepMetrics(result: ContentSearchResult | NativeFileSearchResul
       bytesPrinted: result.metrics?.bytesPrinted,
       matchedLines: result.metrics?.matchedLines,
       matches: result.metrics?.matches,
+      ...(result.metrics?.spawnCallMs === undefined ? {} : { spawnCallMs: result.metrics.spawnCallMs }),
+      ...(result.metrics?.spawnReadyMs === undefined ? {} : { spawnReadyMs: result.metrics.spawnReadyMs }),
+      ...(result.metrics?.childRunMs === undefined ? {} : { childRunMs: result.metrics.childRunMs }),
+      ...(result.metrics?.childTotalMs === undefined ? {} : { childTotalMs: result.metrics.childTotalMs }),
+      ...(result.metrics?.parseMs === undefined ? {} : { parseMs: result.metrics.parseMs }),
     };
   }
 
   return result.metrics === undefined ? undefined : {
     searches: result.metrics?.searches,
+    ...(result.metrics.spawnCallMs === undefined ? {} : { spawnCallMs: result.metrics.spawnCallMs }),
+    ...(result.metrics.spawnReadyMs === undefined ? {} : { spawnReadyMs: result.metrics.spawnReadyMs }),
+    ...(result.metrics.childRunMs === undefined ? {} : { childRunMs: result.metrics.childRunMs }),
+    ...(result.metrics.childTotalMs === undefined ? {} : { childTotalMs: result.metrics.childTotalMs }),
+    ...(result.metrics.parseMs === undefined ? {} : { parseMs: result.metrics.parseMs }),
   };
 }

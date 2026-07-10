@@ -194,6 +194,7 @@ export async function mcpFindFilesCommand(root: string, options: McpFindFilesOpt
   const perfOperation = perfRecorder?.startOperation(randomUUID());
   if (options.perf === true) {
     const client = searchClient ?? createNativeSearchClient();
+    const searchSpan = perfOperation?.startSpan("search");
     const envelope = await client.run({
       command: "files",
       root,
@@ -202,15 +203,17 @@ export async function mcpFindFilesCommand(root: string, options: McpFindFilesOpt
       ...(options.exclude !== undefined ? { exclude: options.exclude } : {}),
       ...(parseOptionalInteger(options.max, "--max") !== undefined ? { max: parseOptionalInteger(options.max, "--max") } : {}),
       timeoutMs: defaultSearchTimeoutMs,
+      perf: true,
     });
+    searchSpan?.finish(buildNativeSearchEnvelopePerfAttributes(envelope));
+    const normalizeSpan = perfOperation?.startSpan("normalize");
     const normalized = normalizeSearchResult(envelope, "files", buildNativeSearchInvocationPerfAttributes({
       command: "files",
       root,
       ...(options.glob !== undefined ? { glob: options.glob } : {}),
       ...(parseOptionalInteger(options.max, "--max") !== undefined ? { max: parseOptionalInteger(options.max, "--max") } : {}),
     }));
-    perfOperation?.addSpan("search", buildNativeSearchPerfAttributes(normalized));
-    perfOperation?.addSpan("normalize", buildNativeSearchPerfAttributes(normalized));
+    normalizeSpan?.finish(buildNativeSearchPerfAttributes(normalized));
     writePayload({ kind: normalized.kind, matches: normalized.matches, warnings: normalized.warnings }, perfOperation?.finish());
     return;
   }
@@ -228,6 +231,7 @@ export async function mcpGrepCommand(root: string, options: McpGrepOptions = {},
   if (options.perf === true) {
     const search = resolveCliSearchQuery(options);
     const client = searchClient ?? createNativeSearchClient();
+    const searchSpan = perfOperation?.startSpan("search");
     const envelope = await client.run({
       command: "search",
       root,
@@ -238,7 +242,10 @@ export async function mcpGrepCommand(root: string, options: McpGrepOptions = {},
       ...(options.exclude !== undefined ? { exclude: options.exclude } : {}),
       ...(parseOptionalInteger(options.max, "--max") !== undefined ? { max: parseOptionalInteger(options.max, "--max") } : {}),
       timeoutMs: defaultSearchTimeoutMs,
+      perf: true,
     });
+    searchSpan?.finish(buildNativeSearchEnvelopePerfAttributes(envelope));
+    const normalizeSpan = perfOperation?.startSpan("normalize");
     const normalized = normalizeSearchResult(envelope, "content", buildNativeSearchInvocationPerfAttributes({
       command: "search",
       root,
@@ -248,8 +255,7 @@ export async function mcpGrepCommand(root: string, options: McpGrepOptions = {},
       ...(options.exclude !== undefined ? { exclude: options.exclude } : {}),
       ...(parseOptionalInteger(options.max, "--max") !== undefined ? { max: parseOptionalInteger(options.max, "--max") } : {}),
     }));
-    perfOperation?.addSpan("search", buildNativeSearchPerfAttributes(normalized));
-    perfOperation?.addSpan("normalize", buildNativeSearchPerfAttributes(normalized));
+    normalizeSpan?.finish(buildNativeSearchPerfAttributes(normalized));
     writePayload({ kind: normalized.kind, matches: normalized.matches, warnings: normalized.warnings }, perfOperation?.finish());
     return;
   }
@@ -267,6 +273,7 @@ export async function mcpGrepCodeCommand(root: string, options: McpGrepCodeOptio
   if (options.perf === true) {
     const search = resolveCliSearchQuery(options);
     const client = searchClient ?? createNativeSearchClient();
+    const searchSpan = perfOperation?.startSpan("search");
     const envelope = await client.run({
       command: "search",
       root,
@@ -276,7 +283,10 @@ export async function mcpGrepCodeCommand(root: string, options: McpGrepCodeOptio
       ...(options.exclude !== undefined ? { exclude: options.exclude } : {}),
       ...(parseOptionalInteger(options.max, "--max") !== undefined ? { max: parseOptionalInteger(options.max, "--max") } : {}),
       timeoutMs: defaultSearchTimeoutMs,
+      perf: true,
     });
+    searchSpan?.finish(buildNativeSearchEnvelopePerfAttributes(envelope));
+    const normalizeSpan = perfOperation?.startSpan("normalize");
     const normalized = normalizeSearchResult(envelope, "content", buildNativeSearchInvocationPerfAttributes({
       command: "search",
       root,
@@ -286,8 +296,7 @@ export async function mcpGrepCodeCommand(root: string, options: McpGrepCodeOptio
       ...(options.exclude !== undefined ? { exclude: options.exclude } : {}),
       ...(parseOptionalInteger(options.max, "--max") !== undefined ? { max: parseOptionalInteger(options.max, "--max") } : {}),
     }));
-    perfOperation?.addSpan("search", buildNativeSearchPerfAttributes(normalized));
-    perfOperation?.addSpan("normalize", buildNativeSearchPerfAttributes(normalized));
+    normalizeSpan?.finish(buildNativeSearchPerfAttributes(normalized));
     writePayload({ kind: normalized.kind, matches: normalized.matches, warnings: normalized.warnings }, perfOperation?.finish());
     return;
   }
@@ -306,6 +315,17 @@ function buildNativeSearchPerfAttributes(normalized: ReturnType<typeof normalize
     nativeSearch: normalized.perf?.searchInvocation,
     bundledRipgrep: normalized.perf?.ripgrepMetrics,
     ripgrepMetrics: normalized.perf?.ripgrepMetrics,
+  };
+}
+
+function buildNativeSearchEnvelopePerfAttributes(envelope: Awaited<ReturnType<SearchClientLike["run"]>>): Record<string, unknown> {
+  const metrics = typeof envelope.metrics === "object" && envelope.metrics !== null
+    ? envelope.metrics as Record<string, unknown>
+    : {};
+  return {
+    nativeSearch: { command: envelope.command },
+    bundledRipgrep: metrics.ripgrepMetrics,
+    ripgrepMetrics: metrics.ripgrepMetrics,
   };
 }
 
