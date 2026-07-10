@@ -94,6 +94,12 @@ function isCliSuiteRouter(value: unknown): value is CliSuiteRouter {
   return typeof value === "function";
 }
 
+type BenchmarkRunScript = (options?: { args?: string[] }) => Promise<unknown>;
+
+function isBenchmarkRunScript(value: unknown): value is BenchmarkRunScript {
+  return typeof value === "function";
+}
+
 describe("benchmark-owned all-verb aggregate reports", { concurrency: false }, () => {
   it("builds a deterministic aggregate report for an all-verb suite", async () => {
     const report = await buildAllVerbAggregateReport();
@@ -200,6 +206,19 @@ describe("benchmark-owned all-verb aggregate reports", { concurrency: false }, (
     assert.equal(typeof report.endedAt, "string");
     assert.equal(typeof report.durationMs, "number");
     assert.equal(typeof report.elapsedMs, "number");
+  });
+
+  it("routes search benchmarking through the all-verbs suite and retires xray-small", async () => {
+    const benchmarkModule = await loadBenchmarkModule();
+    const runBenchmarkScript = benchmarkModule.runBenchmarkScript;
+    if (!isBenchmarkRunScript(runBenchmarkScript)) {
+      throw new Error("expected benchmark module to expose runBenchmarkScript");
+    }
+
+    await assert.rejects(
+      () => runBenchmarkScript({ args: ["--command", "xray-small"] }),
+      /Unknown --command xray-small/,
+    );
   });
 
   it("keeps single-command benchmark compatibility", async () => {

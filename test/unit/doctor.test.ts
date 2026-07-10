@@ -38,5 +38,7 @@ describe("doctor bundled ripgrep health", () => {
     assert.ok(bundledCheck, "expected a bundled-ripgrep doctor check");
     assert.equal(bundledCheck.ok, true);
     assert.match(bundledCheck.detail, /resolved|healthy|bundled/i);
+    assert.match(bundledCheck.detail, /bundled-ripgrep/i);
+    assert.match(bundledCheck.detail, /native search/i);
   });
 });

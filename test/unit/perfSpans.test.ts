@@ -82,7 +82,7 @@ describe("CLI perf spans and search metrics", { concurrency: false }, () => {
     assert.equal(capturedInput?.timeoutMs, defaultLongRunningTimeoutMs);
   });
 
-  it("mcp-grep --perf preserves search invocation, normalization, and xray metrics from fake xray output", async () => {
+  it("mcp-grep --perf preserves native search invocation, normalization, and bundled-ripgrep perf metadata", async () => {
     const fixture = await withTempFixture();
     const fakeSearchClient: XraySearchClientLike = {
       async run() {
@@ -93,7 +93,12 @@ describe("CLI perf spans and search metrics", { concurrency: false }, () => {
             matches: [{ path: join(fixture.root, "sample.txt"), line: 1, text: "alpha" }],
             summary: { matchCount: 1 },
           },
-          metrics: { elapsedMs: 7, filesScanned: 1, matchesReturned: 1 },
+          metrics: {
+            elapsedMs: 7,
+            filesScanned: 1,
+            matchesReturned: 1,
+            ripgrepMetrics: { elapsedMs: 7, filesScanned: 1, matchesReturned: 1, binary: "bundled-ripgrep" },
+          },
         };
       },
     };
@@ -110,7 +115,8 @@ describe("CLI perf spans and search metrics", { concurrency: false }, () => {
     const attributes = collectPerfAttributes(perf);
     assert.ok("searchInvocation" in attributes, "expected search invocation attributes");
     assert.ok("normalization" in attributes, "expected normalization attributes");
-    assert.ok("xrayMetrics" in attributes, "expected xray metrics attributes");
+    assert.ok("nativeSearch" in attributes, "expected native Atrium search perf attributes");
+    assert.ok("bundledRipgrep" in attributes, "expected bundled-ripgrep perf attributes");
   });
 
   it("perf search reruns preserve each MCP verb's scope and timeout", async () => {

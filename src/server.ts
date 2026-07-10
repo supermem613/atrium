@@ -70,16 +70,16 @@ const findFilesVerb: SearchVerbSpec = {
 };
 
 // Escapes regex metacharacters so a literal pattern matches itself when several
-// literal patterns are combined into one xray alternation.
+// literal patterns are combined into one native-search alternation.
 function escapeRegExp(pattern: string): string {
   return pattern.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-// Resolves query/queries/regex into one xray query plus whether xray runs in
-// regex mode. A lone literal query stays a plain literal search so grep and
-// grep-code keep their prior single-pattern behavior. Multiple literal patterns
-// are escaped and joined into an alternation. When regex is set, patterns are
-// joined verbatim. Exactly one of query or queries must be present.
+// Resolves query/queries/regex into one native-search query plus whether native
+// search runs in regex mode. A lone literal query stays a plain literal search so
+// grep and grep-code keep their prior single-pattern behavior. Multiple literal
+// patterns are escaped and joined into an alternation. When regex is set,
+// patterns are joined verbatim. Exactly one of query or queries must be present.
 function resolveSearchQuery(
   toolName: string,
   query: string | undefined,
@@ -121,9 +121,9 @@ const atriumInstructions = [
   "- Use the schema tool to discover a CLI invocation shape instead of scraping help through a shell.",
   "",
   "Search primitives:",
-  "- Content search verbs grep and grep-code run native search. find-files lists paths with the native file engine and never reads contents.",
+  "- Content search verbs grep and grep-code run native search with bundled-ripgrep. find-files lists paths with the native file engine and never reads contents.",
   "- grep and grep-code take a single literal query or a queries array to match any of several patterns. Set regex true to treat patterns as regular expressions. grep and find-files are unrestricted and include hidden, gitignored, and vendor files. grep-code is git-aware and scoped to code.",
-  "- These are first-class Atrium MCP tools backed by the native search client. Do not call xray directly for search.",
+  "- These are first-class Atrium MCP tools backed by the native search client and bundled-ripgrep. Use them for search instead of shelling out.",
 ].join("\n");
 
 export interface AtriumServerOptions {

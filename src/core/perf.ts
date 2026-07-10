@@ -104,7 +104,7 @@ function sanitizePerfString(value: string): string | number {
     return value;
   }
   const lower = value.toLowerCase();
-  if (["content", "files", "search", "normalize", "queue", "spawn", "materialize", "semantic", "continue", "completed", "failed", "running", "completed", "failed", "ok", "true", "false"].includes(lower)) {
+  if (["content", "files", "search", "normalize", "queue", "spawn", "materialize", "semantic", "continue", "completed", "failed", "running", "ok", "true", "false", "bundled-ripgrep", "ripgrep", "native", "native-search"].includes(lower)) {
     return value;
   }
   return value.length <= 32 ? value : shortHash(value);

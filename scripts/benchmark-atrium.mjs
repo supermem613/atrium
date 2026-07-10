@@ -16,11 +16,6 @@ const commands = {
     args: ["--version"],
     shellCommand: `& "${process.execPath}" --version`,
   },
-  "xray-small": {
-    tool: "xray",
-    args: ["search", "tdd", "--root", "C:\\Users\\marcusm\\.copilot", "--glob", "skills/**", "--max", "10"],
-    shellCommand: 'xray search "tdd" --root "C:\\Users\\marcusm\\.copilot" --glob "skills/**" --max 10',
-  },
 };
 
 export function buildSpeedifyCompatiblePerfReport({

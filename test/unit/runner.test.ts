@@ -204,8 +204,8 @@ describe("runner", () => {
     assert.ok((secondResult.metrics.queueWaitMs ?? 0) > 0);
   });
 
-  it("emits redacted xray search metrics for trace analysis", { skip: process.platform !== "win32" }, async () => {
-    const { shimFile } = await createNodeCmdShim("Program Files xray-metrics-", [
+  it("emits generic executable semantics for command runs without xray search parsing", { skip: process.platform !== "win32" }, async () => {
+    const { shimFile } = await createNodeCmdShim("Program Files native-search-metrics-", [
       "@ECHO off",
       "SETLOCAL",
       "SET \"NODE_EXE=%~dp0\\node.exe\"",
@@ -224,17 +224,9 @@ describe("runner", () => {
     assert.equal(simulated.ok, true);
     assert.equal(simulated.metrics.childTool, "xray");
     assert.equal(simulated.metrics.argShape.includes("secret query text"), false);
-    assert.equal(simulated.metrics.semantic?.kind, "xray.search");
-    if (simulated.metrics.semantic?.kind !== "xray.search") {
-      assert.fail("expected xray.search semantic metrics");
-    }
-    assert.equal(simulated.metrics.semantic.queryLength, "secret query text".length);
-    assert.equal("query" in simulated.metrics.semantic, false);
-    assert.equal(simulated.metrics.semantic.globCount, 1);
-    assert.equal(simulated.metrics.semantic.context, 2);
-    assert.equal(simulated.metrics.semantic.max, 50);
-    assert.equal(simulated.metrics.semantic.regex, true);
-    assert.equal(typeof simulated.metrics.semantic.scanScopeHash, "string");
+    assert.equal(simulated.metrics.semantic?.kind, "generic.command");
+    assert.equal(typeof simulated.metrics.semantic?.commandHash, "string");
+    assert.equal(simulated.metrics.semantic?.commandLength, "search".length);
   });
 
   it("writes large stdout as a file value", async () => {

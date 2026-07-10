@@ -209,8 +209,8 @@ export async function mcpFindFilesCommand(root: string, options: McpFindFilesOpt
       ...(options.glob !== undefined ? { glob: options.glob } : {}),
       ...(parseOptionalInteger(options.max, "--max") !== undefined ? { max: parseOptionalInteger(options.max, "--max") } : {}),
     }));
-    perfOperation?.addSpan("search", { searchInvocation: normalized.perf?.searchInvocation, normalization: normalized.perf?.normalization, ripgrepMetrics: normalized.perf?.ripgrepMetrics, xrayMetrics: normalized.perf?.xrayMetrics });
-    perfOperation?.addSpan("normalize", { normalization: normalized.perf?.normalization, ripgrepMetrics: normalized.perf?.ripgrepMetrics, xrayMetrics: normalized.perf?.xrayMetrics });
+    perfOperation?.addSpan("search", buildNativeSearchPerfAttributes(normalized));
+    perfOperation?.addSpan("normalize", buildNativeSearchPerfAttributes(normalized));
     writePayload({ kind: normalized.kind, matches: normalized.matches, warnings: normalized.warnings }, perfOperation?.finish());
     return;
   }
@@ -248,8 +248,8 @@ export async function mcpGrepCommand(root: string, options: McpGrepOptions = {},
       ...(options.exclude !== undefined ? { exclude: options.exclude } : {}),
       ...(parseOptionalInteger(options.max, "--max") !== undefined ? { max: parseOptionalInteger(options.max, "--max") } : {}),
     }));
-    perfOperation?.addSpan("search", { searchInvocation: normalized.perf?.searchInvocation, normalization: normalized.perf?.normalization, ripgrepMetrics: normalized.perf?.ripgrepMetrics, xrayMetrics: normalized.perf?.xrayMetrics });
-    perfOperation?.addSpan("normalize", { normalization: normalized.perf?.normalization, ripgrepMetrics: normalized.perf?.ripgrepMetrics, xrayMetrics: normalized.perf?.xrayMetrics });
+    perfOperation?.addSpan("search", buildNativeSearchPerfAttributes(normalized));
+    perfOperation?.addSpan("normalize", buildNativeSearchPerfAttributes(normalized));
     writePayload({ kind: normalized.kind, matches: normalized.matches, warnings: normalized.warnings }, perfOperation?.finish());
     return;
   }
@@ -286,8 +286,8 @@ export async function mcpGrepCodeCommand(root: string, options: McpGrepCodeOptio
       ...(options.exclude !== undefined ? { exclude: options.exclude } : {}),
       ...(parseOptionalInteger(options.max, "--max") !== undefined ? { max: parseOptionalInteger(options.max, "--max") } : {}),
     }));
-    perfOperation?.addSpan("search", { searchInvocation: normalized.perf?.searchInvocation, normalization: normalized.perf?.normalization, ripgrepMetrics: normalized.perf?.ripgrepMetrics, xrayMetrics: normalized.perf?.xrayMetrics });
-    perfOperation?.addSpan("normalize", { normalization: normalized.perf?.normalization, ripgrepMetrics: normalized.perf?.ripgrepMetrics, xrayMetrics: normalized.perf?.xrayMetrics });
+    perfOperation?.addSpan("search", buildNativeSearchPerfAttributes(normalized));
+    perfOperation?.addSpan("normalize", buildNativeSearchPerfAttributes(normalized));
     writePayload({ kind: normalized.kind, matches: normalized.matches, warnings: normalized.warnings }, perfOperation?.finish());
     return;
   }
@@ -297,6 +297,16 @@ export async function mcpGrepCodeCommand(root: string, options: McpGrepCodeOptio
     arguments: buildGrepCodeArguments(root, options),
   }));
   writeToolResponse(response, perfOperation?.finish());
+}
+
+function buildNativeSearchPerfAttributes(normalized: ReturnType<typeof normalizeSearchResult>): Record<string, unknown> {
+  return {
+    searchInvocation: normalized.perf?.searchInvocation,
+    normalization: normalized.perf?.normalization,
+    nativeSearch: normalized.perf?.searchInvocation,
+    bundledRipgrep: normalized.perf?.ripgrepMetrics,
+    ripgrepMetrics: normalized.perf?.ripgrepMetrics,
+  };
 }
 
 function writeToolResponse(response: Awaited<ReturnType<Client["callTool"]>>, perfReport?: PerfOperationReport): void {
