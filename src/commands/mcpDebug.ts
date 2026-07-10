@@ -4,7 +4,12 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { randomUUID } from "node:crypto";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { buildBackgroundRunPerfSpans, waitForBackgroundRun } from "../core/backgroundRuns.js";
 import { createPerfRecorder, type PerfOperationRecorder, type PerfOperationReport } from "../core/perf.js";
+import { buildReadTextFileSlicePerfSpans, readTextFileSlice } from "../core/readFile.js";
+import { buildRunExecutablePerfSpans, runExecutable } from "../core/runner.js";
+import { normalizeXrayResult } from "../core/search/normalize.js";
+import { buildXraySearchInvocationPerfAttributes, createXrayClient } from "../core/search/xrayClient.js";
 
 export interface McpDebugOptions {
   perf?: boolean;
@@ -67,6 +72,29 @@ export async function mcpRunCommand(tool: string, args: string[] | undefined, op
   const requestTimeoutMs = parseOptionalNumber(options.requestTimeoutMs, "--request-timeout-ms") ?? defaultDebugRequestTimeoutMs;
   const perfRecorder = createPerfRecorder(options.perf === true);
   const perfOperation = perfRecorder?.startOperation(randomUUID());
+  if (options.perf === true) {
+    const result = await runExecutable({
+      tool,
+      args: args ?? [],
+      cwd: options.cwd,
+      stdin: options.stdinFile === undefined ? options.stdin : { file: options.stdinFile },
+      timeoutMs: requestTimeoutMs,
+    });
+    for (const span of buildRunExecutablePerfSpans(result)) {
+      perfOperation?.addSpan(span.name, span.attributes);
+    }
+    writePayload({
+      ok: result.ok,
+      tool: result.tool,
+      timingMs: result.timingMs,
+      metrics: result.metrics,
+      ...(result.stdout !== undefined ? { stdout: result.stdout } : {}),
+      ...(result.stderr !== undefined ? { stderr: result.stderr } : {}),
+      ...(result.error !== undefined ? { error: result.error } : {}),
+    }, perfOperation?.finish());
+    return;
+  }
+
   const response = await withAtriumClient(async (client) => {
     perfOperation?.addSpan("mcp-run:call-tool");
     const runResponse = await client.callTool({
@@ -91,6 +119,15 @@ export async function mcpRunCommand(tool: string, args: string[] | undefined, op
 export async function mcpOperationWaitCommand(operationId: string, options: McpDebugOptions = {}): Promise<void> {
   const perfRecorder = createPerfRecorder(options.perf === true);
   const perfOperation = perfRecorder?.startOperation(randomUUID());
+  if (options.perf === true) {
+    const snapshot = await waitForBackgroundRun(operationId);
+    for (const span of buildBackgroundRunPerfSpans(snapshot)) {
+      perfOperation?.addSpan(span.name, span.attributes);
+    }
+    writePayload(snapshot, perfOperation?.finish());
+    return;
+  }
+
   const response = await withAtriumClient((client) => client.callTool({
     name: "operation-wait",
     arguments: {
@@ -103,6 +140,26 @@ export async function mcpOperationWaitCommand(operationId: string, options: McpD
 export async function mcpReadCommand(path: string, options: McpReadOptions = {}): Promise<void> {
   const perfRecorder = createPerfRecorder(options.perf === true);
   const perfOperation = perfRecorder?.startOperation(randomUUID());
+  if (options.perf === true) {
+    const input: { path: string; startLine?: number; endLine?: number } = { path };
+    const startLine = parseOptionalInteger(options.startLine, "--start-line");
+    const endLine = parseOptionalInteger(options.endLine, "--end-line");
+    if (startLine !== undefined) {
+      input.startLine = startLine;
+    }
+    if (endLine !== undefined) {
+      input.endLine = endLine;
+    }
+    const result = await readTextFileSlice(input);
+    if (result.ok) {
+      for (const span of buildReadTextFileSlicePerfSpans(result)) {
+        perfOperation?.addSpan(span.name, span.attributes);
+      }
+    }
+    writePayload(readPayload(result), perfOperation?.finish());
+    return;
+  }
+
   const response = await withAtriumClient((client) => client.callTool({
     name: "read",
     arguments: buildReadArguments(path, options),
@@ -113,6 +170,26 @@ export async function mcpReadCommand(path: string, options: McpReadOptions = {})
 export async function mcpFindFilesCommand(root: string, options: McpFindFilesOptions = {}): Promise<void> {
   const perfRecorder = createPerfRecorder(options.perf === true);
   const perfOperation = perfRecorder?.startOperation(randomUUID());
+  if (options.perf === true) {
+    const client = createXrayClient();
+    const envelope = await client.run({
+      command: "files",
+      root,
+      ...(options.glob !== undefined ? { glob: options.glob } : {}),
+      ...(parseOptionalInteger(options.max, "--max") !== undefined ? { max: parseOptionalInteger(options.max, "--max") } : {}),
+    });
+    const normalized = normalizeXrayResult(envelope, "files", buildXraySearchInvocationPerfAttributes({
+      command: "files",
+      root,
+      ...(options.glob !== undefined ? { glob: options.glob } : {}),
+      ...(parseOptionalInteger(options.max, "--max") !== undefined ? { max: parseOptionalInteger(options.max, "--max") } : {}),
+    }));
+    perfOperation?.addSpan("search", { searchInvocation: normalized.perf?.searchInvocation, normalization: normalized.perf?.normalization, xrayMetrics: normalized.perf?.xrayMetrics });
+    perfOperation?.addSpan("normalize", { normalization: normalized.perf?.normalization });
+    writePayload({ kind: normalized.kind, matches: normalized.matches, warnings: normalized.warnings }, perfOperation?.finish());
+    return;
+  }
+
   const response = await withAtriumClient((client) => client.callTool({
     name: "find-files",
     arguments: buildFindFilesArguments(root, options),
@@ -123,6 +200,26 @@ export async function mcpFindFilesCommand(root: string, options: McpFindFilesOpt
 export async function mcpGrepCommand(root: string, options: McpGrepOptions = {}): Promise<void> {
   const perfRecorder = createPerfRecorder(options.perf === true);
   const perfOperation = perfRecorder?.startOperation(randomUUID());
+  if (options.perf === true) {
+    const client = createXrayClient();
+    const envelope = await client.run({
+      command: "search",
+      root,
+      query: options.query,
+      ...(parseOptionalInteger(options.max, "--max") !== undefined ? { max: parseOptionalInteger(options.max, "--max") } : {}),
+    });
+    const normalized = normalizeXrayResult(envelope, "content", buildXraySearchInvocationPerfAttributes({
+      command: "search",
+      root,
+      query: options.query,
+      ...(parseOptionalInteger(options.max, "--max") !== undefined ? { max: parseOptionalInteger(options.max, "--max") } : {}),
+    }));
+    perfOperation?.addSpan("search", { searchInvocation: normalized.perf?.searchInvocation, normalization: normalized.perf?.normalization, xrayMetrics: normalized.perf?.xrayMetrics });
+    perfOperation?.addSpan("normalize", { normalization: normalized.perf?.normalization });
+    writePayload({ kind: normalized.kind, matches: normalized.matches, warnings: normalized.warnings }, perfOperation?.finish());
+    return;
+  }
+
   const response = await withAtriumClient((client) => client.callTool({
     name: "grep",
     arguments: buildGrepArguments(root, options),
@@ -133,6 +230,26 @@ export async function mcpGrepCommand(root: string, options: McpGrepOptions = {})
 export async function mcpGrepCodeCommand(root: string, options: McpGrepCodeOptions = {}): Promise<void> {
   const perfRecorder = createPerfRecorder(options.perf === true);
   const perfOperation = perfRecorder?.startOperation(randomUUID());
+  if (options.perf === true) {
+    const client = createXrayClient();
+    const envelope = await client.run({
+      command: "search",
+      root,
+      query: options.query,
+      ...(parseOptionalInteger(options.max, "--max") !== undefined ? { max: parseOptionalInteger(options.max, "--max") } : {}),
+    });
+    const normalized = normalizeXrayResult(envelope, "content", buildXraySearchInvocationPerfAttributes({
+      command: "search",
+      root,
+      query: options.query,
+      ...(parseOptionalInteger(options.max, "--max") !== undefined ? { max: parseOptionalInteger(options.max, "--max") } : {}),
+    }));
+    perfOperation?.addSpan("search", { searchInvocation: normalized.perf?.searchInvocation, normalization: normalized.perf?.normalization, xrayMetrics: normalized.perf?.xrayMetrics });
+    perfOperation?.addSpan("normalize", { normalization: normalized.perf?.normalization });
+    writePayload({ kind: normalized.kind, matches: normalized.matches, warnings: normalized.warnings }, perfOperation?.finish());
+    return;
+  }
+
   const response = await withAtriumClient((client) => client.callTool({
     name: "grep-code",
     arguments: buildGrepCodeArguments(root, options),
@@ -149,6 +266,11 @@ function writeToolResponse(response: Awaited<ReturnType<Client["callTool"]>>, pe
   }
 
   process.stdout.write(`${JSON.stringify(response)}\n`);
+}
+
+function writePayload(payload: unknown, perfReport?: PerfOperationReport): void {
+  const emittedPayload = attachPerf(payload, perfReport);
+  process.stdout.write(`${JSON.stringify(emittedPayload)}\n`);
 }
 
 function attachPerf(payload: unknown, perfReport: PerfOperationReport | undefined): unknown {
@@ -178,6 +300,14 @@ function buildReadArguments(path: string, options: McpReadOptions): Record<strin
     args.endLine = endLine;
   }
   return args;
+}
+
+function readPayload(result: Awaited<ReturnType<typeof readTextFileSlice>>): unknown {
+  if (result.ok) {
+    return { ok: true, path: result.path, range: result.range, meta: result.meta, content: result.content };
+  }
+
+  return { ok: false, status: result.status, path: result.path, hint: result.hint };
 }
 
 function buildFindFilesArguments(root: string, options: McpFindFilesOptions): Record<string, unknown> {

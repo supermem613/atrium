@@ -4,6 +4,7 @@ import { dirname, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 import { performance } from "node:perf_hooks";
 import { defaultInlineOutputLimitBytes, materializeOutputValue, OutputValue } from "./artifacts.js";
+import { sanitizePerfAttributes } from "./perf.js";
 import { atriumTempPath } from "./tempPaths.js";
 
 const defaultLineCount = 120;
@@ -173,6 +174,16 @@ export async function readTextFileSlice(input: ReadTextFileSliceInput): Promise<
     },
     content,
   };
+}
+
+export function buildReadTextFileSlicePerfSpans(result: ReadTextFileSliceSuccess): Array<{ name: string; attributes: Record<string, unknown> }> {
+  const timing = result.meta.timing;
+  return [
+    { name: "stat", attributes: sanitizePerfAttributes({ stat: { durationMs: timing.statMs, totalMs: timing.totalMs } }) },
+    { name: "read", attributes: sanitizePerfAttributes({ read: { durationMs: timing.readMs, bytes: result.meta.bytes } }) },
+    { name: "slice", attributes: sanitizePerfAttributes({ slice: { durationMs: timing.sliceMs, contentBytes: timing.contentBytes } }) },
+    { name: "materialize", attributes: sanitizePerfAttributes({ materialize: { durationMs: timing.materializeMs, contentBytes: timing.contentBytes } }) },
+  ];
 }
 
 function invalidArgs(path: string, hint: string): ReadTextFileSliceFailure {

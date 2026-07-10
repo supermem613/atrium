@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import type { OutputValue } from "../artifacts.js";
 import { runExecutable, type RunExecutableInput, type RunExecutableResult, type StartExecutableRunOptions } from "../runner.js";
-import type { XrayEnvelope, XrayRunOptions, XraySearchClientLike } from "./types.js";
+import type { SearchInvocationPerfAttributes, XrayEnvelope, XrayRunOptions, XraySearchClientLike } from "./types.js";
 
 export type ExecutableRunner = (input: RunExecutableInput, options?: StartExecutableRunOptions) => Promise<RunExecutableResult>;
 
@@ -43,6 +43,18 @@ export function buildXrayArgs(options: XrayRunOptions): string[] {
   return args;
 }
 
+export function buildXraySearchInvocationPerfAttributes(options: XrayRunOptions): SearchInvocationPerfAttributes {
+  return {
+    command: options.command,
+    rootHash: options.root.length > 0 ? shortHash(options.root) : undefined,
+    queryHash: options.query === undefined ? undefined : shortHash(options.query),
+    regex: options.regex === true,
+    max: options.max ?? null,
+    globCount: options.glob === undefined ? 0 : 1,
+    typeCount: 0,
+  };
+}
+
 async function readOutputValue(value: OutputValue | undefined): Promise<string> {
   if (value === undefined) {
     return "";
@@ -80,4 +92,12 @@ export function createXrayClient(runner: ExecutableRunner = runExecutable): Xray
       return envelope;
     },
   };
+}
+
+function shortHash(value: string): string {
+  let hash = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    hash = ((hash << 5) - hash + value.charCodeAt(index)) >>> 0;
+  }
+  return `h${hash.toString(16)}`;
 }

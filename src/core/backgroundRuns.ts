@@ -1,6 +1,7 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
+import { sanitizePerfAttributes } from "./perf.js";
 import { RunExecutableInput, RunningExecutable } from "./runner.js";
 import { atriumTempPath } from "./tempPaths.js";
 
@@ -147,6 +148,14 @@ export function withLongRunningDefault(input: RunExecutableInput): RunExecutable
     ...input,
     timeoutMs: input.timeoutMs ?? defaultLongRunningTimeoutMs,
   };
+}
+
+export function buildBackgroundRunPerfSpans(snapshot: BackgroundRunSnapshot | BackgroundRunWaitContinue): Array<{ name: string; attributes: Record<string, unknown> }> {
+  if (snapshot.status === "running" || snapshot.status === "continue") {
+    return [{ name: "continue", attributes: sanitizePerfAttributes({ continue: { status: snapshot.status } }) }];
+  }
+
+  return [{ name: snapshot.status, attributes: sanitizePerfAttributes({ status: snapshot.status, ok: snapshot.ok }) }];
 }
 
 async function executeBackgroundRun(record: BackgroundRunRecord, running: RunningExecutable | RunningBackgroundTask): Promise<void> {
