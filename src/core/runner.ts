@@ -23,8 +23,21 @@ export interface RunExecutableInput {
   timeoutMs?: number;
 }
 
+export interface RunningExecutableProgress {
+  stdout: string;
+  stderr: string;
+}
+
+export interface ProgressWaitRegistration {
+  promise: Promise<void>;
+  cancel(): void;
+}
+
 export interface RunningExecutable {
   startedAt: string;
+  progress: Readonly<RunningExecutableProgress>;
+  progressRevision: number;
+  waitForProgressUpdate(lastRevision: number): ProgressWaitRegistration;
   result: Promise<RunExecutableResult>;
 }
 
@@ -89,6 +102,7 @@ export interface GenericCommandMetrics {
 }
 
 const defaultTimeoutMs = 60_000;
+const defaultProgressOutputLimitBytes = 32_768;
 const resolvedToolCache = new Map<string, string>();
 
 interface SpawnAttempt {
@@ -108,6 +122,21 @@ interface PreparedSpawn {
   windowsVerbatimArguments?: boolean;
 }
 
+interface ManagedProgressWaitRegistration {
+  lastRevision: number;
+  settled: boolean;
+  resolve(): void;
+  cancel(): void;
+}
+
+interface RunningExecutableProgressTracker {
+  snapshot: RunningExecutableProgress;
+  revision: number;
+  getActiveWaitRegistrationCount(): number;
+  waitForProgressUpdate(lastRevision: number): ProgressWaitRegistration;
+  recordChunk(stream: "stdout" | "stderr", chunk: Buffer): void;
+}
+
 export async function runExecutable(input: RunExecutableInput, options: StartExecutableRunOptions = {}): Promise<RunExecutableResult> {
   const running = await startExecutableRun(input, options);
   return running.result;
@@ -118,16 +147,31 @@ export async function startExecutableRun(input: RunExecutableInput, options: Sta
   const stdin = await resolveStdinValue(input.stdin, input.cwd);
   const startedAt = Date.now();
   const startedAtIso = new Date(startedAt).toISOString();
+  const progress = createProgressTracker();
   if (input.tool.trim().length === 0) {
-    return {
+    return attachProgressWaitDebugHook({
       startedAt: startedAtIso,
+      get progress() {
+        return progress.snapshot;
+      },
+      get progressRevision() {
+        return progress.revision;
+      },
+      waitForProgressUpdate: progress.waitForProgressUpdate.bind(progress),
       result: Promise.resolve(failedBeforeSpawn(input, args, stdin, startedAt, "InvalidTool", "Tool name is required.")),
-    };
+    }, progress);
   }
 
   if (isDeniedShell(input.tool)) {
-    return {
+    return attachProgressWaitDebugHook({
       startedAt: startedAtIso,
+      get progress() {
+        return progress.snapshot;
+      },
+      get progressRevision() {
+        return progress.revision;
+      },
+      waitForProgressUpdate: progress.waitForProgressUpdate.bind(progress),
       result: Promise.resolve(failedBeforeSpawn(
         input,
         args,
@@ -136,19 +180,19 @@ export async function startExecutableRun(input: RunExecutableInput, options: Sta
         "DeniedShell",
         `${input.tool} is denied in Atrium.`,
       )),
-    };
+    }, progress);
   }
 
   const timeoutMs = options.timeoutMs ?? input.timeoutMs ?? defaultTimeoutMs;
   const result = (async (): Promise<RunExecutableResult> => {
     const permit = await acquireExecutionPermit(options.executionQueue);
     try {
-      let attempt = await spawnOnce(input, input.tool, args, stdin, timeoutMs);
+      let attempt = await spawnOnce(input, input.tool, args, stdin, timeoutMs, progress);
 
       if (attempt.spawnError !== undefined && shouldResolveAfterFailure(input.tool, attempt.spawnError)) {
         const resolved = await resolveTool(input.tool);
         if (resolved !== input.tool) {
-          attempt = await spawnOnce(input, resolved, args, stdin, timeoutMs);
+          attempt = await spawnOnce(input, resolved, args, stdin, timeoutMs, progress);
         }
       }
 
@@ -177,10 +221,17 @@ export async function startExecutableRun(input: RunExecutableInput, options: Sta
     }
   })();
 
-  return {
+  return attachProgressWaitDebugHook({
     startedAt: startedAtIso,
+    get progress() {
+      return progress.snapshot;
+    },
+    get progressRevision() {
+      return progress.revision;
+    },
+    waitForProgressUpdate: progress.waitForProgressUpdate.bind(progress),
     result,
-  };
+  }, progress);
 }
 
 async function acquireExecutionPermit(executionQueue: ExecutionQueue | false | undefined): Promise<{ metrics: ExecutionQueueMetrics; release(): void } | undefined> {
@@ -191,7 +242,7 @@ async function acquireExecutionPermit(executionQueue: ExecutionQueue | false | u
   return (executionQueue ?? defaultExecutionQueue).acquire();
 }
 
-async function spawnOnce(input: RunExecutableInput, tool: string, args: string[], stdin: string | undefined, timeoutMs: number): Promise<SpawnAttempt> {
+async function spawnOnce(input: RunExecutableInput, tool: string, args: string[], stdin: string | undefined, timeoutMs: number, progress?: RunningExecutableProgressTracker): Promise<SpawnAttempt> {
   const stdoutChunks: Buffer[] = [];
   const stderrChunks: Buffer[] = [];
   const prepared = await prepareSpawn(tool, args);
@@ -224,8 +275,18 @@ async function spawnOnce(input: RunExecutableInput, tool: string, args: string[]
   child.once("error", (error) => {
     spawnError = toErrnoException(error);
   });
-  child.stdout.on("data", (chunk: Buffer) => stdoutChunks.push(chunk));
-  child.stderr.on("data", (chunk: Buffer) => stderrChunks.push(chunk));
+  child.stdout.on("data", (chunk: Buffer) => {
+    stdoutChunks.push(chunk);
+    if (progress !== undefined) {
+      progress.recordChunk("stdout", chunk);
+    }
+  });
+  child.stderr.on("data", (chunk: Buffer) => {
+    stderrChunks.push(chunk);
+    if (progress !== undefined) {
+      progress.recordChunk("stderr", chunk);
+    }
+  });
 
   if (stdin !== undefined) {
     child.stdin.end(stdin);
@@ -254,6 +315,108 @@ async function spawnOnce(input: RunExecutableInput, tool: string, args: string[]
     timedOut,
     spawnError,
   };
+}
+
+function createProgressTracker(): RunningExecutableProgressTracker {
+  const snapshot: RunningExecutableProgress = {
+    stdout: "",
+    stderr: "",
+  };
+  let revision = 0;
+  const waiters: ManagedProgressWaitRegistration[] = [];
+
+  function removeWaiter(waiter: ManagedProgressWaitRegistration): void {
+    const index = waiters.indexOf(waiter);
+    if (index >= 0) {
+      waiters.splice(index, 1);
+    }
+  }
+
+  return {
+    get snapshot() {
+      return snapshot;
+    },
+    get revision() {
+      return revision;
+    },
+    getActiveWaitRegistrationCount(): number {
+      return waiters.length;
+    },
+    waitForProgressUpdate(lastRevision: number): ProgressWaitRegistration {
+      if (revision > lastRevision) {
+        return createResolvedProgressWaitRegistration();
+      }
+
+      let resolveWaiter!: () => void;
+      const promise = new Promise<void>((resolve) => {
+        resolveWaiter = resolve;
+      });
+      const waiter: ManagedProgressWaitRegistration = {
+        lastRevision,
+        settled: false,
+        resolve: () => {
+          if (waiter.settled) {
+            return;
+          }
+
+          waiter.settled = true;
+          removeWaiter(waiter);
+          resolveWaiter();
+        },
+        cancel: () => {
+          if (waiter.settled) {
+            return;
+          }
+
+          waiter.settled = true;
+          removeWaiter(waiter);
+        },
+      };
+
+      waiters.push(waiter);
+      return {
+        promise,
+        cancel: waiter.cancel,
+      };
+    },
+    recordChunk(stream: "stdout" | "stderr", chunk: Buffer): void {
+      const nextValue = `${snapshot[stream]}${chunk.toString("utf8")}`;
+      snapshot[stream] = truncateUtf8Output(nextValue, defaultProgressOutputLimitBytes);
+      revision += 1;
+      for (let index = waiters.length - 1; index >= 0; index -= 1) {
+        const waiter = waiters[index];
+        if (waiter.lastRevision < revision) {
+          waiter.resolve();
+        }
+      }
+    },
+  };
+}
+
+function createResolvedProgressWaitRegistration(): ProgressWaitRegistration {
+  return {
+    promise: Promise.resolve(),
+    cancel() {},
+  };
+}
+
+function attachProgressWaitDebugHook(running: RunningExecutable, tracker: RunningExecutableProgressTracker): RunningExecutable {
+  Object.defineProperty(running, "__debugActiveProgressWaitRegistrationCount", {
+    configurable: true,
+    enumerable: false,
+    value: () => tracker.getActiveWaitRegistrationCount(),
+  });
+
+  return running;
+}
+
+function truncateUtf8Output(value: string, limitBytes: number): string {
+  const bytes = Buffer.from(value, "utf8");
+  if (bytes.length <= limitBytes) {
+    return value;
+  }
+
+  return bytes.subarray(bytes.length - limitBytes).toString("utf8");
 }
 
 async function resolveArgValues(args: ArgValue[], cwd: string | undefined): Promise<string[]> {

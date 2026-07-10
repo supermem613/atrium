@@ -7,7 +7,8 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { AtriumServerOptions, createAtriumServer } from "../../src/server.js";
 import { atriumTempPath } from "../../src/core/tempPaths.js";
-import { getBackgroundRun } from "../../src/core/backgroundRuns.js";
+import { adoptBackgroundRun, getBackgroundRun, waitForBackgroundRun } from "../../src/core/backgroundRuns.js";
+import { startExecutableRun } from "../../src/core/runner.js";
 
 describe("MCP run handoff", () => {
   it("hands off a durable operation with a prescriptive operation-wait nextCheck when the command is still running past the handoff window", async () => {
@@ -91,6 +92,62 @@ describe("MCP run handoff", () => {
       assert.equal(completed.status, "completed");
       assert.equal(result.stdout, "still-running-ok");
     }, { backgroundHandoffAfterMs: 5, waitTimeoutMs: 1 });
+  });
+
+  it("operation-wait returns emitted stdout and stderr progress while the operation is still running", async () => {
+    await withInMemoryClient(async (client) => {
+      const started = await callJson(client, "run", {
+        tool: process.execPath,
+        args: [
+          "-e",
+          "process.stdout.write('progress-stdout'); process.stderr.write('progress-stderr'); setTimeout(() => {}, 500)",
+        ],
+      });
+      assertString(started.operationId);
+
+      const deadline = Date.now() + 5_000;
+      let pending: Record<string, unknown> | undefined;
+      while (Date.now() < deadline) {
+        pending = await callJson(client, "operation-wait", { operationId: started.operationId });
+        if (pending.status === "continue") {
+          const stdout = typeof pending.stdout === "string" ? pending.stdout : "";
+          const stderr = typeof pending.stderr === "string" ? pending.stderr : "";
+          if (stdout.includes("progress-stdout") && stderr.includes("progress-stderr")) {
+            break;
+          }
+        }
+        await setImmediate();
+      }
+
+      assert.ok(pending, "expected operation-wait to return a snapshot");
+      assert.equal(pending.ok, true);
+      assert.equal(pending.status, "continue");
+      assert.equal(typeof pending.stdout === "string" && pending.stdout.includes("progress-stdout"), true);
+      assert.equal(typeof pending.stderr === "string" && pending.stderr.includes("progress-stderr"), true);
+
+      const completed = await waitForOperation(client, started.operationId);
+      const result = completed.result;
+      assertRecord(result);
+      assert.equal(completed.status, "completed");
+      assert.equal(result.stdout, "progress-stdout");
+      assert.equal(result.stderr, "progress-stderr");
+    }, { backgroundHandoffAfterMs: 5, waitTimeoutMs: 1 });
+  });
+
+  it("cancels abandoned progress wait registrations when a bounded wait times out", async () => {
+    const running = await startExecutableRun({
+      tool: process.execPath,
+      args: ["-e", "setTimeout(() => {}, 1_000)"],
+    });
+    const debugHandle = running as unknown as { __debugActiveProgressWaitRegistrationCount: () => number };
+    assert.equal(debugHandle.__debugActiveProgressWaitRegistrationCount(), 0);
+
+    const handle = await adoptBackgroundRun(running);
+    const waited = await waitForBackgroundRun(handle.operationId, { requestSafeWaitMs: 1 });
+
+    assert.equal(waited.ok, true);
+    assert.equal(waited.status, "continue");
+    assert.equal(debugHandle.__debugActiveProgressWaitRegistrationCount(), 0);
   });
 
   it("operation-wait recovers a persisted operation snapshot when the run is not in memory", async () => {
