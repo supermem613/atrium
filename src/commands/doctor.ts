@@ -1,3 +1,5 @@
+import { existsSync } from "node:fs";
+import { createRequire } from "node:module";
 import chalk from "chalk";
 
 // CheckResult shape is the convention across rotunda/reflux/kash/sp-tools.
@@ -8,6 +10,8 @@ export interface CheckResult {
   detail: string;
   hint?: string;
 }
+
+const require = createRequire(import.meta.url);
 
 function checkNode(): CheckResult {
   const major = parseInt(process.versions.node.split(".")[0], 10);
@@ -22,9 +26,34 @@ function checkNode(): CheckResult {
   return { name: "node", ok: true, detail: `Node ${process.versions.node}` };
 }
 
+function checkBundledRipgrep(): CheckResult {
+  try {
+    const mod = require("@vscode/ripgrep") as { rgPath?: string };
+    const rgPath = typeof mod.rgPath === "string" && mod.rgPath.length > 0 ? mod.rgPath : null;
+
+    if (rgPath && existsSync(rgPath)) {
+      return {
+        name: "bundled-ripgrep",
+        ok: true,
+        detail: `bundled ripgrep resolved and healthy at ${rgPath}`,
+      };
+    }
+  } catch {
+    // fall through to failure result below
+  }
+
+  return {
+    name: "bundled-ripgrep",
+    ok: false,
+    detail: "bundled ripgrep not resolved",
+    hint: "Install the @vscode/ripgrep runtime dependency.",
+  };
+}
+
 async function runChecks(): Promise<CheckResult[]> {
   return [
     checkNode(),
+    checkBundledRipgrep(),
     // Add more checks here. Pattern: each check is a pure function returning
     // CheckResult. Failures should always carry a `hint` with remediation.
   ];
