@@ -132,6 +132,34 @@ export interface ContentSearchInvocation {
   metrics?: ContentSearchRunMetrics;
 }
 
+export interface NativeFileSearchInvocation {
+  paths: string[];
+  warnings?: string[];
+  timedOut?: boolean;
+  truncated?: boolean;
+}
+
+export interface NativeFileSearchRunner {
+  (args: string[], options: { cwd: string; timeoutMs: number; max: number }): Promise<NativeFileSearchInvocation>;
+}
+
+export interface NativeFileSearchOptions {
+  root: string;
+  max?: number;
+  timeoutMs?: number;
+  globs?: string[];
+  excludes?: string[];
+  all?: boolean;
+  runner?: NativeFileSearchRunner;
+}
+
+export interface NativeFileSearchResult {
+  kind: "files";
+  matches: SearchFileMatch[];
+  warnings: string[];
+  perf?: SearchPerfMetadata;
+}
+
 export interface ContentSearchOptions {
   query: string;
   root: string;
