@@ -5,13 +5,9 @@ import { once } from "node:events";
 import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { performance } from "node:perf_hooks";
+import { pathToFileURL } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-
-const iterations = Number.parseInt(readFlag("--iterations") ?? "10", 10);
-const warmup = Number.parseInt(readFlag("--warmup") ?? "2", 10);
-const cwd = readFlag("--cwd") ?? process.cwd();
-const command = readFlag("--command") ?? "node-version";
 
 const commands = {
   "node-version": {
@@ -26,62 +22,217 @@ const commands = {
   },
 };
 
-if (!Number.isFinite(iterations) || iterations <= 0) {
-  throw new Error("--iterations must be a positive number");
-}
-
-if (!Number.isFinite(warmup) || warmup < 0) {
-  throw new Error("--warmup must be zero or a positive number");
-}
-
-const selected = commands[command];
-if (selected === undefined) {
-  throw new Error(`Unknown --command ${command}. Known commands: ${Object.keys(commands).join(", ")}`);
-}
-
-const directTool = await resolveForDirect(selected.tool);
-const client = new Client({ name: "atrium-benchmark", version: "0.0.0" });
-const transport = new StdioClientTransport({
-  command: "node",
-  args: ["dist/server.js"],
-  cwd,
-  stderr: "pipe",
-});
-
-await client.connect(transport);
-
-try {
-  const result = {
-    command,
-    iterations,
-    warmup,
-    cwd,
-    directTool: directTool.command,
-    directArgsPrefix: directTool.argsPrefix,
-    timestamp: new Date().toISOString(),
-    cases: {
-      directExecutable: await measure("directExecutable", warmup, iterations, () => runProcess(directTool.command, [...directTool.argsPrefix, ...selected.args], { cwd })),
-      powershellWrapped: await measure("powershellWrapped", warmup, iterations, () => runProcess("pwsh", ["-NoProfile", "-Command", selected.shellCommand], { cwd })),
-      atriumMcp: await measure("atriumMcp", warmup, iterations, async () => {
-        const response = await client.callTool({
-          name: "run",
-          arguments: {
-            tool: selected.tool,
-            args: selected.args,
-            cwd,
-          },
-        });
-        const payload = JSON.parse(response.content[0].text);
-        if (!payload.ok) {
-          throw new Error(`atrium.run failed: ${JSON.stringify(payload.error)}`);
-        }
-      }),
+export function buildSpeedifyCompatiblePerfReport({
+  operationName,
+  operationId,
+  startedAt,
+  endedAt,
+  durationMs,
+  elapsedMs,
+  concurrency = 1,
+  ok = true,
+  timings = {},
+  perOperation = {},
+}) {
+  const normalizedStartedAt = startedAt ?? new Date(0).toISOString();
+  const normalizedEndedAt = endedAt ?? new Date(startedAt ?? Date.now()).toISOString();
+  const normalizedDurationMs = toFiniteNumber(durationMs ?? elapsedMs ?? 0);
+  const normalizedElapsedMs = toFiniteNumber(elapsedMs ?? normalizedDurationMs);
+  const normalizedTimings = typeof timings === "object" && timings !== null ? timings : { totalMs: normalizedElapsedMs };
+  const normalizedPerOperation = typeof perOperation === "object" && perOperation !== null ? perOperation : {};
+  return {
+    operationId: operationId ?? `operation-${Date.now().toString(36)}`,
+    startedAt: normalizedStartedAt,
+    endedAt: normalizedEndedAt,
+    durationMs: normalizedDurationMs,
+    elapsedMs: normalizedElapsedMs,
+    concurrency,
+    cases: [{
+      name: operationName,
+      ok,
+      elapsedMs: normalizedElapsedMs,
+      timings: normalizedTimings,
+    }],
+    totals: {
+      pass: ok ? 1 : 0,
+      fail: ok ? 0 : 1,
     },
+    perOperation: {
+      ...normalizedPerOperation,
+      [operationName]: {
+        elapsedMs: normalizedElapsedMs,
+        ok,
+        timings: normalizedTimings,
+      },
+    },
+    status: ok ? "pass" : "fail",
   };
+}
 
-  process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
-} finally {
-  await client.close();
+const allVerbSuiteVerbNames = ["schema", "run", "operation-wait", "read", "find-files", "grep", "grep-code"];
+
+// Benchmark-owned aggregate report: used by all-verb benchmark suites, while CLI --perf stays per-operation.
+export async function runAllVerbBenchmarkSuite(request = {}) {
+  const suite = typeof request.suite === "string" && request.suite.length > 0 ? request.suite : "all-verbs";
+  const verbs = Array.isArray(request.verbs) && request.verbs.length > 0 ? request.verbs : allVerbSuiteVerbNames;
+  const fixtureData = isRecord(request.fixtureData) ? request.fixtureData : {};
+  const operationRunners = isRecord(request.operationRunners) ? request.operationRunners : {};
+  const now = typeof request.now === "function" ? request.now : () => performance.now();
+  const cases = [];
+  const perOperation = {};
+  const startedAt = new Date().toISOString();
+  const suiteStartedAt = now();
+  let passCount = 0;
+  let failCount = 0;
+
+  for (const verb of verbs) {
+    let result = {};
+    let ok = true;
+    const runner = operationRunners[verb];
+    const operationStartedAt = now();
+
+    if (typeof runner === "function") {
+      try {
+        result = (await runner({
+          fixtureData,
+          verb,
+          suite,
+          operationId: fixtureData.operationId ?? `${suite}-${verb}`,
+        })) ?? {};
+      } catch (error) {
+        ok = false;
+        result = {
+          error: error instanceof Error ? error.message : String(error),
+        };
+      }
+    } else {
+      ok = false;
+      result = {
+        error: `missing operation runner for ${verb}`,
+      };
+    }
+    const operationElapsedMs = Math.max(0, now() - operationStartedAt);
+
+    if (typeof result.ok === "boolean") {
+      ok = result.ok;
+    }
+
+    const timings = {
+      totalMs: operationElapsedMs,
+      runnerMs: operationElapsedMs,
+    };
+    const cliPerfDetail = isRecord(result.perf) ? result.perf : undefined;
+    const caseEntry = {
+      name: verb,
+      ok,
+      elapsedMs: operationElapsedMs,
+      timings,
+      ...(cliPerfDetail === undefined ? {} : { cliPerf: cliPerfDetail }),
+    };
+    cases.push(caseEntry);
+    perOperation[verb] = {
+      elapsedMs: operationElapsedMs,
+      ok,
+      timings,
+      ...(cliPerfDetail === undefined ? {} : { cliPerf: cliPerfDetail }),
+    };
+
+    if (ok) {
+      passCount += 1;
+    } else {
+      failCount += 1;
+    }
+  }
+  const elapsedMs = Math.max(0, now() - suiteStartedAt);
+
+  return {
+    suite,
+    operationId: fixtureData.operationId ?? `${suite}-aggregate`,
+    startedAt,
+    endedAt: new Date().toISOString(),
+    durationMs: elapsedMs,
+    elapsedMs,
+    concurrency: 1,
+    cases,
+    totals: {
+      pass: passCount,
+      fail: failCount,
+    },
+    perOperation,
+    status: failCount === 0 ? "pass" : "fail",
+  };
+}
+
+function isRecord(value) {
+  return typeof value === "object" && value !== null;
+}
+
+
+export async function runBenchmarkScript(options = {}) {
+  const {
+    iterations = Number.parseInt(readFlag("--iterations") ?? "10", 10),
+    warmup = Number.parseInt(readFlag("--warmup") ?? "2", 10),
+    cwd = readFlag("--cwd") ?? process.cwd(),
+    command = readFlag("--command") ?? "node-version",
+  } = options;
+
+  if (!Number.isFinite(iterations) || iterations <= 0) {
+    throw new Error("--iterations must be a positive number");
+  }
+
+  if (!Number.isFinite(warmup) || warmup < 0) {
+    throw new Error("--warmup must be zero or a positive number");
+  }
+
+  const selected = commands[command];
+  if (selected === undefined) {
+    throw new Error(`Unknown --command ${command}. Known commands: ${Object.keys(commands).join(", ")}`);
+  }
+
+  const directTool = await resolveForDirect(selected.tool);
+  const client = new Client({ name: "atrium-benchmark", version: "0.0.0" });
+  const transport = new StdioClientTransport({
+    command: "node",
+    args: ["dist/server.js"],
+    cwd,
+    stderr: "pipe",
+  });
+
+  await client.connect(transport);
+
+  try {
+    const result = {
+      command,
+      iterations,
+      warmup,
+      cwd,
+      directTool: directTool.command,
+      directArgsPrefix: directTool.argsPrefix,
+      timestamp: new Date().toISOString(),
+      cases: {
+        directExecutable: await measure("directExecutable", warmup, iterations, () => runProcess(directTool.command, [...directTool.argsPrefix, ...selected.args], { cwd })),
+        powershellWrapped: await measure("powershellWrapped", warmup, iterations, () => runProcess("pwsh", ["-NoProfile", "-Command", selected.shellCommand], { cwd })),
+        atriumMcp: await measure("atriumMcp", warmup, iterations, async () => {
+          const response = await client.callTool({
+            name: "run",
+            arguments: {
+              tool: selected.tool,
+              args: selected.args,
+              cwd,
+            },
+          });
+          const payload = JSON.parse(response.content[0].text);
+          if (!payload.ok) {
+            throw new Error(`atrium.run failed: ${JSON.stringify(payload.error)}`);
+          }
+        }),
+      },
+    };
+
+    return result;
+  } finally {
+    await client.close();
+  }
 }
 
 async function measure(name, warmupCount, iterationCount, fn) {
@@ -179,6 +330,13 @@ function round(value) {
   return Math.round(value * 10) / 10;
 }
 
+function toFiniteNumber(value) {
+  if (!Number.isFinite(value)) {
+    return 0;
+  }
+  return value;
+}
+
 function readFlag(name) {
   const index = process.argv.indexOf(name);
   if (index === -1) {
@@ -186,4 +344,16 @@ function readFlag(name) {
   }
 
   return process.argv[index + 1];
+}
+
+async function main() {
+  const result = await runBenchmarkScript();
+  process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+}
+
+if (process.argv[1] !== undefined && pathToFileURL(process.argv[1]).href === import.meta.url) {
+  main().catch((error) => {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exit(1);
+  });
 }

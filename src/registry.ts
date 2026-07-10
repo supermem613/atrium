@@ -95,21 +95,27 @@ export const commandSpecs: CommandSpec[] = [
   },
   {
     path: ["mcp-schema"],
-    summary: "Call Atrium's MCP schema tool through a local MCP client.",
+    summary: "Investigate an MCP schema call locally; rerun through the Atrium CLI with --perf for a CLI-only detailed trace.",
     effect: "read",
     input: {
       positionals: ["tool"],
-      flags: [],
+      flags: [
+        {
+          name: "--perf",
+          type: "boolean",
+          summary: "Emit a CLI-only detailed report for this single CLI rerun. Normal MCP responses stay token-light.",
+        },
+      ],
     },
     output: {
       documented: true,
       schema: "AtriumMcpSchemaResult",
     },
-    examples: ["mcp-schema node"],
+    examples: ["mcp-schema node", "mcp-schema node --perf"],
   },
   {
     path: ["mcp-run"],
-    summary: "Call Atrium's MCP run tool through a local MCP client.",
+    summary: "Investigate an MCP run call locally; rerun through the Atrium CLI with --perf for a CLI-only detailed trace.",
     effect: "local",
     input: {
       positionals: ["tool", "args"],
@@ -130,6 +136,11 @@ export const commandSpecs: CommandSpec[] = [
           summary: "Read stdin content from a UTF-8 file.",
         },
         {
+          name: "--perf",
+          type: "boolean",
+          summary: "Emit a CLI-only detailed report for this single CLI rerun. Normal MCP responses stay token-light.",
+        },
+        {
           name: "--request-timeout-ms",
           type: "number",
           summary: "MCP client request timeout in milliseconds for the local debug client.",
@@ -140,21 +151,192 @@ export const commandSpecs: CommandSpec[] = [
       documented: true,
       schema: "AtriumRunResultV2",
     },
-    examples: ["mcp-run node -- --version", "mcp-run node -- -e \"setTimeout(() => console.log('done'), 90000)\""],
+    examples: ["mcp-run node --perf -- --version", "mcp-run node --perf -- -e \"setTimeout(() => console.log('done'), 90000)\""],
   },
   {
     path: ["mcp-operation-wait"],
-    summary: "Wait for a durable MCP operation by operation id.",
+    summary: "Investigate a durable MCP operation wait locally; rerun through the Atrium CLI with --perf for a CLI-only detailed trace.",
     effect: "read",
     input: {
       positionals: ["operationId"],
-      flags: [],
+      flags: [
+        {
+          name: "--perf",
+          type: "boolean",
+          summary: "Emit a CLI-only detailed report for this single CLI rerun. Normal MCP responses stay token-light.",
+        },
+      ],
     },
     output: {
       documented: true,
       schema: "AtriumOperationWaitResult",
     },
-    examples: ["mcp-operation-wait atrium-mabc1234-00000000-0000-0000-0000-000000000000"],
+    examples: ["mcp-operation-wait atrium-mabc1234-00000000-0000-0000-0000-000000000000", "mcp-operation-wait atrium-mabc1234-00000000-0000-0000-0000-000000000000 --perf"],
+  },
+  {
+    path: ["mcp-read"],
+    summary: "Investigate an MCP read call locally; rerun through the Atrium CLI with --perf for a CLI-only detailed trace.",
+    effect: "read",
+    input: {
+      positionals: ["path"],
+      flags: [
+        {
+          name: "--start-line",
+          type: "number",
+          summary: "1-based line number to start the read window.",
+        },
+        {
+          name: "--end-line",
+          type: "number",
+          summary: "1-based line number to end the read window.",
+        },
+        {
+          name: "--perf",
+          type: "boolean",
+          summary: "Emit a CLI-only detailed report for this single CLI rerun. Normal MCP responses stay token-light.",
+        },
+      ],
+    },
+    output: {
+      documented: true,
+      schema: "AtriumReadResult",
+    },
+    examples: ["mcp-read /tmp/file.txt --start-line 2 --end-line 3", "mcp-read /tmp/file.txt --perf"],
+  },
+  {
+    path: ["mcp-find-files"],
+    summary: "Investigate an MCP find-files call locally; rerun through the Atrium CLI with --perf for a CLI-only detailed trace.",
+    effect: "read",
+    input: {
+      positionals: ["root"],
+      flags: [
+        {
+          name: "--glob",
+          type: "string",
+          summary: "Glob pattern to match files.",
+        },
+        {
+          name: "--exclude",
+          type: "string",
+          summary: "Glob pattern to exclude.",
+        },
+        {
+          name: "--max",
+          type: "number",
+          summary: "Maximum number of matches to return.",
+        },
+        {
+          name: "--perf",
+          type: "boolean",
+          summary: "Emit a CLI-only detailed report for this single CLI rerun. Normal MCP responses stay token-light.",
+        },
+      ],
+    },
+    output: {
+      documented: true,
+      schema: "AtriumFindFilesResult",
+    },
+    examples: ["mcp-find-files /tmp --glob \"**/*.txt\" --max 5", "mcp-find-files /tmp --perf"],
+  },
+  {
+    path: ["mcp-grep"],
+    summary: "Investigate an MCP grep call locally; rerun through the Atrium CLI with --perf for a CLI-only detailed trace.",
+    effect: "read",
+    input: {
+      positionals: ["root"],
+      flags: [
+        {
+          name: "--query",
+          type: "string",
+          summary: "Query string to search for.",
+        },
+        {
+          name: "--queries",
+          type: "string",
+          summary: "One or more query strings to match.",
+        },
+        {
+          name: "--regex",
+          type: "boolean",
+          summary: "Treat query patterns as regular expressions.",
+        },
+        {
+          name: "--glob",
+          type: "string",
+          summary: "Glob pattern to constrain the search.",
+        },
+        {
+          name: "--exclude",
+          type: "string",
+          summary: "Glob pattern to exclude.",
+        },
+        {
+          name: "--max",
+          type: "number",
+          summary: "Maximum number of matches to return.",
+        },
+        {
+          name: "--perf",
+          type: "boolean",
+          summary: "Emit a CLI-only detailed report for this single CLI rerun. Normal MCP responses stay token-light.",
+        },
+      ],
+    },
+    output: {
+      documented: true,
+      schema: "AtriumGrepResult",
+    },
+    examples: ["mcp-grep /tmp --query alpha --max 5", "mcp-grep /tmp --perf"],
+  },
+  {
+    path: ["mcp-grep-code"],
+    summary: "Investigate an MCP grep-code call locally; rerun through the Atrium CLI with --perf for a CLI-only detailed trace.",
+    effect: "read",
+    input: {
+      positionals: ["root"],
+      flags: [
+        {
+          name: "--query",
+          type: "string",
+          summary: "Query string to search for.",
+        },
+        {
+          name: "--queries",
+          type: "string",
+          summary: "One or more query strings to match.",
+        },
+        {
+          name: "--regex",
+          type: "boolean",
+          summary: "Treat query patterns as regular expressions.",
+        },
+        {
+          name: "--glob",
+          type: "string",
+          summary: "Glob pattern to constrain the search.",
+        },
+        {
+          name: "--exclude",
+          type: "string",
+          summary: "Glob pattern to exclude.",
+        },
+        {
+          name: "--max",
+          type: "number",
+          summary: "Maximum number of matches to return.",
+        },
+        {
+          name: "--perf",
+          type: "boolean",
+          summary: "Emit a CLI-only detailed report for this single CLI rerun. Normal MCP responses stay token-light.",
+        },
+      ],
+    },
+    output: {
+      documented: true,
+      schema: "AtriumGrepCodeResult",
+    },
+    examples: ["mcp-grep-code /tmp --query alpha --max 5", "mcp-grep-code /tmp --perf"],
   },
   {
     path: ["update"],

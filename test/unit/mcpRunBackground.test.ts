@@ -1,7 +1,7 @@
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
 import { setImmediate } from "node:timers/promises";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
@@ -185,10 +185,66 @@ describe("MCP run handoff", () => {
 
     const snapshot = await getBackgroundRun(operationId);
     assert.equal(snapshot.ok, true);
-    assert.equal(snapshot.status, "completed");
+    assert.equal(snapshot.status, "completed", JSON.stringify(snapshot));
     assert.equal(snapshot.operationId, operationId);
     assertRecord(snapshot.result);
     assert.equal(snapshot.result.stdout, "ok");
+  });
+
+  it("operation-wait observes a persisted operation completing during the bounded wait", async () => {
+    const operationId = "atrium-test-persisted-transition";
+    const directory = atriumTempPath("background-runs", operationId);
+    const resultPath = join(directory, "result.json");
+    await mkdir(directory, { recursive: true });
+    const running = {
+      ok: true,
+      status: "running",
+      operationId,
+      resultPath,
+      startedAt: "2026-01-01T00:00:00.000Z",
+    };
+    await writeFile(resultPath, `${JSON.stringify(running)}\n`, "utf8");
+
+    const waiting = waitForBackgroundRun(operationId, { requestSafeWaitMs: 1_000 });
+    await setImmediate();
+    const completed = {
+      ...running,
+      status: "completed",
+      completedAt: "2026-01-01T00:00:01.000Z",
+      result: { ok: true },
+    };
+    const replacementPath = `${resultPath}.next`;
+    const previousPath = `${resultPath}.previous`;
+    await rm(previousPath, { force: true });
+    await writeFile(replacementPath, `${JSON.stringify(completed)}\n`, "utf8");
+    await rename(resultPath, previousPath);
+    await rename(replacementPath, resultPath);
+
+    const snapshot = await waiting;
+    assert.equal(snapshot.status, "completed", JSON.stringify(snapshot));
+    assert.equal(snapshot.operationId, operationId);
+    await rm(previousPath, { force: true });
+  });
+
+  it("recovers the last valid snapshot when replacement was interrupted", async () => {
+    const operationId = "atrium-test-interrupted-replacement";
+    const directory = atriumTempPath("background-runs", operationId);
+    const resultPath = join(directory, "result.json");
+    await mkdir(directory, { recursive: true });
+    await rm(resultPath, { force: true });
+    await writeFile(`${resultPath}.previous`, `${JSON.stringify({
+      ok: true,
+      status: "completed",
+      operationId,
+      resultPath,
+      startedAt: "2026-01-01T00:00:00.000Z",
+      completedAt: "2026-01-01T00:00:01.000Z",
+      result: { ok: true },
+    })}\n`, "utf8");
+
+    const snapshot = await getBackgroundRun(operationId);
+    assert.equal(snapshot.status, "completed");
+    assert.equal(snapshot.operationId, operationId);
   });
 
   it("internal recovery supports legacy persisted snapshots that only contain runId", async () => {

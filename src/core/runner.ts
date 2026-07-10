@@ -5,6 +5,7 @@ import { access, readFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { defaultInlineOutputLimitBytes, materializeRunOutput, OutputValue } from "./artifacts.js";
 import { defaultExecutionQueue, ExecutionQueue, ExecutionQueueMetrics } from "./executionQueue.js";
+import { sanitizePerfAttributes } from "./perf.js";
 import { isDeniedShell } from "./shells.js";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 
@@ -735,6 +736,51 @@ function shapeArg(args: string[], arg: string, index: number): string {
 
 function normalizeToolName(tool: string): string {
   return (tool.split(/[\\/]/u).pop() ?? tool).replace(/\.(cmd|exe|bat|js)$/iu, "");
+}
+
+export function buildRunExecutablePerfSpans(result: RunExecutableResult): Array<{ name: string; attributes: Record<string, unknown> }> {
+  const metrics = result.metrics;
+  return [
+    {
+      name: "queue",
+      attributes: sanitizePerfAttributes({
+        queue: {
+          waitMs: metrics.queueWaitMs ?? null,
+          depthAtEnqueue: metrics.queueDepthAtEnqueue ?? null,
+          activeAtEnqueue: metrics.queueActiveAtEnqueue ?? null,
+          activeAtStart: metrics.queueActiveAtStart ?? null,
+          limit: metrics.queueLimit ?? null,
+        },
+      }),
+    },
+    {
+      name: "spawn",
+      attributes: sanitizePerfAttributes({
+        spawn: {
+          childTool: metrics.childTool,
+          exitCode: metrics.exitCode,
+          signal: metrics.signal,
+          timedOut: metrics.timedOut,
+          durationMs: metrics.durationMs,
+        },
+      }),
+    },
+    {
+      name: "materialize",
+      attributes: sanitizePerfAttributes({
+        materialize: {
+          stdoutBytes: metrics.stdoutBytes,
+          stderrBytes: metrics.stderrBytes,
+          stdinBytes: metrics.stdinBytes,
+          durationMs: metrics.durationMs,
+        },
+      }),
+    },
+    {
+      name: "semantic",
+      attributes: sanitizePerfAttributes({ semantic: metrics.semantic ?? null }),
+    },
+  ];
 }
 
 function shortHash(value: string): string {

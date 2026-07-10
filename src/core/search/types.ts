@@ -8,16 +8,45 @@ export interface SearchFileMatch {
   path: string;
 }
 
+export interface SearchInvocationPerfAttributes {
+  command: string;
+  rootHash?: string;
+  queryHash?: string;
+  regex: boolean;
+  max: number | null;
+  globCount: number;
+  typeCount: number;
+}
+
+export interface SearchNormalizationPerfAttributes {
+  kind: "content" | "files";
+  matchCount: number;
+}
+
+export interface XrayMetricsPerfAttributes {
+  elapsedMs?: number;
+  filesScanned?: number;
+  matchesReturned?: number;
+}
+
+export interface SearchPerfMetadata {
+  searchInvocation?: SearchInvocationPerfAttributes;
+  normalization?: SearchNormalizationPerfAttributes;
+  xrayMetrics?: XrayMetricsPerfAttributes;
+}
+
 export interface NormalizedContentResult {
   kind: "content";
   matches: SearchContentMatch[];
   warnings: string[];
+  perf?: SearchPerfMetadata;
 }
 
 export interface NormalizedFilesResult {
   kind: "files";
   matches: SearchFileMatch[];
   warnings: string[];
+  perf?: SearchPerfMetadata;
 }
 
 export type NormalizedSearchResult = NormalizedContentResult | NormalizedFilesResult;
@@ -46,6 +75,7 @@ export interface XrayEnvelope {
   warnings?: string[];
   error?: string;
   hint?: string;
+  metrics?: unknown;
 }
 
 export interface XrayRunOptions {
