@@ -95,7 +95,7 @@ export const commandSpecs: CommandSpec[] = [
   },
   {
     path: ["mcp-schema"],
-    summary: "Call Atrium's MCP schema tool through a local MCP client.",
+    summary: "Investigate an MCP schema call locally; rerun through the Atrium CLI with --perf for a CLI-only detailed trace.",
     effect: "read",
     input: {
       positionals: ["tool"],
@@ -103,7 +103,7 @@ export const commandSpecs: CommandSpec[] = [
         {
           name: "--perf",
           type: "boolean",
-          summary: "Emit a CLI-only perf report for the local debug call. Does not change MCP tool responses.",
+          summary: "Emit a CLI-only detailed report for this single CLI rerun. Normal MCP responses stay token-light.",
         },
       ],
     },
@@ -115,7 +115,7 @@ export const commandSpecs: CommandSpec[] = [
   },
   {
     path: ["mcp-run"],
-    summary: "Call Atrium's MCP run tool through a local MCP client.",
+    summary: "Investigate an MCP run call locally; rerun through the Atrium CLI with --perf for a CLI-only detailed trace.",
     effect: "local",
     input: {
       positionals: ["tool", "args"],
@@ -138,7 +138,7 @@ export const commandSpecs: CommandSpec[] = [
         {
           name: "--perf",
           type: "boolean",
-          summary: "Emit a CLI-only perf report for the local debug run. Does not change MCP tool responses.",
+          summary: "Emit a CLI-only detailed report for this single CLI rerun. Normal MCP responses stay token-light.",
         },
         {
           name: "--request-timeout-ms",
@@ -151,11 +151,11 @@ export const commandSpecs: CommandSpec[] = [
       documented: true,
       schema: "AtriumRunResultV2",
     },
-    examples: ["mcp-run node -- --version", "mcp-run node -- -e \"setTimeout(() => console.log('done'), 90000)\""],
+    examples: ["mcp-run node --perf -- --version", "mcp-run node --perf -- -e \"setTimeout(() => console.log('done'), 90000)\""],
   },
   {
     path: ["mcp-operation-wait"],
-    summary: "Wait for a durable MCP operation by operation id.",
+    summary: "Investigate a durable MCP operation wait locally; rerun through the Atrium CLI with --perf for a CLI-only detailed trace.",
     effect: "read",
     input: {
       positionals: ["operationId"],
@@ -163,7 +163,7 @@ export const commandSpecs: CommandSpec[] = [
         {
           name: "--perf",
           type: "boolean",
-          summary: "Emit a CLI-only perf report for the local debug call. Does not change MCP tool responses.",
+          summary: "Emit a CLI-only detailed report for this single CLI rerun. Normal MCP responses stay token-light.",
         },
       ],
     },
@@ -175,7 +175,7 @@ export const commandSpecs: CommandSpec[] = [
   },
   {
     path: ["mcp-read"],
-    summary: "Call Atrium's MCP read tool through a local MCP client.",
+    summary: "Investigate an MCP read call locally; rerun through the Atrium CLI with --perf for a CLI-only detailed trace.",
     effect: "read",
     input: {
       positionals: ["path"],
@@ -193,7 +193,7 @@ export const commandSpecs: CommandSpec[] = [
         {
           name: "--perf",
           type: "boolean",
-          summary: "Emit a CLI-only perf report for the local debug call. Does not change MCP tool responses.",
+          summary: "Emit a CLI-only detailed report for this single CLI rerun. Normal MCP responses stay token-light.",
         },
       ],
     },
@@ -205,7 +205,7 @@ export const commandSpecs: CommandSpec[] = [
   },
   {
     path: ["mcp-find-files"],
-    summary: "Call Atrium's MCP find-files tool through a local MCP client.",
+    summary: "Investigate an MCP find-files call locally; rerun through the Atrium CLI with --perf for a CLI-only detailed trace.",
     effect: "read",
     input: {
       positionals: ["root"],
@@ -223,7 +223,7 @@ export const commandSpecs: CommandSpec[] = [
         {
           name: "--perf",
           type: "boolean",
-          summary: "Emit a CLI-only perf report for the local debug call. Does not change MCP tool responses.",
+          summary: "Emit a CLI-only detailed report for this single CLI rerun. Normal MCP responses stay token-light.",
         },
       ],
     },
@@ -235,7 +235,7 @@ export const commandSpecs: CommandSpec[] = [
   },
   {
     path: ["mcp-grep"],
-    summary: "Call Atrium's MCP grep tool through a local MCP client.",
+    summary: "Investigate an MCP grep call locally; rerun through the Atrium CLI with --perf for a CLI-only detailed trace.",
     effect: "read",
     input: {
       positionals: ["root"],
@@ -253,7 +253,7 @@ export const commandSpecs: CommandSpec[] = [
         {
           name: "--perf",
           type: "boolean",
-          summary: "Emit a CLI-only perf report for the local debug call. Does not change MCP tool responses.",
+          summary: "Emit a CLI-only detailed report for this single CLI rerun. Normal MCP responses stay token-light.",
         },
       ],
     },
@@ -265,7 +265,7 @@ export const commandSpecs: CommandSpec[] = [
   },
   {
     path: ["mcp-grep-code"],
-    summary: "Call Atrium's MCP grep-code tool through a local MCP client.",
+    summary: "Investigate an MCP grep-code call locally; rerun through the Atrium CLI with --perf for a CLI-only detailed trace.",
     effect: "read",
     input: {
       positionals: ["root"],
@@ -283,7 +283,7 @@ export const commandSpecs: CommandSpec[] = [
         {
           name: "--perf",
           type: "boolean",
-          summary: "Emit a CLI-only perf report for the local debug call. Does not change MCP tool responses.",
+          summary: "Emit a CLI-only detailed report for this single CLI rerun. Normal MCP responses stay token-light.",
         },
       ],
     },

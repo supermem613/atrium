@@ -60,56 +60,56 @@ program
 
 program
   .command("mcp-schema <tool>")
-  .description("Debug Atrium MCP by calling the schema tool through a local MCP client")
-  .option("--perf", "Emit a CLI-only perf report for the local debug call. Does not change MCP tool responses")
+  .description("Investigate an MCP schema call locally; rerun with --perf for a CLI-only detailed trace")
+  .option("--perf", "Emit a CLI-only detailed report for this single CLI rerun. Normal MCP responses stay token-light")
   .action((tool: string, options: McpDebugOptions) => mcpSchemaCommand(tool, options));
 
 program
   .command("mcp-run <tool> [args...]")
-  .description("Debug Atrium MCP by calling the run tool through a local MCP client")
+  .description("Investigate an MCP run call locally; rerun with --perf for a CLI-only detailed trace")
   .option("--cwd <path>", "Working directory for the command")
   .option("--stdin <text>", "stdin content to pass to the command")
   .option("--stdin-file <path>", "Read stdin content from a UTF-8 file")
   .option("--request-timeout-ms <ms>", "MCP client request timeout in milliseconds. Debug command only")
-  .option("--perf", "Emit a CLI-only perf report for the local debug run. Does not change MCP tool responses")
+  .option("--perf", "Emit a CLI-only detailed report for this single CLI rerun. Normal MCP responses stay token-light")
   .action((tool: string, args: string[] | undefined, options: McpRunOptions) => mcpRunCommand(tool, args, options));
 
 program
   .command("mcp-operation-wait <operationId>")
-  .description("Wait for a durable operation created by any Atrium MCP tool")
-  .option("--perf", "Emit a CLI-only perf report for the local debug call. Does not change MCP tool responses")
+  .description("Investigate a durable operation wait locally; rerun with --perf for a CLI-only detailed trace")
+  .option("--perf", "Emit a CLI-only detailed report for this single CLI rerun. Normal MCP responses stay token-light")
   .action((operationId: string, options: McpDebugOptions) => mcpOperationWaitCommand(operationId, options));
 
 program
   .command("mcp-read <path>")
-  .description("Debug Atrium MCP by calling the read tool through a local MCP client")
+  .description("Investigate an MCP read call locally; rerun with --perf for a CLI-only detailed trace")
   .option("--start-line <line>", "1-based line number to start the read window")
   .option("--end-line <line>", "1-based line number to end the read window")
-  .option("--perf", "Emit a CLI-only perf report for the local debug call. Does not change MCP tool responses")
+  .option("--perf", "Emit a CLI-only detailed report for this single CLI rerun. Normal MCP responses stay token-light")
   .action((path: string, options: McpReadOptions) => mcpReadCommand(path, options));
 
 program
   .command("mcp-find-files <root>")
-  .description("Debug Atrium MCP by calling the find-files tool through a local MCP client")
+  .description("Investigate an MCP find-files call locally; rerun with --perf for a CLI-only detailed trace")
   .option("--glob <pattern>", "Glob pattern to match files")
   .option("--max <count>", "Maximum number of matches to return")
-  .option("--perf", "Emit a CLI-only perf report for the local debug call. Does not change MCP tool responses")
+  .option("--perf", "Emit a CLI-only detailed report for this single CLI rerun. Normal MCP responses stay token-light")
   .action((root: string, options: McpFindFilesOptions) => mcpFindFilesCommand(root, options));
 
 program
   .command("mcp-grep <root>")
-  .description("Debug Atrium MCP by calling the grep tool through a local MCP client")
+  .description("Investigate an MCP grep call locally; rerun with --perf for a CLI-only detailed trace")
   .option("--query <pattern>", "Query string to search for")
   .option("--max <count>", "Maximum number of matches to return")
-  .option("--perf", "Emit a CLI-only perf report for the local debug call. Does not change MCP tool responses")
+  .option("--perf", "Emit a CLI-only detailed report for this single CLI rerun. Normal MCP responses stay token-light")
   .action((root: string, options: McpGrepOptions) => mcpGrepCommand(root, options));
 
 program
   .command("mcp-grep-code <root>")
-  .description("Debug Atrium MCP by calling the grep-code tool through a local MCP client")
+  .description("Investigate an MCP grep-code call locally; rerun with --perf for a CLI-only detailed trace")
   .option("--query <pattern>", "Query string to search for")
   .option("--max <count>", "Maximum number of matches to return")
-  .option("--perf", "Emit a CLI-only perf report for the local debug call. Does not change MCP tool responses")
+  .option("--perf", "Emit a CLI-only detailed report for this single CLI rerun. Normal MCP responses stay token-light")
   .action((root: string, options: McpGrepCodeOptions) => mcpGrepCodeCommand(root, options));
 
 program

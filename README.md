@@ -184,6 +184,8 @@ For performance checks:
 npm run benchmark -- --command node-version --iterations 15 --warmup 3
 ```
 
+For the CLI-driven workflow for investigating a single MCP verb's performance, see [docs/perf.md](docs/perf.md).
+
 ## Questions and tasks it can handle
 
 - "What commands does atrium expose for agents?"

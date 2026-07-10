@@ -71,6 +71,7 @@ export function buildSpeedifyCompatiblePerfReport({
 
 const allVerbSuiteVerbNames = ["schema", "run", "operation-wait", "read", "find-files", "grep", "grep-code"];
 
+// Benchmark-owned aggregate report: used by all-verb benchmark suites, while CLI --perf stays per-operation.
 export async function buildAllVerbAggregatePerfReport(request = {}) {
   const suite = typeof request.suite === "string" && request.suite.length > 0 ? request.suite : "all-verbs";
   const verbs = Array.isArray(request.verbs) && request.verbs.length > 0 ? request.verbs : allVerbSuiteVerbNames;
