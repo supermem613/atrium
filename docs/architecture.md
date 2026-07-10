@@ -170,7 +170,12 @@ server-side execution deadlines instead of caller-tuned operation timeouts.
 `operation-wait` waits inside a request-safe window for a durable operation handed
 off by any Atrium tool. If the operation is still running after that window, it
 returns `status: "continue"`, `mustReissueWait: true`, and the same prescriptive
-`nextCheck` handle. Once terminal it returns the snapshot with `status:
+`nextCheck` handle. Running and continue payloads may include bounded cumulative
+stdout, stderr, and a progress snapshot, while the terminal completed response
+still preserves the final complete result. Each progress update carries a
+monotonic revision, so a later `operation-wait` waits for completion, a newer
+progress revision, or the fixed request-safe window rather than spinning on the
+same snapshot. Once terminal it returns the snapshot with `status:
 "completed"` or `status: "failed"`, `completedAt`, and the `result` or `error`.
 It recovers from the persisted snapshot at `resultPath` when the handle is no
 longer in server memory.
