@@ -93,3 +93,61 @@ export interface XrayRunOptions {
 export interface XraySearchClientLike {
   run(options: XrayRunOptions): Promise<XrayEnvelope>;
 }
+
+export type SmartPlanStrategy = "sequential" | "narrowed" | "fanout";
+export type SmartPlanLaneName = "markdown" | "code" | "everything";
+
+export interface SmartPlanLane {
+  name: SmartPlanLaneName;
+  args: string[];
+}
+
+export interface SmartPlan {
+  strategy: SmartPlanStrategy;
+  reason: string;
+  lanes: SmartPlanLane[];
+  fallbackOnZero: boolean;
+  fixedString: boolean;
+}
+
+export interface SmartPlanOptions {
+  query: string;
+  regex?: boolean;
+}
+
+export interface ContentSearchRunMetrics {
+  searches?: number;
+  bytesSearched?: number;
+  bytesPrinted?: number;
+  matchedLines?: number;
+  matches?: number;
+}
+
+export interface ContentSearchInvocation {
+  args: string[];
+  matches: SearchContentMatch[];
+  warnings?: string[];
+  timedOut?: boolean;
+  truncated?: boolean;
+  metrics?: ContentSearchRunMetrics;
+}
+
+export interface ContentSearchOptions {
+  query: string;
+  root: string;
+  regex?: boolean;
+  max?: number;
+  timeoutMs?: number;
+  excludes?: string[];
+  runner?: ContentSearchRunner;
+}
+
+export type ContentSearchRunner = (args: string[], options: { cwd: string; timeoutMs: number; query: string; regex: boolean }) => Promise<ContentSearchInvocation>;
+
+export interface ContentSearchResult {
+  kind: "content";
+  matches: SearchContentMatch[];
+  warnings: string[];
+  metrics?: ContentSearchRunMetrics;
+  perf?: SearchPerfMetadata;
+}
