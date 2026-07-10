@@ -49,7 +49,7 @@ Use this exact command for the aggregate eval suite:
 npm run benchmark -- --suite all-verbs
 ```
 
-It runs serially against realistic temporary fixtures for all seven MCP verbs (`schema`, `run`, `operation-wait`, `read`, `find-files`, `grep`, and `grep-code`). Treat the resulting aggregate report as the measurement baseline for comparable before/after Speedify runs. Keep CLI `--perf` as the single-operation diagnostic path when you need a trace for one verb instead of the suite-level eval report.
+It runs serially against realistic temporary fixtures for all seven MCP verbs (`schema`, `run`, `operation-wait`, `read`, `find-files`, `grep`, and `grep-code`). The search cases exercise Atrium's native bundled-ripgrep-backed implementation for `find-files`, `grep`, and `grep-code`. Treat the resulting aggregate report as the measurement baseline for comparable before/after Speedify runs. Keep CLI `--perf` as the single-operation diagnostic path when you need a trace for one verb instead of the suite-level eval report.
 
 ## Examples
 

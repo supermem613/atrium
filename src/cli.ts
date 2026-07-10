@@ -90,7 +90,7 @@ program
 
 program
   .command("mcp-find-files <root>")
-  .description("Investigate an MCP find-files call locally; rerun with --perf for a CLI-only detailed trace")
+  .description("Investigate an MCP find-files call locally with Atrium's native file discovery; rerun with --perf for a CLI-only detailed trace")
   .option("--glob <pattern>", "Glob pattern to match files")
   .option("--exclude <pattern>", "Glob pattern to exclude")
   .option("--max <count>", "Maximum number of matches to return")
@@ -99,8 +99,8 @@ program
 
 program
   .command("mcp-grep <root>")
-  .description("Investigate an MCP grep call locally; rerun with --perf for a CLI-only detailed trace")
-  .option("--query <pattern>", "Query string to search for")
+  .description("Investigate an MCP grep call locally with Atrium's native bundled-ripgrep search; rerun with --perf for a CLI-only detailed trace")
+  .option("--query <pattern>", "Single query string to search for")
   .option("--queries <patterns...>", "One or more query strings to match")
   .option("--regex", "Treat query patterns as regular expressions")
   .option("--glob <pattern>", "Glob pattern to constrain the search")
@@ -111,8 +111,8 @@ program
 
 program
   .command("mcp-grep-code <root>")
-  .description("Investigate an MCP grep-code call locally; rerun with --perf for a CLI-only detailed trace")
-  .option("--query <pattern>", "Query string to search for")
+  .description("Investigate an MCP grep-code call locally with Atrium's native ignore-aware search; rerun with --perf for a CLI-only detailed trace")
+  .option("--query <pattern>", "Single query string to search for")
   .option("--queries <patterns...>", "One or more query strings to match")
   .option("--regex", "Treat query patterns as regular expressions")
   .option("--glob <pattern>", "Glob pattern to constrain the search")

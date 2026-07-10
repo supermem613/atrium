@@ -68,7 +68,7 @@ export function buildSpeedifyCompatiblePerfReport({
 const allVerbSuiteVerbNames = ["schema", "run", "operation-wait", "read", "find-files", "grep", "grep-code"];
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
-// Benchmark-owned aggregate report: used by all-verb benchmark suites, while CLI --perf stays per-operation.
+// Benchmark-owned aggregate report: used by all-verb benchmark suites, while CLI --perf stays per-operation. The all-verbs suite captures Atrium's native bundled-ripgrep search verbs alongside the rest of the MCP surface.
 export async function runAllVerbBenchmarkSuite(request = {}) {
   const suite = typeof request.suite === "string" && request.suite.length > 0 ? request.suite : "all-verbs";
   const verbs = Array.isArray(request.verbs) && request.verbs.length > 0 ? request.verbs : allVerbSuiteVerbNames;

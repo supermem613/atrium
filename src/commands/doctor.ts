@@ -35,7 +35,7 @@ function checkBundledRipgrep(): CheckResult {
       return {
         name: "bundled-ripgrep",
         ok: true,
-        detail: `bundled-ripgrep resolved and healthy for native search at ${rgPath}`,
+        detail: `bundled-ripgrep resolved and healthy for Atrium-owned native search at ${rgPath}`,
       };
     }
   } catch {
@@ -45,8 +45,8 @@ function checkBundledRipgrep(): CheckResult {
   return {
     name: "bundled-ripgrep",
     ok: false,
-    detail: "bundled-ripgrep not resolved for native search",
-    hint: "Install the @vscode/ripgrep runtime dependency for native Atrium search.",
+    detail: "bundled-ripgrep not resolved for Atrium-owned native search",
+    hint: "Install the @vscode/ripgrep runtime dependency so Atrium's native search can use bundled ripgrep.",
   };
 }
 
