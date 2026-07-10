@@ -5,7 +5,21 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { doctorCommand } from "./commands/doctor.js";
-import { mcpOperationWaitCommand, mcpRunCommand, mcpSchemaCommand, type McpRunOptions } from "./commands/mcpDebug.js";
+import {
+  mcpFindFilesCommand,
+  mcpGrepCodeCommand,
+  mcpGrepCommand,
+  mcpOperationWaitCommand,
+  mcpReadCommand,
+  mcpRunCommand,
+  mcpSchemaCommand,
+  type McpDebugOptions,
+  type McpFindFilesOptions,
+  type McpGrepCodeOptions,
+  type McpGrepOptions,
+  type McpReadOptions,
+  type McpRunOptions,
+} from "./commands/mcpDebug.js";
 import { mcpConfigCommand } from "./commands/mcpConfig.js";
 import { schemaCommand } from "./commands/schema.js";
 import { startAtriumServer } from "./server.js";
@@ -47,7 +61,8 @@ program
 program
   .command("mcp-schema <tool>")
   .description("Debug Atrium MCP by calling the schema tool through a local MCP client")
-  .action(mcpSchemaCommand);
+  .option("--perf", "Emit a CLI-only perf report for the local debug call. Does not change MCP tool responses")
+  .action((tool: string, options: McpDebugOptions) => mcpSchemaCommand(tool, options));
 
 program
   .command("mcp-run <tool> [args...]")
@@ -62,7 +77,40 @@ program
 program
   .command("mcp-operation-wait <operationId>")
   .description("Wait for a durable operation created by any Atrium MCP tool")
-  .action(mcpOperationWaitCommand);
+  .option("--perf", "Emit a CLI-only perf report for the local debug call. Does not change MCP tool responses")
+  .action((operationId: string, options: McpDebugOptions) => mcpOperationWaitCommand(operationId, options));
+
+program
+  .command("mcp-read <path>")
+  .description("Debug Atrium MCP by calling the read tool through a local MCP client")
+  .option("--start-line <line>", "1-based line number to start the read window")
+  .option("--end-line <line>", "1-based line number to end the read window")
+  .option("--perf", "Emit a CLI-only perf report for the local debug call. Does not change MCP tool responses")
+  .action((path: string, options: McpReadOptions) => mcpReadCommand(path, options));
+
+program
+  .command("mcp-find-files <root>")
+  .description("Debug Atrium MCP by calling the find-files tool through a local MCP client")
+  .option("--glob <pattern>", "Glob pattern to match files")
+  .option("--max <count>", "Maximum number of matches to return")
+  .option("--perf", "Emit a CLI-only perf report for the local debug call. Does not change MCP tool responses")
+  .action((root: string, options: McpFindFilesOptions) => mcpFindFilesCommand(root, options));
+
+program
+  .command("mcp-grep <root>")
+  .description("Debug Atrium MCP by calling the grep tool through a local MCP client")
+  .option("--query <pattern>", "Query string to search for")
+  .option("--max <count>", "Maximum number of matches to return")
+  .option("--perf", "Emit a CLI-only perf report for the local debug call. Does not change MCP tool responses")
+  .action((root: string, options: McpGrepOptions) => mcpGrepCommand(root, options));
+
+program
+  .command("mcp-grep-code <root>")
+  .description("Debug Atrium MCP by calling the grep-code tool through a local MCP client")
+  .option("--query <pattern>", "Query string to search for")
+  .option("--max <count>", "Maximum number of matches to return")
+  .option("--perf", "Emit a CLI-only perf report for the local debug call. Does not change MCP tool responses")
+  .action((root: string, options: McpGrepCodeOptions) => mcpGrepCodeCommand(root, options));
 
 program
   .command("update")

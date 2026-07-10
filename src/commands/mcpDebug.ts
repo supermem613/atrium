@@ -6,12 +6,35 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createPerfRecorder, type PerfOperationRecorder, type PerfOperationReport } from "../core/perf.js";
 
-export interface McpRunOptions {
+export interface McpDebugOptions {
+  perf?: boolean;
+}
+
+export interface McpRunOptions extends McpDebugOptions {
   cwd?: string;
   requestTimeoutMs?: string;
   stdin?: string;
   stdinFile?: string;
-  perf?: boolean;
+}
+
+export interface McpReadOptions extends McpDebugOptions {
+  startLine?: string;
+  endLine?: string;
+}
+
+export interface McpFindFilesOptions extends McpDebugOptions {
+  glob?: string;
+  max?: string;
+}
+
+export interface McpGrepOptions extends McpDebugOptions {
+  query?: string;
+  max?: string;
+}
+
+export interface McpGrepCodeOptions extends McpDebugOptions {
+  query?: string;
+  max?: string;
 }
 
 const defaultDebugRequestTimeoutMs = 60_000;
@@ -33,9 +56,11 @@ async function withAtriumClient<T>(callback: (client: Client) => Promise<T>): Pr
   }
 }
 
-export async function mcpSchemaCommand(tool: string): Promise<void> {
+export async function mcpSchemaCommand(tool: string, options: McpDebugOptions = {}): Promise<void> {
+  const perfRecorder = createPerfRecorder(options.perf === true);
+  const perfOperation = perfRecorder?.startOperation(randomUUID());
   const response = await withAtriumClient((client) => client.callTool({ name: "schema", arguments: { tool } }));
-  writeToolResponse(response);
+  writeToolResponse(response, perfOperation?.finish());
 }
 
 export async function mcpRunCommand(tool: string, args: string[] | undefined, options: McpRunOptions): Promise<void> {
@@ -63,14 +88,56 @@ export async function mcpRunCommand(tool: string, args: string[] | undefined, op
   writeToolResponse(response, perfOperation?.finish());
 }
 
-export async function mcpOperationWaitCommand(operationId: string): Promise<void> {
+export async function mcpOperationWaitCommand(operationId: string, options: McpDebugOptions = {}): Promise<void> {
+  const perfRecorder = createPerfRecorder(options.perf === true);
+  const perfOperation = perfRecorder?.startOperation(randomUUID());
   const response = await withAtriumClient((client) => client.callTool({
     name: "operation-wait",
     arguments: {
       operationId,
     },
   }));
-  writeToolResponse(response);
+  writeToolResponse(response, perfOperation?.finish());
+}
+
+export async function mcpReadCommand(path: string, options: McpReadOptions = {}): Promise<void> {
+  const perfRecorder = createPerfRecorder(options.perf === true);
+  const perfOperation = perfRecorder?.startOperation(randomUUID());
+  const response = await withAtriumClient((client) => client.callTool({
+    name: "read",
+    arguments: buildReadArguments(path, options),
+  }));
+  writeToolResponse(response, perfOperation?.finish());
+}
+
+export async function mcpFindFilesCommand(root: string, options: McpFindFilesOptions = {}): Promise<void> {
+  const perfRecorder = createPerfRecorder(options.perf === true);
+  const perfOperation = perfRecorder?.startOperation(randomUUID());
+  const response = await withAtriumClient((client) => client.callTool({
+    name: "find-files",
+    arguments: buildFindFilesArguments(root, options),
+  }));
+  writeToolResponse(response, perfOperation?.finish());
+}
+
+export async function mcpGrepCommand(root: string, options: McpGrepOptions = {}): Promise<void> {
+  const perfRecorder = createPerfRecorder(options.perf === true);
+  const perfOperation = perfRecorder?.startOperation(randomUUID());
+  const response = await withAtriumClient((client) => client.callTool({
+    name: "grep",
+    arguments: buildGrepArguments(root, options),
+  }));
+  writeToolResponse(response, perfOperation?.finish());
+}
+
+export async function mcpGrepCodeCommand(root: string, options: McpGrepCodeOptions = {}): Promise<void> {
+  const perfRecorder = createPerfRecorder(options.perf === true);
+  const perfOperation = perfRecorder?.startOperation(randomUUID());
+  const response = await withAtriumClient((client) => client.callTool({
+    name: "grep-code",
+    arguments: buildGrepCodeArguments(root, options),
+  }));
+  writeToolResponse(response, perfOperation?.finish());
 }
 
 function writeToolResponse(response: Awaited<ReturnType<Client["callTool"]>>, perfReport?: PerfOperationReport): void {
@@ -98,6 +165,55 @@ function attachPerf(payload: unknown, perfReport: PerfOperationReport | undefine
   }
 
   return { value: payload, perf: perfReport };
+}
+
+function buildReadArguments(path: string, options: McpReadOptions): Record<string, unknown> {
+  const args: Record<string, unknown> = { path };
+  const startLine = parseOptionalInteger(options.startLine, "--start-line");
+  if (startLine !== undefined) {
+    args.startLine = startLine;
+  }
+  const endLine = parseOptionalInteger(options.endLine, "--end-line");
+  if (endLine !== undefined) {
+    args.endLine = endLine;
+  }
+  return args;
+}
+
+function buildFindFilesArguments(root: string, options: McpFindFilesOptions): Record<string, unknown> {
+  const args: Record<string, unknown> = { root };
+  if (options.glob !== undefined) {
+    args.glob = options.glob;
+  }
+  const max = parseOptionalInteger(options.max, "--max");
+  if (max !== undefined) {
+    args.max = max;
+  }
+  return args;
+}
+
+function buildGrepArguments(root: string, options: McpGrepOptions): Record<string, unknown> {
+  const args: Record<string, unknown> = { root };
+  if (options.query !== undefined) {
+    args.query = options.query;
+  }
+  const max = parseOptionalInteger(options.max, "--max");
+  if (max !== undefined) {
+    args.max = max;
+  }
+  return args;
+}
+
+function buildGrepCodeArguments(root: string, options: McpGrepCodeOptions): Record<string, unknown> {
+  const args: Record<string, unknown> = { root };
+  if (options.query !== undefined) {
+    args.query = options.query;
+  }
+  const max = parseOptionalInteger(options.max, "--max");
+  if (max !== undefined) {
+    args.max = max;
+  }
+  return args;
 }
 
 function readToolPayload(response: Awaited<ReturnType<Client["callTool"]>>): unknown {
@@ -137,6 +253,10 @@ function parseOptionalNumber(value: string | undefined, flag: string): number | 
   }
 
   return parsed;
+}
+
+function parseOptionalInteger(value: string | undefined, flag: string): number | undefined {
+  return parseOptionalNumber(value, flag);
 }
 
 async function waitForDebugOperation(client: Client, operationId: string, requestTimeoutMs: number, perfOperation?: PerfOperationRecorder): ReturnType<Client["callTool"]> {

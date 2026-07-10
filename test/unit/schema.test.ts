@@ -13,6 +13,10 @@ describe("schema", () => {
       ["mcp-schema"],
       ["mcp-run"],
       ["mcp-operation-wait"],
+      ["mcp-read"],
+      ["mcp-find-files"],
+      ["mcp-grep"],
+      ["mcp-grep-code"],
       ["update"],
     ]);
   });

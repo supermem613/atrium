@@ -99,13 +99,19 @@ export const commandSpecs: CommandSpec[] = [
     effect: "read",
     input: {
       positionals: ["tool"],
-      flags: [],
+      flags: [
+        {
+          name: "--perf",
+          type: "boolean",
+          summary: "Emit a CLI-only perf report for the local debug call. Does not change MCP tool responses.",
+        },
+      ],
     },
     output: {
       documented: true,
       schema: "AtriumMcpSchemaResult",
     },
-    examples: ["mcp-schema node"],
+    examples: ["mcp-schema node", "mcp-schema node --perf"],
   },
   {
     path: ["mcp-run"],
@@ -153,13 +159,139 @@ export const commandSpecs: CommandSpec[] = [
     effect: "read",
     input: {
       positionals: ["operationId"],
-      flags: [],
+      flags: [
+        {
+          name: "--perf",
+          type: "boolean",
+          summary: "Emit a CLI-only perf report for the local debug call. Does not change MCP tool responses.",
+        },
+      ],
     },
     output: {
       documented: true,
       schema: "AtriumOperationWaitResult",
     },
-    examples: ["mcp-operation-wait atrium-mabc1234-00000000-0000-0000-0000-000000000000"],
+    examples: ["mcp-operation-wait atrium-mabc1234-00000000-0000-0000-0000-000000000000", "mcp-operation-wait atrium-mabc1234-00000000-0000-0000-0000-000000000000 --perf"],
+  },
+  {
+    path: ["mcp-read"],
+    summary: "Call Atrium's MCP read tool through a local MCP client.",
+    effect: "read",
+    input: {
+      positionals: ["path"],
+      flags: [
+        {
+          name: "--start-line",
+          type: "number",
+          summary: "1-based line number to start the read window.",
+        },
+        {
+          name: "--end-line",
+          type: "number",
+          summary: "1-based line number to end the read window.",
+        },
+        {
+          name: "--perf",
+          type: "boolean",
+          summary: "Emit a CLI-only perf report for the local debug call. Does not change MCP tool responses.",
+        },
+      ],
+    },
+    output: {
+      documented: true,
+      schema: "AtriumReadResult",
+    },
+    examples: ["mcp-read /tmp/file.txt --start-line 2 --end-line 3", "mcp-read /tmp/file.txt --perf"],
+  },
+  {
+    path: ["mcp-find-files"],
+    summary: "Call Atrium's MCP find-files tool through a local MCP client.",
+    effect: "read",
+    input: {
+      positionals: ["root"],
+      flags: [
+        {
+          name: "--glob",
+          type: "string",
+          summary: "Glob pattern to match files.",
+        },
+        {
+          name: "--max",
+          type: "number",
+          summary: "Maximum number of matches to return.",
+        },
+        {
+          name: "--perf",
+          type: "boolean",
+          summary: "Emit a CLI-only perf report for the local debug call. Does not change MCP tool responses.",
+        },
+      ],
+    },
+    output: {
+      documented: true,
+      schema: "AtriumFindFilesResult",
+    },
+    examples: ["mcp-find-files /tmp --glob \"**/*.txt\" --max 5", "mcp-find-files /tmp --perf"],
+  },
+  {
+    path: ["mcp-grep"],
+    summary: "Call Atrium's MCP grep tool through a local MCP client.",
+    effect: "read",
+    input: {
+      positionals: ["root"],
+      flags: [
+        {
+          name: "--query",
+          type: "string",
+          summary: "Query string to search for.",
+        },
+        {
+          name: "--max",
+          type: "number",
+          summary: "Maximum number of matches to return.",
+        },
+        {
+          name: "--perf",
+          type: "boolean",
+          summary: "Emit a CLI-only perf report for the local debug call. Does not change MCP tool responses.",
+        },
+      ],
+    },
+    output: {
+      documented: true,
+      schema: "AtriumGrepResult",
+    },
+    examples: ["mcp-grep /tmp --query alpha --max 5", "mcp-grep /tmp --perf"],
+  },
+  {
+    path: ["mcp-grep-code"],
+    summary: "Call Atrium's MCP grep-code tool through a local MCP client.",
+    effect: "read",
+    input: {
+      positionals: ["root"],
+      flags: [
+        {
+          name: "--query",
+          type: "string",
+          summary: "Query string to search for.",
+        },
+        {
+          name: "--max",
+          type: "number",
+          summary: "Maximum number of matches to return.",
+        },
+        {
+          name: "--perf",
+          type: "boolean",
+          summary: "Emit a CLI-only perf report for the local debug call. Does not change MCP tool responses.",
+        },
+      ],
+    },
+    output: {
+      documented: true,
+      schema: "AtriumGrepCodeResult",
+    },
+    examples: ["mcp-grep-code /tmp --query alpha --max 5", "mcp-grep-code /tmp --perf"],
   },
   {
     path: ["update"],
