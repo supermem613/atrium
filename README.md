@@ -130,6 +130,15 @@ instructions with no reinstall. The extension reads the same `--surface`
 selection from `mcp-config.json` as the server, so the injected guardrails always
 match the surfaces the server exposes.
 
+When the `search` surface is enabled the same extension also enforces the search
+policy: it registers deny hooks that reject raw `rg`, `grep`, `git grep`, `find`,
+`findstr`, `xray`, and `Select-String` use, shell commands that call those
+binaries, and `atrium run` calls that spawn a raw search binary, steering the
+model back to `atrium-find-files`, `atrium-grep`, and `atrium-grep-code`.
+Enforcement is gated on the search surface, so a build without `search` exposes
+no search verbs and blocks nothing. This replaces the former standalone
+search-policy extension, which is no longer needed.
+
 ## Debug the MCP locally
 
 The `mcp-*` commands call Atrium through a real local MCP client, matching the path Copilot CLI uses.
