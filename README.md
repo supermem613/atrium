@@ -56,6 +56,7 @@ atrium schema          # machine-readable command catalog
 atrium schema --summary
 atrium mcp-config      # MCP config JSON for Copilot CLI
 atrium mcp-server      # stdio MCP server entrypoint
+atrium mcp-server --surface core,read # enable a subset of surfaces (core is required)
 atrium mcp-schema reflux # debug MCP schema through a local MCP client
 atrium mcp-run node -- --version
 atrium mcp-run node -- -e "setTimeout(() => console.log('done'), 90000)"
@@ -82,6 +83,28 @@ Or inspect the JSON config Atrium emits:
 
 ```bash
 atrium mcp-config
+```
+
+## Surfaces
+
+Atrium's tools are grouped into surfaces: `core` (`schema`, `run`,
+`operation-wait`), `read` (`read`), and `search` (`grep`, `grep-code`,
+`find-files`). By default every surface is enabled.
+
+Enable a subset with `atrium mcp-server --surface <names>`, a comma-separated
+and repeatable list. `core` is always required. The instructions Atrium
+advertises are composed from only the enabled surfaces and are sent once at the
+MCP `initialize` handshake, so changing the enabled surfaces takes effect on the
+next server start. The `atrium-mcp` entrypoint honors `--surface` identically.
+
+`atrium mcp-config --surface <names>` derives its output from the same
+selection: with no `--surface` it emits today's `tools: ["*"]`; for a restricted
+selection it emits the `--surface` launch argument and a `tools` allowlist
+limited to the enabled surfaces' tools, so the client-side allowlist is always a
+subset of what the server registers.
+
+```bash
+atrium mcp-config --surface core,read
 ```
 
 ## Debug the MCP locally

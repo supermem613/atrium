@@ -270,11 +270,40 @@ Run the benchmark with:
 npm run benchmark -- --command node-version --iterations 15 --warmup 3
 ```
 
+## Surface registry and advertised instructions
+
+Atrium groups its tools into three surfaces: `core` (`schema`, `run`,
+`operation-wait`), `read` (`read`), and `search` (`grep`, `grep-code`,
+`find-files`). The registry in `src\mcp\surfaces.ts` is the single source of
+truth for each surface: it owns the tool registrations, the per-surface
+instruction fragment, and the surface's tool names.
+
+The instructions advertised to the client are composed as an always-on preamble
+followed by the non-empty instruction fragments of the enabled surfaces, in
+registry order. These instructions are advertised once, during the MCP
+`initialize` handshake. There is no live toggle: re-flighting a surface is a
+configuration change plus a session restart.
+
+`core` is required and cannot be disabled, because the handoff contract and
+`operation-wait` live there and every other surface depends on it.
+`resolveSurfaceSelection` validates a requested selection (rejecting unknown
+names and any selection that drops `core`) and derives both the enabled
+surfaces and their tool-name allowlist.
+
+`atrium mcp-server --surface <names>` starts the server with a subset of
+surfaces enabled, and the `atrium-mcp` entrypoint honors the same flag.
+`atrium mcp-config --surface <names>` derives both the launch `args` and the
+`tools` allowlist from that same selector, so the client-side allowlist is
+always a subset of the tools the server actually registers. The default (no
+`--surface`) keeps every surface enabled and emits today's `tools: ["*"]`
+configuration unchanged.
+
 ## Source map
 
 | File | Responsibility |
 | --- | --- |
-| `src\server.ts` | MCP server registration for `schema`, `run`, `read`, `operation-wait`, and search primitives. |
+| `src\server.ts` | Composes advertised instructions and registers the enabled surfaces' tools from the surface registry. |
+| `src\mcp\surfaces.ts` | Surface registry: the single source of truth for tool registration, per-surface instruction fragments, the surface selector, and the tool-name allowlist. |
 | `src\core\executionQueue.ts` | In-memory max-concurrency limiter for child process starts. |
 | `src\core\introspect.ts` | Implements `<tool> schema` then `<tool> --help` discovery. |
 | `src\core\runner.ts` | Process spawning, shell denylist, Windows resolution, npm shim handling, timeout, stdout/stderr capture. |
