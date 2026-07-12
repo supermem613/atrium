@@ -97,6 +97,8 @@ advertises are composed from only the enabled surfaces and are sent once at the
 MCP `initialize` handshake, so changing the enabled surfaces takes effect on the
 next server start. The `atrium-mcp` entrypoint honors `--surface` identically.
 
+Each surface also advertises its own behavioral guardrails, not just its tool contract. The `read` surface carries read-safety guidance and the `search` surface carries search-safety guidance, so disabling a surface removes both its tools and its guardrails from the advertised instructions. This keeps the advertised guidance fine-tuned to exactly the functionality Atrium exposes.
+
 `atrium mcp-config --surface <names>` derives its output from the same
 selection: with no `--surface` it emits today's `tools: ["*"]`; for a restricted
 selection it emits the `--surface` launch argument and a `tools` allowlist

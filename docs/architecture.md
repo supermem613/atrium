@@ -284,6 +284,14 @@ registry order. These instructions are advertised once, during the MCP
 `initialize` handshake. There is no live toggle: re-flighting a surface is a
 configuration change plus a session restart.
 
+Each surface's instruction fragment advertises surface-tailored guardrails
+alongside its tool contract: `core` carries tool-selection and output-handling
+guardrails, `read` carries read-safety guardrails, and `search` carries
+search-safety guardrails. Because instructions are composed from only the
+enabled surfaces, disabling a surface removes its guardrails as well as its
+tools, so the advertised guidance stays fine-tuned to the exposed
+functionality.
+
 `core` is required and cannot be disabled, because the handoff contract and
 `operation-wait` live there and every other surface depends on it.
 `resolveSurfaceSelection` validates a requested selection (rejecting unknown
