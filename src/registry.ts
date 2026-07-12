@@ -254,7 +254,7 @@ export const commandSpecs: CommandSpec[] = [
   },
   {
     path: ["mcp-grep"],
-    summary: "Investigate an MCP grep call locally with Atrium's native bundled-ripgrep search; rerun through the Atrium CLI with --perf for a CLI-only detailed trace.",
+    summary: "Investigate an MCP grep call locally with Atrium's in-process native search; rerun through the Atrium CLI with --perf for a CLI-only detailed trace.",
     effect: "read",
     input: {
       positionals: ["root"],

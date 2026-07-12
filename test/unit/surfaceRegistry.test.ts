@@ -50,7 +50,7 @@ const GOLDEN_DEFAULT_INSTRUCTIONS = [
   "- A successful read returns ok, path, range, meta, and content. Treat the returned range together with meta.totalLines as authoritative for end-of-file and clamping instead of guessing bounds.",
   "",
   "Search primitives:",
-  "- Content search verbs grep and grep-code use Atrium's native search implementation backed by bundled-ripgrep. find-files lists paths with Atrium's native file engine and never reads contents.",
+  "- Content search verbs grep and grep-code use Atrium's in-process native search engine. find-files lists paths with Atrium's native file engine and never reads contents.",
   "- grep and grep-code take a single literal query or a queries array of one or more patterns to match any of several patterns. Set regex true to treat patterns as regular expressions. grep and find-files are unrestricted and include hidden, gitignored, and vendor files. grep-code is ignore-aware and skips hidden, gitignored, and vendor files.",
   "- Patterns match literally by default. Narrow with glob and exclude, and cap results with max. Results are structured JSON: file matches carry matches[].path, and content matches also carry matches[].line and matches[].text. Surface any normalization warnings.",
   "- These are first-class Atrium MCP tools. Use them for search instead of shelling out.",

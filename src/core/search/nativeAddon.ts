@@ -138,7 +138,7 @@ export function loadNativeSearchAddonWith(deps: LoadNativeSearchAddonDeps = {}):
       }
     } catch {
       // Missing or unloadable prebuilt for this candidate; try the next, then
-      // fall back to null so callers can spawn bundled ripgrep instead.
+      // return null so callers surface a hard error.
     }
   }
   return null;

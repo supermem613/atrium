@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm, writeFile, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { runNativeFileSearch, spawnFileSearchRunner } from "../../src/core/search/fileSearch.js";
+import { runNativeFileSearch } from "../../src/core/search/fileSearch.js";
 import type { NativeFileSearchRunner } from "../../src/core/search/types.js";
 
 function normalizePath(filePath: string): string {
@@ -124,32 +124,6 @@ test("surfaces timeout warnings", async () => {
     const result = await runNativeFileSearch({ root, timeoutMs: 7, runner });
 
     assert.ok(result.warnings.some((warning) => warning.includes("search stopped after 7 ms")));
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
-});
-
-test("emits complete ripgrep lifecycle metrics only when perf is enabled", async () => {
-  const root = await mkdtemp(join(tmpdir(), "atrium-native-files-perf-"));
-  try {
-    await writeFile(join(root, "one.txt"), "one\n", "utf8");
-
-    const withoutPerf = await runNativeFileSearch({ root, runner: spawnFileSearchRunner });
-    const withPerf = await runNativeFileSearch({ root, perf: true, runner: spawnFileSearchRunner });
-
-    assert.equal(withoutPerf.metrics?.spawnCallMs, undefined);
-    assert.equal(withoutPerf.metrics?.childTotalMs, undefined);
-    assert.ok(withPerf.metrics);
-    for (const field of ["spawnCallMs", "spawnReadyMs", "childRunMs", "childTotalMs", "parseMs"] as const) {
-      assert.equal(typeof withPerf.metrics[field], "number", `expected numeric ${field}`);
-      assert.ok((withPerf.metrics[field] ?? -1) >= 0, `expected nonnegative ${field}`);
-    }
-    assert.ok(
-      (withPerf.metrics.childTotalMs ?? 0)
-        >= (withPerf.metrics.spawnCallMs ?? 0)
-          + (withPerf.metrics.spawnReadyMs ?? 0)
-          + (withPerf.metrics.childRunMs ?? 0),
-    );
   } finally {
     await rm(root, { recursive: true, force: true });
   }

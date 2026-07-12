@@ -1,9 +1,6 @@
-import { spawn } from "node:child_process";
 import { stat } from "node:fs/promises";
 import { basename, dirname, resolve } from "node:path";
-import { performance } from "node:perf_hooks";
 import { normalizeNativeSearchPath } from "./normalize.js";
-import { resolveBundledRgPath } from "./rgPath.js";
 import { planSmartSearch } from "./smartPlan.js";
 import { loadNativeSearchAddon } from "./nativeAddon.js";
 import type { NativeContentTypeDef, NativeSearchAddon } from "./nativeAddon.js";
@@ -37,9 +34,8 @@ export async function runContentSearch(options: ContentSearchOptions): Promise<C
   const runner = options.runner ?? defaultContentSearchRunner;
 
   // A file root must run from its parent directory with the file name as the search path.
-  // Passing a file as the child process cwd makes Windows spawn fail with a misleading ENOENT
-  // that names rg.exe rather than the bad cwd. An injected runner controls its own execution,
-  // so the real filesystem probe only runs for the default spawning runner.
+  // Only the default runner needs the filesystem probe to classify the root as a file or a
+  // directory. An injected runner controls its own execution and receives the root as given.
   const location = options.runner === undefined
     ? await resolveContentSearchRoot(options.root)
     : { cwd: options.root, rootIsFile: false, rootName: undefined };
@@ -66,7 +62,7 @@ export async function runContentSearch(options: ContentSearchOptions): Promise<C
   };
 
   const runLane = async (laneArgs: string[]): Promise<void> => {
-    const args = buildRipgrepArgs({
+    const args = buildSearchArgs({
       query,
       regex,
       all,
@@ -82,9 +78,9 @@ export async function runContentSearch(options: ContentSearchOptions): Promise<C
       invocation = await runner(args, { cwd: location.cwd, timeoutMs, query, regex, perf: options.perf === true });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      // The spawning runner already prefixes its failures. Re-prefixing here produced a
-      // doubly nested "fatal ripgrep error: fatal ripgrep error: ..." that hid the real cause.
-      throw new Error(message.startsWith("fatal ripgrep error:") ? message : `fatal ripgrep error: ${message}`);
+      // The runner may already prefix its failures. Re-prefixing here produced a
+      // doubly nested "fatal search error: fatal search error: ..." that hid the real cause.
+      throw new Error(message.startsWith("fatal search error:") ? message : `fatal search error: ${message}`);
     }
 
     if (invocation.timedOut === true) {
@@ -180,15 +176,7 @@ function accumulateMetrics(target: ContentSearchRunMetrics, source: ContentSearc
   }
   const keys: (keyof ContentSearchRunMetrics)[] = [
     "searches",
-    "bytesSearched",
-    "bytesPrinted",
-    "matchedLines",
-    "matches",
-    "spawnCallMs",
-    "spawnReadyMs",
     "childRunMs",
-    "childTotalMs",
-    "parseMs",
   ];
   for (const key of keys) {
     const value = source[key];
@@ -198,7 +186,7 @@ function accumulateMetrics(target: ContentSearchRunMetrics, source: ContentSearc
   }
 }
 
-function buildRipgrepArgs(options: { query: string; regex: boolean; all: boolean; globs: string[]; excludes: string[]; laneArgs: string[]; rootIsFile: boolean; rootName: string | undefined }): string[] {
+function buildSearchArgs(options: { query: string; regex: boolean; all: boolean; globs: string[]; excludes: string[]; laneArgs: string[]; rootIsFile: boolean; rootName: string | undefined }): string[] {
   const args = ["--line-number", "--color=never", "--json", "--max-filesize", DEFAULT_MAX_FILE_SIZE];
   if (!options.regex) {
     args.push("-F");
@@ -219,117 +207,12 @@ function buildRipgrepArgs(options: { query: string; regex: boolean; all: boolean
   return args;
 }
 
-export async function spawnContentSearchRunner(args: string[], options: { cwd: string; timeoutMs: number; query: string; regex: boolean; perf: boolean }): Promise<ContentSearchInvocation> {
-  const rgPath = resolveBundledRgPath();
-  if (rgPath === null) {
-    throw new Error("fatal ripgrep error: ripgrep binary not available");
-  }
-
-  return new Promise((resolve, reject) => {
-    const spawnStartedAt = options.perf ? performance.now() : undefined;
-    const child = spawn(rgPath, args, {
-      cwd: options.cwd,
-      stdio: ["ignore", "pipe", "pipe"],
-      windowsHide: true,
-    });
-    const spawnReturnedAt = options.perf ? performance.now() : undefined;
-    let spawnReadyAt = spawnReturnedAt;
-
-    let stdout = "";
-    let stderr = "";
-    let timedOut = false;
-    let timer: NodeJS.Timeout | undefined;
-    let settled = false;
-
-    const clearTimer = () => {
-      if (timer !== undefined) {
-        clearTimeout(timer);
-      }
-    };
-
-    const finish = (result: ContentSearchInvocation) => {
-      if (settled) {
-        return;
-      }
-      settled = true;
-      clearTimer();
-      resolve(result);
-    };
-
-    const finishError = (message: string) => {
-      if (settled) {
-        return;
-      }
-      settled = true;
-      clearTimer();
-      reject(new Error(message));
-    };
-
-    child.stdout.setEncoding("utf8");
-    child.stdout.on("data", (chunk: string | Buffer) => {
-      stdout += String(chunk);
-    });
-
-    child.stderr.setEncoding("utf8");
-    child.stderr.on("data", (chunk: string | Buffer) => {
-      stderr += String(chunk);
-    });
-
-    if (options.perf) {
-      child.on("spawn", () => {
-        spawnReadyAt = performance.now();
-      });
-    }
-
-    if (options.timeoutMs > 0) {
-      timer = setTimeout(() => {
-        timedOut = true;
-        child.kill("SIGTERM");
-      }, options.timeoutMs);
-    }
-
-    child.on("error", (error: Error) => {
-      finishError(`fatal ripgrep error: ${error.message}`);
-    });
-
-    child.on("close", (code: number | null) => {
-      const childClosedAt = options.perf ? performance.now() : undefined;
-      const warnings = stderr.trim().length > 0 ? [stderr.trim()] : [];
-      const parseStartedAt = options.perf ? performance.now() : undefined;
-      const matches = parseRipgrepJsonOutput(stdout);
-      const parseEndedAt = options.perf ? performance.now() : undefined;
-      const metrics = options.perf
-        ? {
-          searches: 1,
-          spawnCallMs: (spawnReturnedAt ?? 0) - (spawnStartedAt ?? 0),
-          spawnReadyMs: (spawnReadyAt ?? 0) - (spawnReturnedAt ?? 0),
-          childRunMs: (childClosedAt ?? 0) - (spawnReadyAt ?? 0),
-          childTotalMs: (childClosedAt ?? 0) - (spawnStartedAt ?? 0),
-          parseMs: (parseEndedAt ?? 0) - (parseStartedAt ?? 0),
-        }
-        : undefined;
-      if (timedOut) {
-        finish({ args, matches, warnings, timedOut: true, truncated: false, metrics });
-        return;
-      }
-      if (code !== 0 && code !== 1) {
-        finishError(`fatal ripgrep error: exited with code ${String(code)}`);
-        return;
-      }
-      finish({ args, matches, warnings, timedOut: false, truncated: false, metrics });
-    });
-  });
-}
-
 export interface ContentSearchRunnerDeps {
   loadAddon?: () => NativeSearchAddon | null;
-  spawnRunner?: ContentSearchRunner;
-  onFallback?: (error: unknown) => void;
 }
 
-// Reconstruct addon options from the ripgrep args the core layer built, so the
-// native runner keeps the exact same include/exclude/type-lane behavior as the
-// spawned ripgrep. Parsing stops at `--`, which separates flags from paths.
+// Reconstruct addon options from the search args the core layer built. Parsing
+// stops at `--`, which separates flags from paths.
 export function parseNativeContentArgs(args: string[]): {
   all: boolean;
   globs: string[];
@@ -403,20 +286,17 @@ export function parseNativeContentArgs(args: string[]): {
   return { all, globs, excludes, typeDefs, typeSelect, typeNegate };
 }
 
-// Runs the search in-process through the napi addon when it loads, and falls
-// back to spawning bundled ripgrep when the addon is absent or throws. The
-// native path never records spawn metrics, which is how callers tell the two
-// apart. `max` is deliberately not forwarded so the TS normalize layer owns
-// display capping identically for both paths.
+// Runs the search in-process through the napi addon, which is the only search
+// engine. A missing or unloadable addon is a hard, loud failure so search never
+// silently degrades. `max` is deliberately not forwarded so the TS normalize
+// layer owns display capping.
 export function createNativeContentSearchRunner(deps: ContentSearchRunnerDeps = {}): ContentSearchRunner {
   const loadAddon = deps.loadAddon ?? loadNativeSearchAddon;
-  const spawnRunner = deps.spawnRunner ?? spawnContentSearchRunner;
-  const onFallback = deps.onFallback;
 
   return async (args, options) => {
     const addon = loadAddon();
     if (addon === null) {
-      return spawnRunner(args, options);
+      throw new Error("native search addon not available; run `npm run build:native` to build the in-process search engine");
     }
 
     const parsed = parseNativeContentArgs(args);
@@ -446,42 +326,11 @@ export function createNativeContentSearchRunner(deps: ContentSearchRunnerDeps = 
         metrics,
       };
     } catch (error) {
-      if (onFallback !== undefined) {
-        onFallback(error);
-      } else {
-        const message = error instanceof Error ? error.message : String(error);
-        // stderr is safe in the stdio MCP server; stdout is the protocol channel.
-        console.error(`native search addon failed, falling back to ripgrep: ${message}`);
-      }
-      return spawnRunner(args, options);
+      // The addon is the only engine. Surface its failure loudly instead of
+      // silently degrading; runContentSearch adds the "fatal search error" prefix.
+      throw error instanceof Error ? error : new Error(String(error));
     }
   };
 }
 
 const defaultContentSearchRunner: ContentSearchRunner = createNativeContentSearchRunner();
-
-function parseRipgrepJsonOutput(output: string): SearchContentMatch[] {
-  const matches: SearchContentMatch[] = [];
-  for (const line of output.split(/\r?\n/u)) {
-    if (line.trim().length === 0) {
-      continue;
-    }
-    let envelope: Record<string, unknown>;
-    try {
-      envelope = JSON.parse(line) as Record<string, unknown>;
-    } catch {
-      continue;
-    }
-    if (envelope.type !== "match") {
-      continue;
-    }
-    const data = envelope.data as { path?: { text?: string }; line_number?: number; lines?: { text?: string } } | undefined;
-    const path = data?.path?.text;
-    const lineNumber = data?.line_number;
-    const text = data?.lines?.text;
-    if (typeof path === "string" && typeof lineNumber === "number" && typeof text === "string") {
-      matches.push({ path, line: lineNumber, text });
-    }
-  }
-  return matches;
-}
