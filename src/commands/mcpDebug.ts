@@ -316,8 +316,7 @@ function buildNativeSearchPerfAttributes(normalized: ReturnType<typeof normalize
     searchInvocation: normalized.perf?.searchInvocation,
     normalization: normalized.perf?.normalization,
     nativeSearch: normalized.perf?.searchInvocation,
-    bundledRipgrep: normalized.perf?.ripgrepMetrics,
-    ripgrepMetrics: normalized.perf?.ripgrepMetrics,
+    searchMetrics: normalized.perf?.searchMetrics,
   };
 }
 
@@ -327,8 +326,7 @@ function buildNativeSearchEnvelopePerfAttributes(envelope: Awaited<ReturnType<Se
     : {};
   return {
     nativeSearch: { command: envelope.command },
-    bundledRipgrep: metrics.ripgrepMetrics,
-    ripgrepMetrics: metrics.ripgrepMetrics,
+    searchMetrics: metrics.searchMetrics,
   };
 }
 

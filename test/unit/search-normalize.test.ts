@@ -46,7 +46,7 @@ describe("normalizeXrayResult", () => {
     assert.ok(result.warnings.includes("search timed out"));
   });
 
-  it("normalizes native envelopes and exposes ripgrep metrics", () => {
+  it("normalizes native envelopes and exposes native search metrics", () => {
     const envelope: NativeSearchEnvelope = {
       ok: true,
       command: "search",
@@ -57,7 +57,7 @@ describe("normalizeXrayResult", () => {
         summary: { matchCount: 1, truncated: true, timedOut: true },
       },
       metrics: {
-        ripgrepMetrics: { searches: 2, bytesSearched: 8192, matches: 1 },
+        searchMetrics: { searches: 2, childRunMs: 7 },
       },
     };
     const result = normalizeSearchResult(envelope, "content", {
@@ -72,7 +72,7 @@ describe("normalizeXrayResult", () => {
     assert.ok(result.warnings.includes("native warning"));
     assert.ok(result.warnings.includes("results truncated by max"));
     assert.ok(result.warnings.includes("search timed out"));
-    assert.deepEqual(result.perf?.ripgrepMetrics, { searches: 2, bytesSearched: 8192, matches: 1 });
+    assert.deepEqual(result.perf?.searchMetrics, { searches: 2, childRunMs: 7 });
     assert.equal(result.perf?.xrayMetrics, undefined);
   });
 

@@ -4,7 +4,7 @@ import { createNativeSearchClient } from "../../src/core/search/searchClient.js"
 import type { ContentSearchOptions, ContentSearchResult, NativeFileSearchResult } from "../../src/core/search/types.js";
 
 describe("createNativeSearchClient", () => {
-  it("emits ripgrep metrics only for explicit perf requests", async () => {
+  it("emits search metrics only for explicit perf requests", async () => {
     const seen: ContentSearchOptions[] = [];
     const client = createNativeSearchClient({
       runContentSearch: async (options) => {
@@ -13,7 +13,7 @@ describe("createNativeSearchClient", () => {
           kind: "content",
           matches: [{ path: "src/a.ts", line: 3, text: "needle" }],
           warnings: ["native warning"],
-          metrics: { searches: 2, bytesSearched: 123, matches: 1 },
+          metrics: { searches: 2, childRunMs: 5 },
         } satisfies ContentSearchResult;
       },
       runFileSearch: async () => {
@@ -50,12 +50,9 @@ describe("createNativeSearchClient", () => {
       perf: true,
     });
     assert.deepEqual(perfEnvelope.metrics, {
-      ripgrepMetrics: {
+      searchMetrics: {
         searches: 2,
-        bytesSearched: 123,
-        bytesPrinted: undefined,
-        matchedLines: undefined,
-        matches: 1,
+        childRunMs: 5,
       },
     });
   });

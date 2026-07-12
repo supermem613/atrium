@@ -125,7 +125,7 @@ describe("CLI perf spans and search metrics", { concurrency: false }, () => {
     assert.equal(capturedInput?.timeoutMs, defaultLongRunningTimeoutMs);
   });
 
-  it("mcp-grep --perf preserves native search invocation, normalization, and bundled-ripgrep perf metadata", async () => {
+  it("mcp-grep --perf preserves native search invocation, normalization, and native search perf metadata", async () => {
     const fixture = await withTempFixture();
     const fakeSearchClient: XraySearchClientLike = {
       async run() {
@@ -137,13 +137,9 @@ describe("CLI perf spans and search metrics", { concurrency: false }, () => {
             summary: { matchCount: 1 },
           },
           metrics: {
-            ripgrepMetrics: {
+            searchMetrics: {
               searches: 1,
-              spawnCallMs: 1,
-              spawnReadyMs: 2,
               childRunMs: 3,
-              childTotalMs: 6,
-              parseMs: 0.5,
             },
           },
         };
@@ -163,8 +159,7 @@ describe("CLI perf spans and search metrics", { concurrency: false }, () => {
     assert.ok("searchInvocation" in attributes, "expected search invocation attributes");
     assert.ok("normalization" in attributes, "expected normalization attributes");
     assert.ok("nativeSearch" in attributes, "expected native Atrium search perf attributes");
-    assert.ok("bundledRipgrep" in attributes, "expected bundled-ripgrep perf attributes");
-    assert.ok("ripgrepMetrics" in attributes, "expected detailed ripgrep metrics");
+    assert.ok("searchMetrics" in attributes, "expected native search metrics");
     const spans = perf.spans as Array<Record<string, unknown>>;
     const searchSpan = spans.find((span) => span.name === "search");
     const normalizeSpan = spans.find((span) => span.name === "normalize");
@@ -172,9 +167,9 @@ describe("CLI perf spans and search metrics", { concurrency: false }, () => {
     assert.ok(normalizeSpan);
     assert.ok((searchSpan.durationMs as number) > 0, "expected search work to have a measured duration");
     assert.ok((normalizeSpan.durationMs as number) >= 0, "expected normalization to be measured separately");
-    const ripgrepMetrics = (searchSpan.attributes as Record<string, unknown>).ripgrepMetrics as Record<string, unknown>;
-    for (const field of ["spawnCallMs", "spawnReadyMs", "childRunMs", "childTotalMs", "parseMs"]) {
-      assert.equal(typeof ripgrepMetrics[field], "number", `expected numeric ${field}`);
+    const searchMetrics = (searchSpan.attributes as Record<string, unknown>).searchMetrics as Record<string, unknown>;
+    for (const field of ["searches", "childRunMs"]) {
+      assert.equal(typeof searchMetrics[field], "number", `expected numeric ${field}`);
     }
   });
 

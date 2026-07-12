@@ -29,24 +29,16 @@ export interface XrayMetricsPerfAttributes {
   matchesReturned?: number;
 }
 
-export interface RipgrepMetricsPerfAttributes {
+export interface NativeSearchPerfMetrics {
   searches?: number;
-  bytesSearched?: number;
-  bytesPrinted?: number;
-  matchedLines?: number;
-  matches?: number;
-  spawnCallMs?: number;
-  spawnReadyMs?: number;
   childRunMs?: number;
-  childTotalMs?: number;
-  parseMs?: number;
 }
 
 export interface SearchPerfMetadata {
   searchInvocation?: SearchInvocationPerfAttributes;
   normalization?: SearchNormalizationPerfAttributes;
   xrayMetrics?: XrayMetricsPerfAttributes;
-  ripgrepMetrics?: RipgrepMetricsPerfAttributes;
+  searchMetrics?: NativeSearchPerfMetrics;
 }
 
 export interface NormalizedContentResult {
@@ -120,7 +112,7 @@ export interface NativeSearchEnvelope {
   error?: string;
   hint?: string;
   metrics?: {
-    ripgrepMetrics?: RipgrepMetricsPerfAttributes;
+    searchMetrics?: NativeSearchPerfMetrics;
   } | unknown;
 }
 
@@ -180,15 +172,7 @@ export interface SmartPlanOptions {
 
 export interface ContentSearchRunMetrics {
   searches?: number;
-  bytesSearched?: number;
-  bytesPrinted?: number;
-  matchedLines?: number;
-  matches?: number;
-  spawnCallMs?: number;
-  spawnReadyMs?: number;
   childRunMs?: number;
-  childTotalMs?: number;
-  parseMs?: number;
 }
 
 export interface ContentSearchInvocation {

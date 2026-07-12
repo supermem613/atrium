@@ -184,7 +184,7 @@ function parseJsonPayload(stdout: string): CliPayload {
 
 function assertSearchPerfTelemetry(perfReport: { spans?: Array<{ attributes?: Record<string, unknown> }> }): void {
   const spans = perfReport.spans ?? [];
-  assert.ok(spans.some((span) => span.attributes?.ripgrepMetrics !== undefined), "expected native ripgrep metrics in perf spans");
+  assert.ok(spans.some((span) => span.attributes?.searchMetrics !== undefined), "expected native search metrics in perf spans");
   assert.ok(spans.every((span) => span.attributes?.xrayMetrics === undefined), "expected no xray metrics in native perf spans");
 }
 
