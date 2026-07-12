@@ -97,6 +97,8 @@ advertises are composed from only the enabled surfaces and are sent once at the
 MCP `initialize` handshake, so changing the enabled surfaces takes effect on the
 next server start. The `atrium-mcp` entrypoint honors `--surface` identically.
 
+Each surface also advertises its own behavioral guardrails, not just its tool contract. The `read` surface carries read-safety guidance and the `search` surface carries search-safety guidance, so disabling a surface removes both its tools and its guardrails from the advertised instructions. This keeps the advertised guidance fine-tuned to exactly the functionality Atrium exposes.
+
 `atrium mcp-config --surface <names>` derives its output from the same
 selection: with no `--surface` it emits today's `tools: ["*"]`; for a restricted
 selection it emits the `--surface` launch argument and a `tools` allowlist
@@ -106,6 +108,36 @@ subset of what the server registers.
 ```bash
 atrium mcp-config --surface core,read
 ```
+
+## Always-on instructions extension
+
+The MCP `instructions` composed above are advertised at the `initialize`
+handshake, but some hosts (including Copilot CLI) do not inject that field into
+model context. Atrium ships a companion Copilot CLI extension that composes the
+same surface-tailored text and injects it as `additionalContext` on every turn
+and at session start, so the guardrails reach the model reliably and survive
+context compaction.
+
+Install it once:
+
+```bash
+node scripts/install-extension-shim.mjs
+```
+
+This writes a redirect shim into `~/.copilot/extensions/atrium/` that imports the
+extension from this repo, so rebuilding the repo updates the injected
+instructions with no reinstall. The extension reads the same `--surface`
+selection from `mcp-config.json` as the server, so the injected guardrails always
+match the surfaces the server exposes.
+
+When the `search` surface is enabled the same extension also enforces the search
+policy: it registers deny hooks that reject raw `rg`, `grep`, `git grep`, `find`,
+`findstr`, `xray`, and `Select-String` use, shell commands that call those
+binaries, and `atrium run` calls that spawn a raw search binary, steering the
+model back to `atrium-find-files`, `atrium-grep`, and `atrium-grep-code`.
+Enforcement is gated on the search surface, so a build without `search` exposes
+no search verbs and blocks nothing. This replaces the former standalone
+search-policy extension, which is no longer needed.
 
 ## Debug the MCP locally
 

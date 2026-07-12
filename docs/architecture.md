@@ -284,6 +284,14 @@ registry order. These instructions are advertised once, during the MCP
 `initialize` handshake. There is no live toggle: re-flighting a surface is a
 configuration change plus a session restart.
 
+Each surface's instruction fragment advertises surface-tailored guardrails
+alongside its tool contract: `core` carries tool-selection and output-handling
+guardrails, `read` carries read-safety guardrails, and `search` carries
+search-safety guardrails. Because instructions are composed from only the
+enabled surfaces, disabling a surface removes its guardrails as well as its
+tools, so the advertised guidance stays fine-tuned to the exposed
+functionality.
+
 `core` is required and cannot be disabled, because the handoff contract and
 `operation-wait` live there and every other surface depends on it.
 `resolveSurfaceSelection` validates a requested selection (rejecting unknown
@@ -298,12 +306,56 @@ always a subset of the tools the server actually registers. The default (no
 `--surface`) keeps every surface enabled and emits today's `tools: ["*"]`
 configuration unchanged.
 
+### Delivering instructions to the model
+
+Advertising the composed instructions at the MCP `initialize` handshake is
+necessary but not sufficient: some hosts, including Copilot CLI, do not inject an
+MCP server's `instructions` field into model context. Atrium therefore ships a
+companion Copilot CLI extension in `extension\atrium.mjs` that composes the
+exact same surface-tailored text and injects it as `additionalContext` from the
+`onSessionStart` and `onUserPromptSubmitted` hooks, so the guardrails reach the
+model at cold start and on every turn, surviving context compaction.
+
+The extension reads the same `mcpServers.atrium.args` selection from
+`mcp-config.json` that launches the server, so changing `--surface` re-tailors
+the injected instructions with no separate coordination. The selection parsing
+and composition are the pure functions in `src\mcp\extensionInstructions.ts`,
+which reuse the surface registry so the injected text can never drift from what
+the server advertises. Install the extension with
+`node scripts\install-extension-shim.mjs`, which writes a redirect shim into
+`~\.copilot\extensions\atrium\` that imports the extension entry from this repo.
+The entry lives at `extension\atrium.mjs`, outside the `.github\extensions`
+project auto-discovery path, so the shim loads it exactly once as a user
+extension even when the working directory is the Atrium repo itself.
+
+### Enforcing the search policy
+
+The same extension that advertises the search primitives also enforces them.
+When the `search` surface is enabled it registers `onPermissionRequest` and
+`onPreToolUse` deny hooks that reject raw search attempts, direct `rg`, `grep`,
+`git grep`, `find`, `findstr`, `xray`, and `Select-String` tool use, shell
+commands that shell out to those binaries, and `atrium run` calls that spawn a
+raw search binary. Each denial returns feedback that points the model back at
+`atrium-find-files`, `atrium-grep`, and `atrium-grep-code`. The decision logic
+lives in `src\mcp\searchPolicy.ts` as the pure `evaluatePreToolUse` and
+`evaluatePermissionRequest` functions, gated on the search surface through
+`isSearchSurfaceEnabled`. Gating enforcement on the same surface that advertises
+the primitives means a build with `search` disabled exposes no search verbs and
+also blocks nothing, so the model is never stranded with no way to search. This
+folds the former standalone `search-policy` extension into Atrium, so a single
+extension now both advertises and enforces the policy and the separate extension
+is removed.
+
 ## Source map
 
 | File | Responsibility |
 | --- | --- |
 | `src\server.ts` | Composes advertised instructions and registers the enabled surfaces' tools from the surface registry. |
 | `src\mcp\surfaces.ts` | Surface registry: the single source of truth for tool registration, per-surface instruction fragments, the surface selector, and the tool-name allowlist. |
+| `src\mcp\extensionInstructions.ts` | Pure `--surface` selection parsing and instruction composition shared with the Copilot CLI extension, reusing the surface registry. Exposes `isSearchSurfaceEnabled` so the extension can gate its search-policy deny hooks on the same surface that advertises the search primitives. |
+| `src\mcp\searchPolicy.ts` | Pure search-policy decision logic (`evaluatePreToolUse`, `evaluatePermissionRequest`, and the blocking predicates) that the extension wires as surface-gated deny hooks, folding the former standalone search-policy extension into Atrium. |
+| `extension\atrium.mjs` | Copilot CLI extension entry that injects the composed instructions as `additionalContext` every turn, since the host does not inject the MCP `instructions` field, and registers the surface-gated search-policy deny hooks. Kept outside `.github\extensions` so it loads only once as a user extension. |
+| `scripts\install-extension-shim.mjs` | Installs the extension by writing a redirect shim into the personal Copilot extensions directory. |
 | `src\core\executionQueue.ts` | In-memory max-concurrency limiter for child process starts. |
 | `src\core\introspect.ts` | Implements `<tool> schema` then `<tool> --help` discovery. |
 | `src\core\runner.ts` | Process spawning, shell denylist, Windows resolution, npm shim handling, timeout, stdout/stderr capture. |

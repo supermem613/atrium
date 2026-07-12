@@ -325,6 +325,10 @@ const instructionPreamble = [
   "Hard rules, enforced by the server:",
   "1. Shells are denied. Do not pass pwsh, powershell, bash, cmd, sh, or zsh as tool. Call the target binary directly with an args vector. Never pass a single shell command string.",
   "2. There is one execution behavior. Every run and search starts, waits briefly, then returns the result if it finished, otherwise returns a durable operationId. A handoff is not an error.",
+  "",
+  "Availability and authority:",
+  "- MCP exposure is the authority. When Atrium tools are exposed in the callable tool list, call them directly and do not rediscover them with tool search, extension reload, or auxiliary lookups.",
+  "- Atrium tools may be deferred or absent from the initial callable set. Investigate availability only when an actual call is not callable or fails as unavailable. Never treat Atrium as a built-in tool.",
 ].join("\n");
 
 const coreInstructionFragment = [
@@ -352,6 +356,11 @@ const readInstructionFragment = [
   "Read contract:",
   "- The read tool takes a path plus an optional startLine and either endLine or count. Line numbers are 1-based and positive.",
   "- A successful read returns ok, path, range, meta, and content. Treat the returned range together with meta.totalLines as authoritative for end-of-file and clamping instead of guessing bounds.",
+  "",
+  "Read safety:",
+  "- Use the read tool only for exact paths that are known to exist or came from an owning tool's file-value output. Do not use a read as an existence probe.",
+  "- Do not treat paths copied from old sessions, deleted worktrees, or guessed names as known to exist. Re-derive the current path first; use find-files to discover it, then read the exact match.",
+  "- Exact path existence is not enough for policy-restricted content. Use the approved route for such content instead of reading it directly.",
 ].join("\n");
 
 const searchInstructionFragment = [
@@ -360,6 +369,11 @@ const searchInstructionFragment = [
   "- grep and grep-code take a single literal query or a queries array of one or more patterns to match any of several patterns. Set regex true to treat patterns as regular expressions. grep and find-files are unrestricted and include hidden, gitignored, and vendor files. grep-code is ignore-aware and skips hidden, gitignored, and vendor files.",
   "- Patterns match literally by default. Narrow with glob and exclude, and cap results with max. Results are structured JSON: file matches carry matches[].path, and content matches also carry matches[].line and matches[].text. Surface any normalization warnings.",
   "- These are first-class Atrium MCP tools. Use them for search instead of shelling out.",
+  "",
+  "Search safety:",
+  "- Always pass a root. Use find-files for path or name discovery, grep-code for git-aware code content search, and grep for unrestricted content search.",
+  "- Do not fall back to a separate shell search or a separate glob tool for discovery. These primitives replace shelling out to rg, grep, find, findstr, or Select-String.",
+  "- On a timeout, retry narrower: a tighter glob, a more specific query or queries, or a lower max. Never fall back to a raw shell search.",
 ].join("\n");
 
 // Ordered so instruction composition reproduces the historical layout: core
