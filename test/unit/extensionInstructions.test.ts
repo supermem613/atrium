@@ -2,6 +2,7 @@ import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
 import {
   composeInstructionsForSelection,
+  describeEnabledSurfaces,
   parseSurfaceSelectionFromArgs,
 } from "../../src/mcp/extensionInstructions.js";
 
@@ -68,5 +69,25 @@ describe("extension instruction tailoring", () => {
     const text = composeInstructionsForSelection(["core", "read"]);
     assert.ok(text.includes(READ_MARKER));
     assert.ok(!text.includes(SEARCH_MARKER));
+  });
+});
+
+describe("extension active-surface summary", () => {
+  it("lists every surface and verb for the default selection", () => {
+    const summary = describeEnabledSurfaces(undefined);
+    assert.equal(
+      summary,
+      "surfaces: core, read, search | verbs: schema, run, operation-wait, read, grep, grep-code, find-files",
+    );
+  });
+
+  it("lists only the core verbs when only core is enabled", () => {
+    const summary = describeEnabledSurfaces(["core"]);
+    assert.equal(summary, "surfaces: core | verbs: schema, run, operation-wait");
+  });
+
+  it("reflects a core plus read selection without search verbs", () => {
+    const summary = describeEnabledSurfaces(["core", "read"]);
+    assert.equal(summary, "surfaces: core, read | verbs: schema, run, operation-wait, read");
   });
 });

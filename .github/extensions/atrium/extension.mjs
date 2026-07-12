@@ -4,6 +4,7 @@ import path from "node:path";
 import { joinSession } from "@github/copilot-sdk/extension";
 import {
   composeInstructionsForSelection,
+  describeEnabledSurfaces,
   parseSurfaceSelectionFromArgs,
 } from "../../../dist/mcp/extensionInstructions.js";
 
@@ -25,12 +26,34 @@ async function readSurfaceSelection() {
 }
 
 // A broken or missing config must never crash the session or leave the model
-// with no Atrium guardrails, so fall back to the default all-surface text.
-let instructions;
+// with no Atrium guardrails, so fall back to the default all-surface text. The
+// injected instructions and the logged summary share one effective selection so
+// the log never disagrees with what was actually injected.
+let selection;
 try {
-  instructions = composeInstructionsForSelection(await readSurfaceSelection());
+  selection = await readSurfaceSelection();
+} catch {
+  selection = undefined;
+}
+
+let instructions;
+let summary;
+try {
+  instructions = composeInstructionsForSelection(selection);
+  summary = describeEnabledSurfaces(selection);
 } catch {
   instructions = composeInstructionsForSelection(undefined);
+  summary = describeEnabledSurfaces(undefined);
+}
+
+// Version comes from the repo package.json at runtime, matching how cli.ts and
+// server.ts source it, so the logged version never drifts from the published one.
+let version = "unknown";
+try {
+  const pkg = JSON.parse(await readFile(new URL("../../../package.json", import.meta.url), "utf8"));
+  version = pkg.version ?? version;
+} catch {
+  // Leave the default when the package manifest cannot be read.
 }
 
 const session = await joinSession({
@@ -41,4 +64,4 @@ const session = await joinSession({
   },
 });
 
-await session.log("Atrium instructions extension active.", { ephemeral: true });
+await session.log(`Atrium active: v${version} | ${summary}`, { ephemeral: true });

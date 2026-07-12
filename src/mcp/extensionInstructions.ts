@@ -1,6 +1,7 @@
 import {
   composeInstructions,
   createSurfaces,
+  resolveSurfaceSelection,
   selectEnabledSurfaces,
   type SurfaceDeps,
 } from "./surfaces.js";
@@ -56,4 +57,13 @@ function splitSurfaces(value: string): string[] {
 // misconfigured server never leaves the model with no Atrium guardrails.
 export function composeInstructionsForSelection(selection: readonly string[] | undefined): string {
   return composeInstructions(selectEnabledSurfaces(createSurfaces(instructionStubDeps), selection));
+}
+
+// Builds the concise one-line summary of what Atrium exposes for a selection, so
+// the session log states exactly which surfaces and verbs are on. Throws through
+// resolveSurfaceSelection on an invalid selection, which the extension turns into
+// the default summary alongside the default instructions fallback.
+export function describeEnabledSurfaces(selection: readonly string[] | undefined): string {
+  const resolved = resolveSurfaceSelection(selection);
+  return `surfaces: ${resolved.surfaces.join(", ")} | verbs: ${resolved.toolNames.join(", ")}`;
 }
