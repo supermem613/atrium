@@ -77,3 +77,80 @@ describe("native search runner (in-process)", () => {
     );
   });
 });
+
+describe("native search runner (concurrent calls)", () => {
+  let croot: string;
+  const fileCount = 12;
+
+  // Padded, terminated tokens so a literal query for one file's token can never
+  // be a substring of another file's token. tok003end must match only f3.
+  const token = (i: number) => `tok${String(i).padStart(3, "0")}end`;
+  const allFiles = () => Array.from({ length: fileCount }, (_, i) => `f${i}.txt`).sort();
+
+  before(() => {
+    croot = mkdtempSync(join(tmpdir(), "atrium-conc-"));
+    execFileSync("git", ["init", "-q"], { cwd: croot });
+    for (let i = 0; i < fileCount; i++) {
+      writeFileSync(join(croot, `f${i}.txt`), `${token(i)} sharedALLmarker\n`, { encoding: "utf8" });
+    }
+  });
+
+  after(() => {
+    if (croot) {
+      rmSync(croot, { recursive: true, force: true });
+    }
+  });
+
+  // Each napi AsyncTask owns its inputs and runs on the libuv threadpool. Firing
+  // far more concurrent searches than the default 4-thread pool forces real
+  // parallel execution plus queuing. A correct addon must never leak one call's
+  // result into another, so distinct queries must each resolve to only their file.
+  it("content: parallel distinct-query searches each return only their own match", async () => {
+    const results = await Promise.all(
+      Array.from({ length: fileCount }, (_, i) => runContentSearch({ query: token(i), root: croot })),
+    );
+    results.forEach((res, i) => {
+      const paths = res.matches.map((m) => m.path).sort();
+      assert.deepEqual(paths, [`f${i}.txt`], `query ${token(i)} must match only f${i}.txt`);
+    });
+  });
+
+  it("content: many parallel same-query searches all return the full identical result set", async () => {
+    const runs = 32;
+    const results = await Promise.all(
+      Array.from({ length: runs }, () => runContentSearch({ query: "sharedALLmarker", root: croot })),
+    );
+    for (const res of results) {
+      const paths = res.matches.map((m) => m.path).sort();
+      assert.deepEqual(paths, allFiles());
+    }
+  });
+
+  it("mixed content and file searches run in parallel without interfering", async () => {
+    const ops: Promise<{ kind: "content" | "files"; index: number; paths: string[] }>[] = [];
+    for (let i = 0; i < fileCount; i++) {
+      ops.push(
+        runContentSearch({ query: token(i), root: croot }).then((r) => ({
+          kind: "content",
+          index: i,
+          paths: r.matches.map((m) => m.path).sort(),
+        })),
+      );
+      ops.push(
+        runNativeFileSearch({ root: croot }).then((r) => ({
+          kind: "files",
+          index: i,
+          paths: r.matches.map((m) => m.path).sort(),
+        })),
+      );
+    }
+    const results = await Promise.all(ops);
+    for (const res of results) {
+      if (res.kind === "content") {
+        assert.deepEqual(res.paths, [`f${res.index}.txt`]);
+      } else {
+        assert.deepEqual(res.paths, allFiles());
+      }
+    }
+  });
+});
