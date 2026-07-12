@@ -1,6 +1,6 @@
 # Atrium Architecture
 
-Atrium is a stdio MCP server that gives agents a structured path for single CLI and executable calls plus local search primitives. It is not a shell, not a scripting runtime, and not a curated registry of every tool Marcus Markiewicz uses. It exposes these MCP tools:
+Atrium is a Copilot CLI extension that supersedes the host's built-in tool primitives with faster, more powerful versions. Its stdio MCP server gives agents a structured path for single CLI and executable calls plus local search primitives. It is not a shell, not a scripting runtime, and not a curated registry of every tool Marcus Markiewicz uses. It exposes these MCP tools:
 
 - `schema` discovers how a target executable wants to be called.
 - `run` executes a target executable with an argument vector and returns a compact JSON result.

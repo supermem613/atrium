@@ -34,7 +34,7 @@ const program = new Command();
 
 program
   .name("atrium")
-  .description("Agent-friendly MCP wrapper for running CLIs and executables with structured JSON results.")
+  .description("Copilot CLI extension that supersedes built-in tool primitives with faster, more powerful versions out of the box.")
   .version(VERSION);
 
 program

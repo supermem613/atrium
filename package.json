@@ -1,7 +1,7 @@
 {
   "name": "atrium",
   "version": "2.7.0",
-  "description": "Agent-only MCP wrapper for running CLIs and executables with structured JSON results.",
+  "description": "Copilot CLI extension that supersedes built-in tool primitives with faster, more powerful versions out of the box.",
   "type": "module",
   "bin": {
     "atrium": "./dist/cli.js",

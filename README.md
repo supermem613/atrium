@@ -1,8 +1,8 @@
 # atrium
 
-> Agent-first MCP wrapper for running CLIs and executables with structured JSON results.
+> Copilot CLI extension that supersedes built-in tool primitives with faster, more powerful versions out of the box.
 
-Atrium is an MCP server for agents. It exposes a small surface:
+Atrium is a Copilot CLI extension that supersedes the built-in tool primitives with faster, more powerful versions. Its MCP server exposes a small tool surface:
 
 - `atrium.schema` — discover a tool's invocation shape by asking the tool itself.
 - `atrium.run` — run a named CLI or executable with structured args and JSON results.
