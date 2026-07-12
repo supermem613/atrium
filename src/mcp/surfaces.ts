@@ -337,6 +337,12 @@ const coreInstructionFragment = [
   "- An object {file: path} is replaced with the UTF-8 contents of that file.",
   "- A tool result is itself either an inline value or an object {file, bytes}; read that file to get the full content when it is too large to inline.",
   "- Use the schema tool to discover a CLI invocation shape instead of scraping help through a shell.",
+  "",
+  "Tool selection and honesty:",
+  "- Prefer this server for running named CLIs and binaries over a separate shell tool. Use a raw shell only for ad-hoc scripting, control flow, pipes, or interactive processes.",
+  "- When these tools are exposed, call them directly and never claim a call happened without an actual tool result. Never invent a tool or verb name.",
+  "- An object {file: path} used as stdin must point at a file that already exists on disk. Write generated content to disk first, or pass it inline.",
+  "- Do not post-process a file-backed tool result through a separate shell. Read it with the read tool, or rerun the producing command with narrower output.",
 ].join("\n");
 
 // Read-tool contract migrated from the caller's global guidance so the model
