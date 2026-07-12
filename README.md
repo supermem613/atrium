@@ -282,7 +282,21 @@ npm run benchmark           # compare direct, PowerShell-wrapped, and Atrium MCP
 npm run clean               # remove dist/
 ```
 
-CI runs on Ubuntu + Windows via GitHub Actions (`.github/workflows/ci.yml`).
+CI runs on Ubuntu + Windows via GitHub Actions (`.github/workflows/ci.yml`),
+caching the Rust build with `Swatinem/rust-cache` and pinning `actions/checkout`
+and `actions/setup-node` at v5.
+
+The test runner (`test/run.mjs`) runs each test file in its own child process
+with bounded parallelism. Concurrency defaults to `min(cpu count, 4)`; override
+it with `ATRIUM_TEST_CONCURRENCY`. Each child gets a sandboxed `HOME` so tests
+cannot read your real `~/.atrium/` state; set `ATRIUM_TEST_REAL_HOME=1` to opt
+out. Per-test time budgets live in
+[`test/perf-budgets.json`](test/perf-budgets.json) (`defaultTestMs`,
+`slowThresholdMs`, and per-test `maxMs` overrides matched by `file` and
+`nameIncludes`); a test that exceeds its budget fails the run. Every run writes a
+machine-readable report to `test-results/atrium-tests.json`; CI uploads
+`test-results/` on failure and emits inline `::error` annotations for failing
+tests.
 
 Architecture details: [docs/architecture.md](docs/architecture.md).
 
@@ -305,7 +319,8 @@ docs/
 scripts/
   benchmark-atrium.mjs # Performance harness for direct vs PowerShell vs Atrium
 test/
-  run.mjs             # Cross-platform test runner (HOME-sandboxed)
+  run.mjs             # Cross-platform parallel test runner (HOME-sandboxed)
+  perf-budgets.json   # Per-test time budgets enforced by the runner
   tsconfig.json       # Test type-check config
   unit/               # Unit tests (*.test.ts)
   integration/        # Integration tests (*.test.ts)
