@@ -67,3 +67,11 @@ export function describeEnabledSurfaces(selection: readonly string[] | undefined
   const resolved = resolveSurfaceSelection(selection);
   return `surfaces: ${resolved.surfaces.join(", ")} | verbs: ${resolved.toolNames.join(", ")}`;
 }
+
+// Reports whether the search surface is in the effective selection so the
+// extension can gate its raw-search deny hooks on the same surface that
+// advertises the search primitives. When search is disabled the primitives are
+// gone, so blocking raw search would strand the model with no way to search.
+export function isSearchSurfaceEnabled(selection: readonly string[] | undefined): boolean {
+  return resolveSurfaceSelection(selection).surfaces.includes("search");
+}
