@@ -54,7 +54,7 @@ test("content search deduplicates matches and caps the global result set", async
   assert.ok(result.warnings.some((warning) => warning.includes("display capped at 2 matches")));
 });
 
-test("content search surfaces timeout warnings and ripgrep metrics", async () => {
+test("content search surfaces timeout warnings and aggregates ripgrep metrics across lanes", async () => {
   const runner: ContentSearchRunner = async () => ({
     args: [],
     matches: [],
@@ -67,9 +67,107 @@ test("content search surfaces timeout warnings and ripgrep metrics", async () =>
   const result = await runContentSearch({ query: "needle", root: "/tmp", timeoutMs: 59000, perf: true, runner });
 
   assert.ok(result.warnings.some((warning) => warning.includes("search stopped after 59000 ms")));
-  assert.equal(result.metrics?.searches, 2);
-  assert.equal(result.metrics?.bytesSearched, 4096);
-  assert.equal(result.metrics?.bytesPrinted, 256);
+  // A literal query fans out across the markdown, code, and everything lanes, so the runner is
+  // invoked once per lane and the reported metrics are the sum over all three invocations.
+  assert.equal(result.metrics?.searches, 6);
+  assert.equal(result.metrics?.bytesSearched, 12288);
+  assert.equal(result.metrics?.bytesPrinted, 768);
+});
+
+test("content search deduplicates identical warnings from every lane", async () => {
+  const runner: ContentSearchRunner = async () => ({
+    args: [],
+    matches: [],
+    warnings: ["partial result"],
+    timedOut: false,
+    truncated: false,
+    metrics: { searches: 1 },
+  });
+
+  const result = await runContentSearch({ query: "needle", root: "/tmp", runner });
+
+  assert.deepEqual(result.warnings, ["partial result"]);
+});
+
+test("content search runs every fanout lane for a literal query", async () => {
+  const seen: string[][] = [];
+  const runner: ContentSearchRunner = async (args) => {
+    seen.push(args);
+    return { args, matches: [], warnings: [], timedOut: false, truncated: false, metrics: { searches: 1 } };
+  };
+
+  await runContentSearch({ query: "needle", root: "/tmp", runner });
+
+  assert.equal(seen.length, 3);
+  assert.ok(seen.some((args) => args.includes("xraymarkdown")));
+  assert.ok(seen.some((args) => args.includes("xraycode")));
+});
+
+test("content search runs a single walk for regex queries", async () => {
+  const seen: string[][] = [];
+  const runner: ContentSearchRunner = async (args) => {
+    seen.push(args);
+    return { args, matches: [], warnings: [], timedOut: false, truncated: false, metrics: { searches: 1 } };
+  };
+
+  await runContentSearch({ query: "need.*", root: "/tmp", regex: true, runner });
+
+  assert.equal(seen.length, 1);
+  assert.ok(!seen[0].includes("-F"));
+});
+
+test("content search does not double-wrap fatal ripgrep errors", async () => {
+  const runner: ContentSearchRunner = async () => {
+    throw new Error("fatal ripgrep error: spawn rg.exe ENOENT");
+  };
+
+  await assert.rejects(
+    runContentSearch({ query: "needle", root: "/tmp", runner }),
+    (error: Error) => {
+      assert.equal(error.message, "fatal ripgrep error: spawn rg.exe ENOENT");
+      assert.ok(!error.message.includes("fatal ripgrep error: fatal ripgrep error:"));
+      return true;
+    },
+  );
+});
+
+test("content search finds matches when the root is a single file", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "atrium-content-file-root-"));
+  try {
+    const file = join(dir, "sample.ts");
+    await writeFile(file, "const needle = 1;\n", "utf8");
+
+    const result = await runContentSearch({ query: "needle", root: file });
+
+    assert.equal(result.matches.length, 1);
+    assert.equal(result.matches[0].text.includes("needle"), true);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("content search reports an invalid root instead of a misleading spawn error", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "atrium-content-missing-root-"));
+  const missing = join(dir, "does-not-exist");
+  try {
+    await assert.rejects(runContentSearch({ query: "needle", root: missing }), /invalid root/u);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("content search finds literal matches inside code files", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "atrium-content-code-lane-"));
+  try {
+    await writeFile(join(dir, "module.ts"), "export const distinctiveToken = 42;\n", "utf8");
+
+    const result = await runContentSearch({ query: "distinctiveToken", root: dir });
+
+    assert.equal(result.matches.length, 1);
+    assert.equal(result.matches[0].path.endsWith("module.ts"), true);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });
 
 test("content search turns fatal ripgrep errors into explicit failures", async () => {
