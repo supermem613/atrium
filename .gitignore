@@ -3,6 +3,7 @@ dist/
 .atrium/
 *.tgz
 *.log
+test-results/
 
 # Native addon (atrium-search) build artifacts
 crates/atrium-search/target/

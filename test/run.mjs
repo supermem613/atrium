@@ -5,7 +5,7 @@
 // Avoids `node --test` worker subprocesses (their IPC pipe intermittently
 // fails on Windows runners with deserialize errors). Spawns one child process
 // per file with a TAP reporter and aggregates the per-file summaries.
-import { mkdirSync, readdirSync, mkdtempSync, rmSync, readFileSync } from "node:fs";
+import { mkdirSync, readdirSync, mkdtempSync, rmSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir, cpus } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL, fileURLToPath } from "node:url";
@@ -93,6 +93,48 @@ export function parseTestTimings(tapText, file) {
   return timings;
 }
 
+// Build a machine-readable report object from per-file results.
+export function buildReport(fileResults) {
+  const summary = { files: fileResults.length, tests: 0, pass: 0, fail: 0, durationMs: 0 };
+  const files = [];
+  for (const result of fileResults) {
+    const tests = result.tests ?? 0;
+    const pass = result.pass ?? 0;
+    const fail = result.fail ?? 0;
+    const durationMs = result.durationMs ?? 0;
+    summary.tests += tests;
+    summary.pass += pass;
+    summary.fail += fail;
+    summary.durationMs += durationMs;
+    files.push({ file: result.file, tests, pass, fail, durationMs });
+  }
+  return { schemaVersion: 1, generatedAt: new Date().toISOString(), summary, files };
+}
+
+// Extract GitHub Actions error annotations from a failing file's TAP output.
+// Mirrors the `::error file=,line=,col=,title=::message` format so CI surfaces
+// the failure inline on the offending source line.
+export function extractGitHubAnnotations(tapText, file) {
+  const titleMatch = tapText.match(/^\s*not ok\s+\d+\s+-\s+(.+)$/m);
+  const title = titleMatch ? titleMatch[1].trim() : "";
+  const messageMatch = tapText.match(/^\s*(?:error|message):\s*'([^']*)'/m);
+  const message = messageMatch ? messageMatch[1].trim() : "";
+  if (!title && !message) {
+    return [];
+  }
+  // Prefer the repo-relative test path we control for the annotation target so
+  // GitHub can link the annotation to the source. The absolute location path
+  // node:test reports is only used for its trailing line:col.
+  const target = file.split("\\").join("/");
+  const locationMatch = tapText.match(/^\s*location:\s*'([^']+)'/m);
+  const parts = (locationMatch ? locationMatch[1] : "").match(/:(\d+):(\d+)'?\s*$/);
+  const body = message || "test failed";
+  if (!parts) {
+    return [`::error file=${target},title=${title}::${body}`];
+  }
+  return [`::error file=${target},line=${parts[1]},col=${parts[2]},title=${title}::${body}`];
+}
+
 function loadBudgets(path) {
   try {
     const parsed = JSON.parse(readFileSync(path, "utf8"));
@@ -124,6 +166,7 @@ function runOneFile(file, baseEnv, sandboxRoot) {
       env.LOCALAPPDATA = join(home, "AppData", "Local");
     }
     const child = spawn("node", ["--import", "tsx", "--test-reporter=tap", file], { env });
+    const startedAt = Date.now();
     let stdout = "";
     let stderr = "";
     child.stdout.on("data", (chunk) => {
@@ -139,7 +182,7 @@ function runOneFile(file, baseEnv, sandboxRoot) {
     };
     child.on("close", (code) => {
       cleanup();
-      resolve({ file, stdout, stderr, counts: parseTapCounts(stdout), failed: code !== 0 });
+      resolve({ file, stdout, stderr, counts: parseTapCounts(stdout), durationMs: Date.now() - startedAt, failed: code !== 0 });
     });
     child.on("error", (err) => {
       cleanup();
@@ -148,6 +191,7 @@ function runOneFile(file, baseEnv, sandboxRoot) {
         stdout,
         stderr: `${stderr}${err}`,
         counts: { tests: 0, pass: 0, fail: 0 },
+        durationMs: Date.now() - startedAt,
         failed: true,
       });
     });
@@ -196,6 +240,9 @@ async function main() {
     timings.push(...parseTestTimings(result.stdout, result.file));
     if (result.failed) {
       failedFiles.push(result.file);
+      for (const annotation of extractGitHubAnnotations(result.stdout, result.file)) {
+        console.log(annotation);
+      }
       if (result.counts.fail === 0) {
         totalFail += 1;
       }
@@ -218,6 +265,18 @@ async function main() {
     }
     exitCode = 1;
   }
+
+  const report = buildReport(results.map((result) => ({
+    file: result.file,
+    tests: result.counts.tests,
+    pass: result.counts.pass,
+    fail: result.counts.fail,
+    durationMs: result.durationMs,
+  })));
+  const reportDir = fileURLToPath(new URL("../test-results", import.meta.url));
+  mkdirSync(reportDir, { recursive: true });
+  writeFileSync(join(reportDir, "atrium-tests.json"), JSON.stringify(report, null, 2));
+
   process.exit(exitCode);
 }
 
