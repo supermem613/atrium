@@ -166,7 +166,10 @@ describe("search MCP tools", () => {
 
       const completed = await waitForOperation(client, started.operationId);
       assert.equal(completed.status, "completed");
-      assert.deepEqual(completed.result, { kind: "files", matches: [{ path: "src/slow.ts" }], warnings: [] });
+      const completedResult = completed.result as Record<string, unknown>;
+      assert.equal(typeof completedResult.timingMs, "number", "backgrounded search result should include timingMs");
+      delete completedResult.timingMs;
+      assert.deepEqual(completedResult, { kind: "files", matches: [{ path: "src/slow.ts" }], warnings: [] });
     } finally {
       await client.close();
       await serverTransport.close();
@@ -214,5 +217,10 @@ async function callJson(client: Client, name: string, args: Record<string, unkno
   assert.notEqual(firstContent, null);
   assert.equal("text" in firstContent, true);
   assert.equal(typeof firstContent.text, "string");
-  return JSON.parse(firstContent.text) as Record<string, unknown>;
+  const parsed = JSON.parse(firstContent.text) as Record<string, unknown>;
+  if (parsed.kind === "content" || parsed.kind === "files") {
+    assert.equal(typeof parsed.timingMs, "number", "search result should include timingMs");
+    delete parsed.timingMs;
+  }
+  return parsed;
 }

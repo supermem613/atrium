@@ -272,14 +272,25 @@ async function runSearchWithHandoff(
   search: () => Promise<unknown>,
   backgroundHandoffAfterMs: number,
 ): Promise<unknown> {
+  const startedAtMs = Date.now();
   const startedAt = new Date().toISOString();
-  const result = search();
-  const completed = await waitForResultOrTimeout(result, backgroundHandoffAfterMs);
+  const timed = search().then((value) => withTimingMs(value, Date.now() - startedAtMs));
+  const completed = await waitForResultOrTimeout(timed, backgroundHandoffAfterMs);
   if (completed !== undefined) {
     return completed;
   }
 
-  return adoptBackgroundRun({ startedAt, result: result.then((value) => stripPerfMetadata(value)) });
+  return adoptBackgroundRun({ startedAt, result: timed.then((value) => stripPerfMetadata(value)) });
+}
+
+// Records the wall-clock duration of the call as a top-level timingMs, matching
+// the run surface. Non-object results are returned unchanged.
+function withTimingMs<T>(value: T, timingMs: number): T {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return value;
+  }
+
+  return { ...(value as Record<string, unknown>), timingMs } as T;
 }
 
 async function waitForResultOrTimeout<T>(result: Promise<T>, timeoutMs: number): Promise<T | undefined> {

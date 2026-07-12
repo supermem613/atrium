@@ -124,6 +124,7 @@ These are MCP tools, not standalone CLI subcommands. The `atrium schema` command
 {
   "ok": true,
   "path": "C:\\repo\\src\\server.ts",
+  "timingMs": 2,
   "range": [2, 3],
   "meta": { "totalLines": 3, "bytes": 14 },
   "content": "two\nthree\n"
@@ -136,6 +137,7 @@ For large ranges, `content` uses the same file-value contract as command output:
 {
   "ok": true,
   "path": "C:\\repo\\large.txt",
+  "timingMs": 6,
   "range": [1, 500],
   "meta": { "totalLines": 900, "bytes": 50000 },
   "content": { "file": "C:\\Users\\...\\content.txt", "bytes": 12000 }

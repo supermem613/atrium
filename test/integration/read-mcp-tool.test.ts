@@ -41,19 +41,10 @@ describe("read MCP tool", () => {
       const meta = parsed.meta as Record<string, unknown>;
       assert.equal(meta.totalLines, 3);
       assert.equal(meta.bytes, Buffer.byteLength(fileContent, "utf8"));
-      assert.ok(meta.timing, "expected meta.timing");
-      const timing = meta.timing as Record<string, unknown>;
-      const totalMs = numberField(timing, "totalMs");
-      const statMs = numberField(timing, "statMs");
-      const readMs = numberField(timing, "readMs");
-      const sliceMs = numberField(timing, "sliceMs");
-      const materializeMs = numberField(timing, "materializeMs");
-      assert.equal(totalMs >= 0, true);
-      assert.equal(statMs >= 0, true);
-      assert.equal(readMs >= 0, true);
-      assert.equal(sliceMs >= 0, true);
-      assert.equal(materializeMs >= 0, true);
-      assert.equal(timing.contentBytes, Buffer.byteLength("two\nthree\n", "utf8"));
+      assert.equal(meta.timing, undefined, "default read should not expose the per-phase timing breakdown");
+      const timingMs = numberField(parsed, "timingMs");
+      assert.equal(timingMs >= 0, true);
+      assert.equal(parsed.perf, undefined, "default read should not expose perf detail");
       assert.equal(parsed.content, "two\nthree\n");
 
       const repeated = await callJson(client, "read", { path: filePath, startLine: 2, endLine: 99 });

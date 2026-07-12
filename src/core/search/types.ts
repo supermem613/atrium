@@ -53,6 +53,7 @@ export interface NormalizedContentResult {
   kind: "content";
   matches: SearchContentMatch[];
   warnings: string[];
+  timingMs?: number;
   perf?: SearchPerfMetadata;
 }
 
@@ -60,6 +61,7 @@ export interface NormalizedFilesResult {
   kind: "files";
   matches: SearchFileMatch[];
   warnings: string[];
+  timingMs?: number;
   perf?: SearchPerfMetadata;
 }
 

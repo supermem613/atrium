@@ -85,7 +85,8 @@ Atrium applies a fixed internal search deadline. Callers cannot tune search time
   "matches": [
     { "path": "src/server.ts" }
   ],
-  "warnings": []
+  "warnings": [],
+  "timingMs": 12
 }
 ```
 
@@ -97,11 +98,12 @@ Atrium applies a fixed internal search deadline. Callers cannot tune search time
   "matches": [
     { "path": "src/server.ts", "line": 42, "text": "const value = true;" }
   ],
-  "warnings": []
+  "warnings": [],
+  "timingMs": 12
 }
 ```
 
-Warnings from the native search engine, including truncated and timed-out results, are surfaced in `warnings`. Callers should show them instead of treating a partial result as clean.
+`timingMs` is how long the whole search call took, in milliseconds. Warnings from the native search engine, including truncated and timed-out results, are surfaced in `warnings`. Callers should show them instead of treating a partial result as clean.
 
 ## Long-running contract
 
@@ -143,7 +145,8 @@ Completed search operations put the search result in `result`:
     "matches": [
       { "path": "package.json" }
     ],
-    "warnings": []
+    "warnings": [],
+    "timingMs": 47
   }
 }
 ```

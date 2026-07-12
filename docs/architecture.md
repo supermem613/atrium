@@ -75,6 +75,7 @@ Flow:
    {
      "ok": true,
      "tool": "node",
+     "timingMs": 84,
      "source": "schema",
      "data": { "...": "target tool schema JSON" },
      "stdout": { "file": "...\\stdout.txt", "bytes": 2683 }
@@ -93,6 +94,7 @@ Flow:
    {
      "ok": true,
      "tool": "reflux",
+     "timingMs": 52,
      "source": "help",
      "text": "Usage: reflux ...",
      "stdout": { "file": "...\\stdout.txt", "bytes": 978 }
@@ -105,6 +107,7 @@ Flow:
    {
      "ok": false,
      "tool": "unknown-tool",
+     "timingMs": 7,
      "source": "none",
      "error": {
        "code": "SpawnError",

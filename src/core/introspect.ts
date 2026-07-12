@@ -5,6 +5,7 @@ import { runExecutable, RunExecutableResult, StartExecutableRunOptions } from ".
 export interface IntrospectToolResult {
   ok: boolean;
   tool: string;
+  timingMs: number;
   source: "schema" | "help" | "none";
   data?: unknown;
   text?: string;
@@ -20,6 +21,7 @@ const introspectionTimeoutMs = 30_000;
 const helpInlineBytes = 4_000;
 
 export async function introspectTool(tool: string, options: StartExecutableRunOptions = {}): Promise<IntrospectToolResult> {
+  const startedAt = Date.now();
   const schemaResult = await runExecutable({
     tool,
     args: ["schema"],
@@ -33,6 +35,7 @@ export async function introspectTool(tool: string, options: StartExecutableRunOp
       return {
         ok: true,
         tool,
+        timingMs: Date.now() - startedAt,
         source: "schema",
         data: parsed.value,
         stdout: schemaResult.stdout,
@@ -52,6 +55,7 @@ export async function introspectTool(tool: string, options: StartExecutableRunOp
     return {
       ok: true,
       tool,
+      timingMs: Date.now() - startedAt,
       source: "help",
       text: trimHelp(helpText),
       stdout: helpResult.stdout,
@@ -62,6 +66,7 @@ export async function introspectTool(tool: string, options: StartExecutableRunOp
   return {
     ok: false,
     tool,
+    timingMs: Date.now() - startedAt,
     source: "none",
     error: helpResult.error ?? schemaResult.error ?? {
       code: "IntrospectionFailed",

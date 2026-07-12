@@ -25,23 +25,30 @@ export interface ReadTextFileSliceSuccess {
   ok: true;
   path: string;
   range: [number, number];
+  timingMs: number;
   meta: {
     totalLines: number;
     bytes: number;
-    timing: {
-      totalMs: number;
-      statMs: number;
-      readMs: number;
-      sliceMs: number;
-      materializeMs: number;
-      contentBytes: number;
-    };
     cache: {
       hit: boolean;
       reason: "miss" | "same-file";
     };
   };
   content: OutputValue;
+  perf?: ReadTextFileSlicePerf;
+}
+
+export interface ReadTextFileSlicePerf {
+  totalMs: number;
+  statMs: number;
+  readMs: number;
+  sliceMs: number;
+  materializeMs: number;
+  contentBytes: number;
+}
+
+export interface ReadTextFileSliceOptions {
+  perf?: boolean;
 }
 
 export interface ReadTextFileSliceFailure {
@@ -62,7 +69,7 @@ interface CachedLineSliceCacheEntry {
   bytes: number;
 }
 
-export async function readTextFileSlice(input: ReadTextFileSliceInput): Promise<ReadTextFileSliceResult> {
+export async function readTextFileSlice(input: ReadTextFileSliceInput, options: ReadTextFileSliceOptions = {}): Promise<ReadTextFileSliceResult> {
   const startLine = input.startLine ?? 1;
   if (startLine < 1) {
     return invalidArgs(input.path, "startLine must be at least 1");
@@ -155,29 +162,38 @@ export async function readTextFileSlice(input: ReadTextFileSliceInput): Promise<
   const content = await materializeOutputValue(contentBuffer, defaultInlineOutputLimitBytes, atriumTempPath("reads", randomUUID()), "content.txt");
   materializeMs = roundTimingValue(performance.now() - materializeStart);
 
+  const totalMs = roundTimingValue(performance.now() - totalStart);
   return {
     ok: true,
     path: input.path,
+    timingMs: totalMs,
     range: [servedStart, servedEnd],
     meta: {
       totalLines,
       bytes,
-      timing: {
-        totalMs: roundTimingValue(performance.now() - totalStart),
-        statMs,
-        readMs,
-        sliceMs,
-        materializeMs,
-        contentBytes: contentBuffer.byteLength,
-      },
       cache: cacheMeta,
     },
     content,
+    ...(options.perf === true
+      ? {
+        perf: {
+          totalMs,
+          statMs,
+          readMs,
+          sliceMs,
+          materializeMs,
+          contentBytes: contentBuffer.byteLength,
+        },
+      }
+      : {}),
   };
 }
 
 export function buildReadTextFileSlicePerfSpans(result: ReadTextFileSliceSuccess): Array<{ name: string; attributes: Record<string, unknown> }> {
-  const timing = result.meta.timing;
+  const timing = result.perf;
+  if (timing === undefined) {
+    return [];
+  }
   return [
     { name: "stat", attributes: sanitizePerfAttributes({ stat: { durationMs: timing.statMs, totalMs: timing.totalMs } }) },
     { name: "read", attributes: sanitizePerfAttributes({ read: { durationMs: timing.readMs, bytes: result.meta.bytes } }) },

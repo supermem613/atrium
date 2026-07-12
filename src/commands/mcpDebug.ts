@@ -172,7 +172,7 @@ export async function mcpReadCommand(path: string, options: McpReadOptions = {})
     if (endLine !== undefined) {
       input.endLine = endLine;
     }
-    const result = await readTextFileSlice(input);
+    const result = await readTextFileSlice(input, { perf: true });
     if (result.ok) {
       for (const span of buildReadTextFileSlicePerfSpans(result)) {
         perfOperation?.addSpan(span.name, span.attributes);
@@ -190,6 +190,7 @@ export async function mcpReadCommand(path: string, options: McpReadOptions = {})
 }
 
 export async function mcpFindFilesCommand(root: string, options: McpFindFilesOptions = {}, searchClient?: SearchClientLike): Promise<void> {
+  const startedAtMs = Date.now();
   const perfRecorder = createPerfRecorder(options.perf === true);
   const perfOperation = perfRecorder?.startOperation(randomUUID());
   if (options.perf === true) {
@@ -214,7 +215,7 @@ export async function mcpFindFilesCommand(root: string, options: McpFindFilesOpt
       ...(parseOptionalInteger(options.max, "--max") !== undefined ? { max: parseOptionalInteger(options.max, "--max") } : {}),
     }));
     normalizeSpan?.finish(buildNativeSearchPerfAttributes(normalized));
-    writePayload({ kind: normalized.kind, matches: normalized.matches, warnings: normalized.warnings }, perfOperation?.finish());
+    writePayload({ kind: normalized.kind, matches: normalized.matches, warnings: normalized.warnings, timingMs: Date.now() - startedAtMs }, perfOperation?.finish());
     return;
   }
 
@@ -226,6 +227,7 @@ export async function mcpFindFilesCommand(root: string, options: McpFindFilesOpt
 }
 
 export async function mcpGrepCommand(root: string, options: McpGrepOptions = {}, searchClient?: SearchClientLike): Promise<void> {
+  const startedAtMs = Date.now();
   const perfRecorder = createPerfRecorder(options.perf === true);
   const perfOperation = perfRecorder?.startOperation(randomUUID());
   if (options.perf === true) {
@@ -256,7 +258,7 @@ export async function mcpGrepCommand(root: string, options: McpGrepOptions = {},
       ...(parseOptionalInteger(options.max, "--max") !== undefined ? { max: parseOptionalInteger(options.max, "--max") } : {}),
     }));
     normalizeSpan?.finish(buildNativeSearchPerfAttributes(normalized));
-    writePayload({ kind: normalized.kind, matches: normalized.matches, warnings: normalized.warnings }, perfOperation?.finish());
+    writePayload({ kind: normalized.kind, matches: normalized.matches, warnings: normalized.warnings, timingMs: Date.now() - startedAtMs }, perfOperation?.finish());
     return;
   }
 
@@ -268,6 +270,7 @@ export async function mcpGrepCommand(root: string, options: McpGrepOptions = {},
 }
 
 export async function mcpGrepCodeCommand(root: string, options: McpGrepCodeOptions = {}, searchClient?: SearchClientLike): Promise<void> {
+  const startedAtMs = Date.now();
   const perfRecorder = createPerfRecorder(options.perf === true);
   const perfOperation = perfRecorder?.startOperation(randomUUID());
   if (options.perf === true) {
@@ -297,7 +300,7 @@ export async function mcpGrepCodeCommand(root: string, options: McpGrepCodeOptio
       ...(parseOptionalInteger(options.max, "--max") !== undefined ? { max: parseOptionalInteger(options.max, "--max") } : {}),
     }));
     normalizeSpan?.finish(buildNativeSearchPerfAttributes(normalized));
-    writePayload({ kind: normalized.kind, matches: normalized.matches, warnings: normalized.warnings }, perfOperation?.finish());
+    writePayload({ kind: normalized.kind, matches: normalized.matches, warnings: normalized.warnings, timingMs: Date.now() - startedAtMs }, perfOperation?.finish());
     return;
   }
 
@@ -376,7 +379,7 @@ function buildReadArguments(path: string, options: McpReadOptions): Record<strin
 
 function readPayload(result: Awaited<ReturnType<typeof readTextFileSlice>>): unknown {
   if (result.ok) {
-    return { ok: true, path: result.path, range: result.range, meta: result.meta, content: result.content };
+    return { ok: true, path: result.path, timingMs: result.timingMs, range: result.range, meta: result.meta, content: result.content };
   }
 
   return { ok: false, status: result.status, path: result.path, hint: result.hint };
