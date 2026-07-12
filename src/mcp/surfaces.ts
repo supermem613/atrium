@@ -352,6 +352,11 @@ const readInstructionFragment = [
   "Read contract:",
   "- The read tool takes a path plus an optional startLine and either endLine or count. Line numbers are 1-based and positive.",
   "- A successful read returns ok, path, range, meta, and content. Treat the returned range together with meta.totalLines as authoritative for end-of-file and clamping instead of guessing bounds.",
+  "",
+  "Read safety:",
+  "- Use the read tool only for exact paths that are known to exist or came from an owning tool's file-value output. Do not use a read as an existence probe.",
+  "- Do not treat paths copied from old sessions, deleted worktrees, or guessed names as known to exist. Re-derive the current path first; use find-files to discover it, then read the exact match.",
+  "- Exact path existence is not enough for policy-restricted content. Use the approved route for such content instead of reading it directly.",
 ].join("\n");
 
 const searchInstructionFragment = [
