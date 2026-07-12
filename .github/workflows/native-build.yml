@@ -1,9 +1,9 @@
 name: native-build
 
 # Builds the atrium-search native addon (.node) for each supported target and
-# uploads it as an artifact. These prebuilts are an optional accelerator: at
-# runtime the CLI hard-falls-back to the bundled ripgrep binary when a prebuilt
-# for the current platform is absent, so a missing target never breaks search.
+# uploads it as an artifact. The addon is Atrium's only search engine, so each
+# platform needs its prebuilt to search. A platform with no prebuilt has no
+# search engine and fails hard, which `atrium doctor` reports.
 
 on:
   workflow_dispatch:

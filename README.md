@@ -261,9 +261,11 @@ src/
   cli.ts              # Entry point — Commander.js program
   server.ts           # stdio MCP server entry point
   registry.ts         # Command catalog for schema/docs/skill parity
-  core/               # executable runner, queue, artifacts, schemas, denylist
+  core/               # executable runner, queue, artifacts, denylist, in-process search
   mcp/                # MCP result formatting
   commands/           # One file per CLI command
+crates/
+  atrium-search/      # Rust napi-rs native search addon (embeds ripgrep crates)
 docs/
   architecture.md # Internal execution, schema discovery, and artifact flow
   read-primitive.md # MCP read contract and range behavior

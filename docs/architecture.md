@@ -309,6 +309,8 @@ configuration unchanged.
 | `src\core\runner.ts` | Process spawning, shell denylist, Windows resolution, npm shim handling, timeout, stdout/stderr capture. |
 | `src\core\artifacts.ts` | Materializes output buffers as inline strings or `{file, bytes}` values. |
 | `src\core\readFile.ts` | Implements `read` text-file range clamping and non-content outcomes. |
+| `src\core\search\` | In-process search for `find-files`, `grep`, and `grep-code`: request normalization, the napi-rs addon loader, and the file and content search runners. |
+| `crates\atrium-search\` | Rust napi-rs addon embedding ripgrep's crates. It is the only search engine, so a missing prebuilt makes search fail hard. |
 | `src\commands\mcpDebug.ts` | Local debug CLI commands that call Atrium through an MCP client. |
 | `scripts\benchmark-atrium.mjs` | Performance harness comparing direct, PowerShell-wrapped, and Atrium MCP calls. |
 
