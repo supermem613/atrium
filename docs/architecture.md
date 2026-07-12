@@ -311,7 +311,7 @@ configuration unchanged.
 Advertising the composed instructions at the MCP `initialize` handshake is
 necessary but not sufficient: some hosts, including Copilot CLI, do not inject an
 MCP server's `instructions` field into model context. Atrium therefore ships a
-companion Copilot CLI extension in `.github\extensions\atrium\` that composes the
+companion Copilot CLI extension in `extension\atrium.mjs` that composes the
 exact same surface-tailored text and injects it as `additionalContext` from the
 `onSessionStart` and `onUserPromptSubmitted` hooks, so the guardrails reach the
 model at cold start and on every turn, surviving context compaction.
@@ -324,6 +324,9 @@ which reuse the surface registry so the injected text can never drift from what
 the server advertises. Install the extension with
 `node scripts\install-extension-shim.mjs`, which writes a redirect shim into
 `~\.copilot\extensions\atrium\` that imports the extension entry from this repo.
+The entry lives at `extension\atrium.mjs`, outside the `.github\extensions`
+project auto-discovery path, so the shim loads it exactly once as a user
+extension even when the working directory is the Atrium repo itself.
 
 ## Source map
 
@@ -332,7 +335,7 @@ the server advertises. Install the extension with
 | `src\server.ts` | Composes advertised instructions and registers the enabled surfaces' tools from the surface registry. |
 | `src\mcp\surfaces.ts` | Surface registry: the single source of truth for tool registration, per-surface instruction fragments, the surface selector, and the tool-name allowlist. |
 | `src\mcp\extensionInstructions.ts` | Pure `--surface` selection parsing and instruction composition shared with the Copilot CLI extension, reusing the surface registry. |
-| `.github\extensions\atrium\extension.mjs` | Copilot CLI extension entry that injects the composed instructions as `additionalContext` every turn, since the host does not inject the MCP `instructions` field. |
+| `extension\atrium.mjs` | Copilot CLI extension entry that injects the composed instructions as `additionalContext` every turn, since the host does not inject the MCP `instructions` field. Kept outside `.github\extensions` so it loads only once as a user extension. |
 | `scripts\install-extension-shim.mjs` | Installs the extension by writing a redirect shim into the personal Copilot extensions directory. |
 | `src\core\executionQueue.ts` | In-memory max-concurrency limiter for child process starts. |
 | `src\core\introspect.ts` | Implements `<tool> schema` then `<tool> --help` discovery. |

@@ -6,7 +6,7 @@ import {
   composeInstructionsForSelection,
   describeEnabledSurfaces,
   parseSurfaceSelectionFromArgs,
-} from "../../../dist/mcp/extensionInstructions.js";
+} from "../dist/mcp/extensionInstructions.js";
 
 // Copilot CLI does not inject an MCP server's advertised `instructions` into
 // model context. The proven always-on channel is an extension hook that returns
@@ -14,6 +14,11 @@ import {
 // user prompt. This extension exists solely to deliver Atrium's surface-tailored
 // guardrails through that channel so the server is self-contained and no global
 // instruction file has to carry them.
+
+// This file lives outside the .github/extensions auto-discovery path on purpose.
+// The install shim loads it as a user extension in every repo, so keeping it out
+// of the project-discovery path means it is never loaded twice when the current
+// working directory is the Atrium repo itself.
 
 // Reads the same mcp-config.json entry the server is launched from, so changing
 // the server's --surface selection re-tailors the injected instructions with no
@@ -50,7 +55,7 @@ try {
 // server.ts source it, so the logged version never drifts from the published one.
 let version = "unknown";
 try {
-  const pkg = JSON.parse(await readFile(new URL("../../../package.json", import.meta.url), "utf8"));
+  const pkg = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
   version = pkg.version ?? version;
 } catch {
   // Leave the default when the package manifest cannot be read.

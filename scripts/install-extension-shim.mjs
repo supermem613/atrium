@@ -10,7 +10,7 @@ import { pathToFileURL } from "node:url";
 // as always-on model context, which the MCP `instructions` field cannot do.
 
 const repoRoot = path.resolve(import.meta.dirname, "..");
-const sourceExtension = path.join(repoRoot, ".github", "extensions", "atrium", "extension.mjs");
+const sourceExtension = path.join(repoRoot, "extension", "atrium.mjs");
 const defaultTarget = path.join(os.homedir(), ".copilot", "extensions", "atrium");
 
 const args = parseArgs(process.argv.slice(2));
