@@ -109,6 +109,27 @@ subset of what the server registers.
 atrium mcp-config --surface core,read
 ```
 
+## Always-on instructions extension
+
+The MCP `instructions` composed above are advertised at the `initialize`
+handshake, but some hosts (including Copilot CLI) do not inject that field into
+model context. Atrium ships a companion Copilot CLI extension that composes the
+same surface-tailored text and injects it as `additionalContext` on every turn
+and at session start, so the guardrails reach the model reliably and survive
+context compaction.
+
+Install it once:
+
+```bash
+node scripts/install-extension-shim.mjs
+```
+
+This writes a redirect shim into `~/.copilot/extensions/atrium/` that imports the
+extension from this repo, so rebuilding the repo updates the injected
+instructions with no reinstall. The extension reads the same `--surface`
+selection from `mcp-config.json` as the server, so the injected guardrails always
+match the surfaces the server exposes.
+
 ## Debug the MCP locally
 
 The `mcp-*` commands call Atrium through a real local MCP client, matching the path Copilot CLI uses.
