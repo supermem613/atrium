@@ -5,8 +5,13 @@ import { joinSession } from "@github/copilot-sdk/extension";
 import {
   composeInstructionsForSelection,
   describeEnabledSurfaces,
+  isSearchSurfaceEnabled,
   parseSurfaceSelectionFromArgs,
 } from "../dist/mcp/extensionInstructions.js";
+import {
+  evaluatePermissionRequest,
+  evaluatePreToolUse,
+} from "../dist/mcp/searchPolicy.js";
 
 // Copilot CLI does not inject an MCP server's advertised `instructions` into
 // model context. The proven always-on channel is an extension hook that returns
@@ -43,12 +48,15 @@ try {
 
 let instructions;
 let summary;
+let searchEnabled;
 try {
   instructions = composeInstructionsForSelection(selection);
   summary = describeEnabledSurfaces(selection);
+  searchEnabled = isSearchSurfaceEnabled(selection);
 } catch {
   instructions = composeInstructionsForSelection(undefined);
   summary = describeEnabledSurfaces(undefined);
+  searchEnabled = isSearchSurfaceEnabled(undefined);
 }
 
 // Version comes from the repo package.json at runtime, matching how cli.ts and
@@ -63,9 +71,11 @@ try {
 
 const session = await joinSession({
   tools: [],
+  onPermissionRequest: async (request) => evaluatePermissionRequest(request, searchEnabled),
   hooks: {
     onSessionStart: async () => ({ additionalContext: instructions }),
     onUserPromptSubmitted: async () => ({ additionalContext: instructions }),
+    onPreToolUse: async (input) => evaluatePreToolUse(input, searchEnabled),
   },
 });
 
