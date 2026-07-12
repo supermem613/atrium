@@ -1,0 +1,55 @@
+name: native-build
+
+# Builds the atrium-search native addon (.node) for each supported target and
+# uploads it as an artifact. These prebuilts are an optional accelerator: at
+# runtime the CLI hard-falls-back to the bundled ripgrep binary when a prebuilt
+# for the current platform is absent, so a missing target never breaks search.
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+jobs:
+  build:
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.host }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - host: windows-latest
+            target: x86_64-pc-windows-msvc
+          - host: macos-latest
+            target: aarch64-apple-darwin
+          - host: macos-13
+            target: x86_64-apple-darwin
+          - host: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - host: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - name: Install musl tools
+        if: matrix.target == 'x86_64-unknown-linux-musl'
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - run: npm ci
+      - name: Build native addon
+        run: >
+          npx napi build --release --platform
+          --target ${{ matrix.target }}
+          --js-package-name atrium-search
+          --manifest-path crates/atrium-search/Cargo.toml
+          --output-dir crates/atrium-search
+      - uses: actions/upload-artifact@v4
+        with:
+          name: atrium-search-${{ matrix.target }}
+          path: crates/atrium-search/*.node
+          if-no-files-found: error
