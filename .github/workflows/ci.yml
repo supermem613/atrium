@@ -14,12 +14,15 @@ jobs:
         os: [ubuntu-latest, windows-latest]
         node-version: [22, 24]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: ${{ matrix.node-version }}
           cache: npm
       - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: crates/atrium-search
       - run: npm ci
       - run: npm run lint
       - run: npm run build:native
