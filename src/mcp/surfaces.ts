@@ -365,6 +365,11 @@ const searchInstructionFragment = [
   "- grep and grep-code take a single literal query or a queries array of one or more patterns to match any of several patterns. Set regex true to treat patterns as regular expressions. grep and find-files are unrestricted and include hidden, gitignored, and vendor files. grep-code is ignore-aware and skips hidden, gitignored, and vendor files.",
   "- Patterns match literally by default. Narrow with glob and exclude, and cap results with max. Results are structured JSON: file matches carry matches[].path, and content matches also carry matches[].line and matches[].text. Surface any normalization warnings.",
   "- These are first-class Atrium MCP tools. Use them for search instead of shelling out.",
+  "",
+  "Search safety:",
+  "- Always pass a root. Use find-files for path or name discovery, grep-code for git-aware code content search, and grep for unrestricted content search.",
+  "- Do not fall back to a separate shell search or a separate glob tool for discovery. These primitives replace shelling out to rg, grep, find, findstr, or Select-String.",
+  "- On a timeout, retry narrower: a tighter glob, a more specific query or queries, or a lower max. Never fall back to a raw shell search.",
 ].join("\n");
 
 // Ordered so instruction composition reproduces the historical layout: core
