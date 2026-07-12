@@ -45,7 +45,7 @@ npm run build
 npm link    # makes `atrium` available globally
 ```
 
-Requires Node.js 22 or newer. Atrium's search tools run in-process through a native search engine, a napi-rs addon embedding ripgrep's crates. The addon is the only search engine, so search fails hard when no prebuilt addon is available. Run `atrium doctor` to confirm the in-process addon is active; it fails when the addon is absent.
+Requires Node.js 22 or newer and a Rust toolchain (`cargo`) to compile the native search addon. Atrium's search tools run in-process through a native search engine, a napi-rs addon embedding ripgrep's crates. The addon is the only search engine, so search fails hard when no prebuilt addon is available. `npm run build` compiles the addon automatically on the first build (when it is missing) and then runs `tsc`. Run `atrium doctor` to confirm the in-process addon is active; it fails when the addon is absent.
 
 ## Commands
 
@@ -273,7 +273,8 @@ For the CLI-driven workflow for investigating a single MCP verb's performance, s
 ## Development
 
 ```bash
-npm run build               # lint + test type-check -> tsc -> dist/
+npm run build               # build native addon if missing, then tsc -> dist/
+npm run build:native        # force-rebuild the native search addon (cargo)
 npm run lint                # type-check (src + test)
 npm test                    # all tests
 npm run test:unit           # unit only

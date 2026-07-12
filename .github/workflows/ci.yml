@@ -25,7 +25,6 @@ jobs:
           workspaces: crates/atrium-search
       - run: npm ci
       - run: npm run lint
-      - run: npm run build:native
       - run: npm run build
       - run: npm test
       - name: Upload test results
