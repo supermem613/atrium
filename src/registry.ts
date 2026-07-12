@@ -1,3 +1,5 @@
+import { surfaceOptionDescription } from "./mcp/surfaces.js";
+
 export type CommandEffect = "read" | "write" | "network" | "local";
 
 export type FlagType = "boolean" | "string" | "number";
@@ -71,7 +73,13 @@ export const commandSpecs: CommandSpec[] = [
     effect: "read",
     input: {
       positionals: [],
-      flags: [],
+      flags: [
+        {
+          name: "--surface",
+          type: "string",
+          summary: surfaceOptionDescription,
+        },
+      ],
     },
     output: {
       documented: true,
@@ -85,7 +93,13 @@ export const commandSpecs: CommandSpec[] = [
     effect: "local",
     input: {
       positionals: [],
-      flags: [],
+      flags: [
+        {
+          name: "--surface",
+          type: "string",
+          summary: surfaceOptionDescription,
+        },
+      ],
     },
     output: {
       documented: false,
