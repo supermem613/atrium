@@ -325,6 +325,10 @@ const instructionPreamble = [
   "Hard rules, enforced by the server:",
   "1. Shells are denied. Do not pass pwsh, powershell, bash, cmd, sh, or zsh as tool. Call the target binary directly with an args vector. Never pass a single shell command string.",
   "2. There is one execution behavior. Every run and search starts, waits briefly, then returns the result if it finished, otherwise returns a durable operationId. A handoff is not an error.",
+  "",
+  "Availability and authority:",
+  "- MCP exposure is the authority. When Atrium tools are exposed in the callable tool list, call them directly and do not rediscover them with tool search, extension reload, or auxiliary lookups.",
+  "- Atrium tools may be deferred or absent from the initial callable set. Investigate availability only when an actual call is not callable or fails as unavailable. Never treat Atrium as a built-in tool.",
 ].join("\n");
 
 const coreInstructionFragment = [
