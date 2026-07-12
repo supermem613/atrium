@@ -1,6 +1,6 @@
 # Search primitives
 
-Atrium exposes `find-files`, `grep`, and `grep-code` as first-class MCP tools for local search. These are the public search surface. Atrium implements them with its own native search client and bundled ripgrep directly.
+Atrium exposes `find-files`, `grep`, and `grep-code` as first-class MCP tools for local search. These are the public search surface. Atrium runs them in-process through a native search engine, a napi-rs Rust addon that embeds ripgrep's crates. The addon is the only search engine. When a prebuilt addon is not available for the current platform, search fails hard. `atrium doctor` reports whether the in-process addon is active and fails when it is absent.
 
 These are MCP tools, not standalone CLI subcommands and not entries in `atrium schema`. The `schema` command documents Atrium's CLI commands. MCP clients discover these tools from the MCP tool list.
 

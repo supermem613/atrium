@@ -45,7 +45,7 @@ npm run build
 npm link    # makes `atrium` available globally
 ```
 
-Requires Node.js 22 or newer. Atrium's search tools use the bundled ripgrep runtime directly, so no external search backend is required.
+Requires Node.js 22 or newer. Atrium's search tools run in-process through a native search engine, a napi-rs addon embedding ripgrep's crates. The addon is the only search engine, so search fails hard when no prebuilt addon is available. Run `atrium doctor` to confirm the in-process addon is active; it fails when the addon is absent.
 
 ## Commands
 
@@ -121,7 +121,7 @@ atrium mcp-operation-wait <operationId>
 
 ## Search MCP tools
 
-Atrium's MCP server exposes `find-files`, `grep`, and `grep-code` as first-class MCP tools backed by Atrium's native search implementation using bundled ripgrep directly. `grep` and `grep-code` take a `root` plus either a single `query` or a `queries` array of one or more patterns; set `regex` true to treat the patterns as regular expressions instead of literal text. `find-files` accepts `root` plus `glob`, `exclude`, and `max`, exposes `glob` for path discovery, and does not expose a `type` option. Atrium applies a fixed internal search deadline so agents do not tune timeouts. There is no `find-code` tool; use `find-files` for path discovery.
+Atrium's MCP server exposes `find-files`, `grep`, and `grep-code` as first-class MCP tools backed by Atrium's in-process native search engine, which embeds ripgrep's crates. The addon is the only search engine, and search fails hard when no prebuilt addon is available for the platform. `grep` and `grep-code` take a `root` plus either a single `query` or a `queries` array of one or more patterns; set `regex` true to treat the patterns as regular expressions instead of literal text. `find-files` accepts `root` plus `glob`, `exclude`, and `max`, exposes `glob` for path discovery, and does not expose a `type` option. Atrium applies a fixed internal search deadline so agents do not tune timeouts. There is no `find-code` tool; use `find-files` for path discovery.
 
 `grep` and `find-files` are unrestricted: they include hidden, gitignored, and vendor files such as `node_modules`. `grep-code` is ignore-aware and skips hidden, gitignored, and vendor files. Prefer `grep-code` for symbols, APIs, tests, command handlers, error strings, and docs related to code. Use `grep` for broad filesystem content or generated and dependency artifacts.
 

@@ -6,7 +6,7 @@ Atrium is a stdio MCP server that gives agents a structured path for single CLI 
 - `run` executes a target executable with an argument vector and returns a compact JSON result.
 - `operation-wait` waits for a durable operation handle handed off by any Atrium tool.
 - `read` reads UTF-8 text files with deterministic line-range clamping.
-- `find-files`, `grep`, and `grep-code` search local files through first-class MCP primitives backed by Atrium's native bundled-ripgrep implementation.
+- `find-files`, `grep`, and `grep-code` search local files through first-class MCP primitives backed by an in-process native search engine, a napi-rs addon embedding ripgrep's crates. The addon is the only search engine, so search fails hard when the addon is missing. `atrium doctor` reports the native-addon health check and fails when the addon is absent.
 
 PowerShell remains the right tool for ad-hoc scripting, variables, loops, pipelines, and interactive commands. Long-running single executable calls hand off a durable operation handle that the caller waits on with `operation-wait`.
 
