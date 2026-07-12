@@ -5,10 +5,10 @@
 // Avoids `node --test` worker subprocesses (their IPC pipe intermittently
 // fails on Windows runners with deserialize errors). Spawns one child process
 // per file with a TAP reporter and aggregates the per-file summaries.
-import { mkdirSync, readdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, readdirSync, mkdtempSync, rmSync, readFileSync } from "node:fs";
 import { tmpdir, cpus } from "node:os";
 import { join } from "node:path";
-import { pathToFileURL } from "node:url";
+import { pathToFileURL, fileURLToPath } from "node:url";
 import { minimatch } from "minimatch";
 import { spawn } from "node:child_process";
 
@@ -47,6 +47,66 @@ export function parseTapCounts(tapText) {
   const pass = parseInt((tapText.match(/^# pass (\d+)/m) ?? [])[1] ?? "0", 10);
   const fail = parseInt((tapText.match(/^# fail (\d+)/m) ?? [])[1] ?? "0", 10);
   return { tests, pass, fail };
+}
+
+// Compare per-test timings against the budgets file and return violations.
+// A test's budget is the last matching tests[] rule (by file glob and
+// nameIncludes substring), otherwise defaultTestMs.
+export function evaluateBudgets(timings, budgets) {
+  const rules = Array.isArray(budgets.tests) ? budgets.tests : [];
+  const violations = [];
+  for (const timing of timings) {
+    let budgetMs = budgets.defaultTestMs;
+    for (const rule of rules) {
+      if (rule.file && rule.file !== timing.file && !minimatch(timing.file, rule.file)) {
+        continue;
+      }
+      if (rule.nameIncludes && !timing.name.includes(rule.nameIncludes)) {
+        continue;
+      }
+      budgetMs = Number(rule.maxMs);
+    }
+    if (Number.isFinite(budgetMs) && timing.ms > budgetMs) {
+      violations.push({ file: timing.file, name: timing.name, ms: timing.ms, budgetMs });
+    }
+  }
+  return violations;
+}
+
+// Extract per-test durations from one file's TAP output. node:test emits a
+// `duration_ms:` line inside each test's YAML diagnostic block.
+export function parseTestTimings(tapText, file) {
+  const timings = [];
+  let currentName = null;
+  for (const line of tapText.split(/\r?\n/)) {
+    const result = line.match(/^\s*(?:ok|not ok) \d+ - (.+?)(?:\s+#.*)?$/);
+    if (result) {
+      currentName = result[1].trim();
+      continue;
+    }
+    const duration = line.match(/^\s*duration_ms:\s*([\d.]+)/);
+    if (duration && currentName !== null) {
+      timings.push({ file, name: currentName, ms: Number(duration[1]) });
+      currentName = null;
+    }
+  }
+  return timings;
+}
+
+function loadBudgets(path) {
+  try {
+    const parsed = JSON.parse(readFileSync(path, "utf8"));
+    return {
+      defaultTestMs: Number(parsed.defaultTestMs ?? 120_000),
+      slowThresholdMs: Number(parsed.slowThresholdMs ?? 10_000),
+      tests: Array.isArray(parsed.tests) ? parsed.tests : [],
+    };
+  } catch (err) {
+    if (err.code === "ENOENT") {
+      return { defaultTestMs: 120_000, slowThresholdMs: 10_000, tests: [] };
+    }
+    throw err;
+  }
 }
 
 // Run one test file in its own child process with a private sandbox HOME so
@@ -124,6 +184,7 @@ async function main() {
   let totalPass = 0;
   let totalFail = 0;
   const failedFiles = [];
+  const timings = [];
   for (const result of results) {
     process.stdout.write(result.stdout);
     if (result.stderr) {
@@ -132,6 +193,7 @@ async function main() {
     totalTests += result.counts.tests;
     totalPass += result.counts.pass;
     totalFail += result.counts.fail;
+    timings.push(...parseTestTimings(result.stdout, result.file));
     if (result.failed) {
       failedFiles.push(result.file);
       if (result.counts.fail === 0) {
@@ -144,6 +206,16 @@ async function main() {
   let exitCode = 0;
   if (failedFiles.length) {
     console.log(`# Failed files:\n${failedFiles.map((f) => `#   ${f}`).join("\n")}`);
+    exitCode = 1;
+  }
+
+  const budgets = loadBudgets(fileURLToPath(new URL("./perf-budgets.json", import.meta.url)));
+  const violations = evaluateBudgets(timings, budgets);
+  if (violations.length) {
+    console.log(`# Budget violations (${violations.length}):`);
+    for (const v of violations) {
+      console.log(`#   ${v.ms.toFixed(1)}ms > ${v.budgetMs}ms  ${v.file}  ${v.name}`);
+    }
     exitCode = 1;
   }
   process.exit(exitCode);
