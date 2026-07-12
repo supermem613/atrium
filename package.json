@@ -10,6 +10,7 @@
   "scripts": {
     "prebuild": "eslint src/ test/ && tsc --noEmit -p test/tsconfig.json",
     "build": "tsc",
+    "build:native": "napi build --release --platform --js-package-name atrium-search --manifest-path crates/atrium-search/Cargo.toml --output-dir crates/atrium-search",
     "test": "node test/run.mjs test/**/*.test.ts",
     "test:unit": "node test/run.mjs test/unit/**/*.test.ts",
     "test:integration": "node test/run.mjs test/integration/**/*.test.ts",

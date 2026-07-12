@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { runContentSearch, DEFAULT_CONTENT_SEARCH_EXCLUDES } from "../../src/core/search/contentSearch.js";
+import { runContentSearch, spawnContentSearchRunner, parseNativeContentArgs, DEFAULT_CONTENT_SEARCH_EXCLUDES } from "../../src/core/search/contentSearch.js";
 import type { ContentSearchRunner } from "../../src/core/search/types.js";
 
 test("content search uses fixed-string defaults and exact default exclusions", async () => {
@@ -88,8 +88,8 @@ test("content search emits complete ripgrep lifecycle metrics only when perf is 
   try {
     await writeFile(join(root, "sample.txt"), "needle\n", "utf8");
 
-    const withoutPerf = await runContentSearch({ query: "needle", root });
-    const withPerf = await runContentSearch({ query: "needle", root, perf: true });
+    const withoutPerf = await runContentSearch({ query: "needle", root, runner: spawnContentSearchRunner });
+    const withPerf = await runContentSearch({ query: "needle", root, perf: true, runner: spawnContentSearchRunner });
 
     assert.equal(withoutPerf.metrics?.spawnCallMs, undefined);
     assert.equal(withoutPerf.metrics?.childTotalMs, undefined);
@@ -97,6 +97,46 @@ test("content search emits complete ripgrep lifecycle metrics only when perf is 
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test("parseNativeContentArgs treats the -e query value as data, not a flag", () => {
+  // The query is emitted as the value of `-e`, before globs/excludes/lane args.
+  // A query that happens to equal a ripgrep flag must not flip include/exclude
+  // or type-lane options, or the native path would diverge from spawned rg.
+  const args = [
+    "--line-number", "--color=never", "--json", "--max-filesize", "2M", "-F",
+    "-e", "--hidden",
+    "--glob", "!**/.git/**",
+    "--type-add", "xraymarkdown:*.md",
+    "--type", "xraymarkdown",
+    "--", ".",
+  ];
+
+  const parsed = parseNativeContentArgs(args);
+
+  assert.equal(parsed.all, false, "query value --hidden must not enable all mode");
+  assert.deepEqual(parsed.excludes, ["**/.git/**"]);
+  assert.deepEqual(parsed.globs, []);
+  assert.deepEqual(parsed.typeSelect, ["xraymarkdown"]);
+  assert.deepEqual(parsed.typeDefs, [{ name: "xraymarkdown", glob: "*.md" }]);
+});
+
+test("parseNativeContentArgs keeps lane args when the query value is a separator", () => {
+  // A `--` query value must not be mistaken for the flags/paths separator, or
+  // the native path would drop the lane selection and default excludes.
+  const args = [
+    "--line-number", "--color=never", "--json", "--max-filesize", "2M", "-F",
+    "-e", "--",
+    "--glob", "!**/node_modules/**",
+    "--type-add", "xraycode:*.ts",
+    "--type", "xraycode",
+    "--", ".",
+  ];
+
+  const parsed = parseNativeContentArgs(args);
+
+  assert.deepEqual(parsed.excludes, ["**/node_modules/**"]);
+  assert.deepEqual(parsed.typeSelect, ["xraycode"]);
 });
 
 function assertLifecycleMetrics(metrics: Awaited<ReturnType<typeof runContentSearch>>["metrics"]): void {

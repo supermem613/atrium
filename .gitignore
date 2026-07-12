@@ -3,3 +3,9 @@ dist/
 .atrium/
 *.tgz
 *.log
+
+# Native addon (atrium-search) build artifacts
+crates/atrium-search/target/
+crates/atrium-search/*.node
+crates/atrium-search/index.js
+crates/atrium-search/index.d.ts

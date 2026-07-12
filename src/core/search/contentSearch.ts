@@ -3,7 +3,9 @@ import { performance } from "node:perf_hooks";
 import { normalizeNativeSearchPath } from "./normalize.js";
 import { resolveBundledRgPath } from "./rgPath.js";
 import { planSmartSearch } from "./smartPlan.js";
-import type { ContentSearchOptions, ContentSearchResult, ContentSearchInvocation, SearchContentMatch, ContentSearchRunMetrics } from "./types.js";
+import { loadNativeSearchAddon } from "./nativeAddon.js";
+import type { NativeContentTypeDef, NativeSearchAddon } from "./nativeAddon.js";
+import type { ContentSearchOptions, ContentSearchResult, ContentSearchInvocation, ContentSearchRunner, SearchContentMatch, ContentSearchRunMetrics } from "./types.js";
 
 export const DEFAULT_CONTENT_SEARCH_EXCLUDES = [
   "!**/.git/**",
@@ -118,7 +120,7 @@ function buildRipgrepArgs(options: { query: string; regex: boolean; all: boolean
   return args;
 }
 
-async function defaultContentSearchRunner(args: string[], options: { cwd: string; timeoutMs: number; query: string; regex: boolean; perf: boolean }): Promise<ContentSearchInvocation> {
+export async function spawnContentSearchRunner(args: string[], options: { cwd: string; timeoutMs: number; query: string; regex: boolean; perf: boolean }): Promise<ContentSearchInvocation> {
   const rgPath = resolveBundledRgPath();
   if (rgPath === null) {
     throw new Error("fatal ripgrep error: ripgrep binary not available");
@@ -219,6 +221,145 @@ async function defaultContentSearchRunner(args: string[], options: { cwd: string
     });
   });
 }
+
+export interface ContentSearchRunnerDeps {
+  loadAddon?: () => NativeSearchAddon | null;
+  spawnRunner?: ContentSearchRunner;
+  onFallback?: (error: unknown) => void;
+}
+
+// Reconstruct addon options from the ripgrep args the core layer built, so the
+// native runner keeps the exact same include/exclude/type-lane behavior as the
+// spawned ripgrep. Parsing stops at `--`, which separates flags from paths.
+export function parseNativeContentArgs(args: string[]): {
+  all: boolean;
+  globs: string[];
+  excludes: string[];
+  typeDefs: NativeContentTypeDef[];
+  typeSelect: string[];
+  typeNegate: string[];
+} {
+  const globs: string[] = [];
+  const excludes: string[] = [];
+  const typeDefs: NativeContentTypeDef[] = [];
+  const typeSelect: string[] = [];
+  const typeNegate: string[] = [];
+  let all = false;
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i];
+    if (arg === "--") {
+      break;
+    }
+    // The query is emitted as the value of `-e`. Skip that value so a query
+    // string that looks like a flag is never parsed as one.
+    if (arg === "-e") {
+      i += 1;
+      continue;
+    }
+    if (arg === "--hidden" || arg === "--no-ignore") {
+      all = true;
+      continue;
+    }
+    if (arg === "--glob") {
+      const value = args[i + 1];
+      i += 1;
+      if (value === undefined) {
+        continue;
+      }
+      if (value.startsWith("!")) {
+        excludes.push(value.slice(1));
+      } else {
+        globs.push(value);
+      }
+      continue;
+    }
+    if (arg === "--type-add") {
+      const value = args[i + 1];
+      i += 1;
+      if (value === undefined) {
+        continue;
+      }
+      const sep = value.indexOf(":");
+      if (sep > 0) {
+        typeDefs.push({ name: value.slice(0, sep), glob: value.slice(sep + 1) });
+      }
+      continue;
+    }
+    if (arg === "--type") {
+      const value = args[i + 1];
+      i += 1;
+      if (value !== undefined) {
+        typeSelect.push(value);
+      }
+      continue;
+    }
+    if (arg === "--type-not") {
+      const value = args[i + 1];
+      i += 1;
+      if (value !== undefined) {
+        typeNegate.push(value);
+      }
+    }
+  }
+  return { all, globs, excludes, typeDefs, typeSelect, typeNegate };
+}
+
+// Runs the search in-process through the napi addon when it loads, and falls
+// back to spawning bundled ripgrep when the addon is absent or throws. The
+// native path never records spawn metrics, which is how callers tell the two
+// apart. `max` is deliberately not forwarded so the TS normalize layer owns
+// display capping identically for both paths.
+export function createNativeContentSearchRunner(deps: ContentSearchRunnerDeps = {}): ContentSearchRunner {
+  const loadAddon = deps.loadAddon ?? loadNativeSearchAddon;
+  const spawnRunner = deps.spawnRunner ?? spawnContentSearchRunner;
+  const onFallback = deps.onFallback;
+
+  return async (args, options) => {
+    const addon = loadAddon();
+    if (addon === null) {
+      return spawnRunner(args, options);
+    }
+
+    const parsed = parseNativeContentArgs(args);
+    try {
+      const result = await addon.searchContent({
+        root: options.cwd,
+        query: options.query,
+        regex: options.regex,
+        all: parsed.all,
+        globs: parsed.globs,
+        excludes: parsed.excludes,
+        typeDefs: parsed.typeDefs,
+        typeSelect: parsed.typeSelect,
+        typeNegate: parsed.typeNegate,
+        timeoutMs: options.timeoutMs,
+        perf: options.perf,
+      });
+      const metrics: ContentSearchRunMetrics | undefined = options.perf
+        ? { searches: result.metrics?.searches ?? 1, childRunMs: result.metrics?.childRunMs }
+        : undefined;
+      return {
+        args,
+        matches: result.matches,
+        warnings: [],
+        timedOut: result.timedOut,
+        truncated: result.truncated,
+        metrics,
+      };
+    } catch (error) {
+      if (onFallback !== undefined) {
+        onFallback(error);
+      } else {
+        const message = error instanceof Error ? error.message : String(error);
+        // stderr is safe in the stdio MCP server; stdout is the protocol channel.
+        console.error(`native search addon failed, falling back to ripgrep: ${message}`);
+      }
+      return spawnRunner(args, options);
+    }
+  };
+}
+
+const defaultContentSearchRunner: ContentSearchRunner = createNativeContentSearchRunner();
 
 function parseRipgrepJsonOutput(output: string): SearchContentMatch[] {
   const matches: SearchContentMatch[] = [];

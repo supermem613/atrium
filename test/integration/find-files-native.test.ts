@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm, writeFile, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { runNativeFileSearch } from "../../src/core/search/fileSearch.js";
+import { runNativeFileSearch, spawnFileSearchRunner } from "../../src/core/search/fileSearch.js";
 import type { NativeFileSearchRunner } from "../../src/core/search/types.js";
 
 function normalizePath(filePath: string): string {
@@ -134,8 +134,8 @@ test("emits complete ripgrep lifecycle metrics only when perf is enabled", async
   try {
     await writeFile(join(root, "one.txt"), "one\n", "utf8");
 
-    const withoutPerf = await runNativeFileSearch({ root });
-    const withPerf = await runNativeFileSearch({ root, perf: true });
+    const withoutPerf = await runNativeFileSearch({ root, runner: spawnFileSearchRunner });
+    const withPerf = await runNativeFileSearch({ root, perf: true, runner: spawnFileSearchRunner });
 
     assert.equal(withoutPerf.metrics?.spawnCallMs, undefined);
     assert.equal(withoutPerf.metrics?.childTotalMs, undefined);

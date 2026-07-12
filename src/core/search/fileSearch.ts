@@ -4,7 +4,9 @@ import { basename, dirname, relative, resolve } from "node:path";
 import { performance } from "node:perf_hooks";
 import { normalizeNativeSearchPath } from "./normalize.js";
 import { resolveBundledRgPath } from "./rgPath.js";
-import type { NativeFileSearchInvocation, NativeFileSearchOptions, NativeFileSearchResult } from "./types.js";
+import { loadNativeSearchAddon } from "./nativeAddon.js";
+import type { NativeSearchAddon } from "./nativeAddon.js";
+import type { NativeFileSearchInvocation, NativeFileSearchOptions, NativeFileSearchResult, NativeFileSearchRunner, ContentSearchRunMetrics } from "./types.js";
 
 const DEFAULT_TIMEOUT_MS = 59_000;
 
@@ -109,7 +111,7 @@ function buildRipgrepArgs(options: { all: boolean; globs: string[]; excludes: st
   return args;
 }
 
-async function defaultNativeFileSearchRunner(args: string[], options: { cwd: string; timeoutMs: number; max: number; perf: boolean }): Promise<NativeFileSearchInvocation> {
+export async function spawnFileSearchRunner(args: string[], options: { cwd: string; timeoutMs: number; max: number; perf: boolean }): Promise<NativeFileSearchInvocation> {
   const rgPath = resolveBundledRgPath();
   if (rgPath === null) {
     throw new Error("fatal ripgrep error: ripgrep binary not available");
@@ -214,6 +216,108 @@ async function defaultNativeFileSearchRunner(args: string[], options: { cwd: str
 function parseRipgrepFileOutput(output: string): string[] {
   return output.split(/\r?\n/u).filter((line) => line.trim().length > 0);
 }
+
+export interface FileSearchRunnerDeps {
+  loadAddon?: () => NativeSearchAddon | null;
+  spawnRunner?: NativeFileSearchRunner;
+  onFallback?: (error: unknown) => void;
+}
+
+// Reconstruct addon options from the ripgrep args the core layer built. The
+// token after `--` is the search path: `.` means the root is a directory, any
+// other value is a single file name relative to cwd.
+export function parseNativeFileArgs(args: string[]): {
+  all: boolean;
+  globs: string[];
+  excludes: string[];
+  rootIsFile: boolean;
+  rootName?: string;
+} {
+  const globs: string[] = [];
+  const excludes: string[] = [];
+  let all = false;
+  let rootIsFile = false;
+  let rootName: string | undefined;
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i];
+    if (arg === "--") {
+      const token = args[i + 1];
+      if (token !== undefined && token !== ".") {
+        rootIsFile = true;
+        rootName = token;
+      }
+      break;
+    }
+    if (arg === "--hidden" || arg === "--no-ignore") {
+      all = true;
+      continue;
+    }
+    if (arg === "--glob") {
+      const value = args[i + 1];
+      i += 1;
+      if (value === undefined) {
+        continue;
+      }
+      if (value.startsWith("!")) {
+        excludes.push(value.slice(1));
+      } else {
+        globs.push(value);
+      }
+    }
+  }
+  return { all, globs, excludes, rootIsFile, rootName };
+}
+
+// Lists files in-process through the napi addon when it loads, falling back to
+// spawning bundled ripgrep when the addon is absent or throws. The native path
+// never records spawn metrics, which is how callers tell the two apart.
+export function createNativeFileSearchRunner(deps: FileSearchRunnerDeps = {}): NativeFileSearchRunner {
+  const loadAddon = deps.loadAddon ?? loadNativeSearchAddon;
+  const spawnRunner = deps.spawnRunner ?? spawnFileSearchRunner;
+  const onFallback = deps.onFallback;
+
+  return async (args, options) => {
+    const addon = loadAddon();
+    if (addon === null) {
+      return spawnRunner(args, options);
+    }
+
+    const parsed = parseNativeFileArgs(args);
+    try {
+      const result = await addon.searchFiles({
+        root: options.cwd,
+        all: parsed.all,
+        globs: parsed.globs,
+        excludes: parsed.excludes,
+        rootIsFile: parsed.rootIsFile,
+        rootName: parsed.rootName,
+        timeoutMs: options.timeoutMs,
+        perf: options.perf,
+      });
+      const metrics: ContentSearchRunMetrics | undefined = options.perf
+        ? { searches: result.metrics?.searches ?? 1, childRunMs: result.metrics?.childRunMs }
+        : undefined;
+      return {
+        paths: result.paths,
+        warnings: [],
+        timedOut: result.timedOut,
+        truncated: result.truncated,
+        metrics,
+      };
+    } catch (error) {
+      if (onFallback !== undefined) {
+        onFallback(error);
+      } else {
+        const message = error instanceof Error ? error.message : String(error);
+        // stderr is safe in the stdio MCP server; stdout is the protocol channel.
+        console.error(`native search addon failed, falling back to ripgrep: ${message}`);
+      }
+      return spawnRunner(args, options);
+    }
+  };
+}
+
+const defaultNativeFileSearchRunner: NativeFileSearchRunner = createNativeFileSearchRunner();
 
 function normalizePath(filePath: string): string {
   return normalizeNativeSearchPath(filePath);
