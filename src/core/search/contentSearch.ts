@@ -1,4 +1,6 @@
 import { spawn } from "node:child_process";
+import { stat } from "node:fs/promises";
+import { basename, dirname, resolve } from "node:path";
 import { performance } from "node:perf_hooks";
 import { normalizeNativeSearchPath } from "./normalize.js";
 import { resolveBundledRgPath } from "./rgPath.js";
@@ -22,7 +24,6 @@ const DEFAULT_MAX_FILE_SIZE = "2M";
 
 export async function runContentSearch(options: ContentSearchOptions): Promise<ContentSearchResult> {
   const query = options.query;
-  const root = options.root;
   const regex = options.regex ?? false;
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const max = options.max ?? Number.POSITIVE_INFINITY;
@@ -32,61 +33,107 @@ export async function runContentSearch(options: ContentSearchOptions): Promise<C
     ? (all ? [] : [...DEFAULT_CONTENT_SEARCH_EXCLUDES])
     : options.excludes;
   const runner = options.runner ?? defaultContentSearchRunner;
+
+  // A file root must run from its parent directory with the file name as the search path.
+  // Passing a file as the child process cwd makes Windows spawn fail with a misleading ENOENT
+  // that names rg.exe rather than the bad cwd. An injected runner controls its own execution,
+  // so the real filesystem probe only runs for the default spawning runner.
+  const location = options.runner === undefined
+    ? await resolveContentSearchRoot(options.root)
+    : { cwd: options.root, rootIsFile: false, rootName: undefined };
+
   const plan = planSmartSearch({ query, regex });
-  const laneArgs = plan.strategy === "sequential" ? [] : (plan.lanes[0]?.args ?? []);
+  const laneArgSets = plan.strategy === "sequential"
+    ? [[] as string[]]
+    : plan.lanes.map((lane) => lane.args);
 
   const matches: SearchContentMatch[] = [];
   const warnings: string[] = [];
+  const warningSeen = new Set<string>();
   const seen = new Set<string>();
   const metrics: ContentSearchRunMetrics | undefined = options.perf === true ? { searches: 0 } : undefined;
-  const args = buildRipgrepArgs({ query, regex, all, globs, excludes, laneArgs });
+  let timedOut = false;
+  let truncated = false;
 
-  let invocation: ContentSearchInvocation;
-  try {
-    invocation = await runner(args, { cwd: root, timeoutMs, query, regex, perf: options.perf === true });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    throw new Error(`fatal ripgrep error: ${message}`);
-  }
-
-  if (metrics !== undefined) {
-    metrics.searches = invocation.metrics?.searches ?? 1;
-    metrics.bytesSearched = invocation.metrics?.bytesSearched;
-    metrics.bytesPrinted = invocation.metrics?.bytesPrinted;
-    metrics.matchedLines = invocation.metrics?.matchedLines;
-    metrics.matches = invocation.metrics?.matches;
-    metrics.spawnCallMs = invocation.metrics?.spawnCallMs;
-    metrics.spawnReadyMs = invocation.metrics?.spawnReadyMs;
-    metrics.childRunMs = invocation.metrics?.childRunMs;
-    metrics.childTotalMs = invocation.metrics?.childTotalMs;
-    metrics.parseMs = invocation.metrics?.parseMs;
-  }
-
-  if (invocation.timedOut) {
-    warnings.push(`search stopped after ${timeoutMs} ms`);
-  }
-  if (invocation.truncated) {
-    warnings.push("search output was truncated");
-  }
-  for (const warning of invocation.warnings ?? []) {
+  const pushWarning = (warning: string): void => {
+    if (warningSeen.has(warning)) {
+      return;
+    }
+    warningSeen.add(warning);
     warnings.push(warning);
-  }
+  };
 
-  for (const match of invocation.matches) {
+  const runLane = async (laneArgs: string[]): Promise<void> => {
+    const args = buildRipgrepArgs({
+      query,
+      regex,
+      all,
+      globs,
+      excludes,
+      laneArgs,
+      rootIsFile: location.rootIsFile,
+      rootName: location.rootName,
+    });
+
+    let invocation: ContentSearchInvocation;
+    try {
+      invocation = await runner(args, { cwd: location.cwd, timeoutMs, query, regex, perf: options.perf === true });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      // The spawning runner already prefixes its failures. Re-prefixing here produced a
+      // doubly nested "fatal ripgrep error: fatal ripgrep error: ..." that hid the real cause.
+      throw new Error(message.startsWith("fatal ripgrep error:") ? message : `fatal ripgrep error: ${message}`);
+    }
+
+    if (invocation.timedOut === true) {
+      timedOut = true;
+    }
+    if (invocation.truncated === true) {
+      truncated = true;
+    }
+    for (const warning of invocation.warnings ?? []) {
+      pushWarning(warning);
+    }
+    if (metrics !== undefined) {
+      accumulateMetrics(metrics, invocation.metrics);
+    }
+
+    for (const match of invocation.matches) {
+      if (matches.length >= max) {
+        break;
+      }
+      const normalizedPath = normalizeNativeSearchPath(match.path);
+      const id = `${normalizedPath}:${match.line}:${match.text}`;
+      if (seen.has(id)) {
+        continue;
+      }
+      seen.add(id);
+      matches.push({ ...match, path: normalizedPath });
+    }
+  };
+
+  for (const laneArgs of laneArgSets) {
     if (matches.length >= max) {
       break;
     }
-    const normalizedPath = normalizeNativeSearchPath(match.path);
-    const id = `${normalizedPath}:${match.line}:${match.text}`;
-    if (seen.has(id)) {
-      continue;
-    }
-    seen.add(id);
-    matches.push({ ...match, path: normalizedPath });
+    await runLane(laneArgs);
+  }
+
+  // A narrowed plan bets that the query only appears in one lane. When that bet returns nothing,
+  // fall back to an unrestricted walk so callers do not miss matches living in other file types.
+  if (matches.length === 0 && plan.fallbackOnZero && plan.strategy !== "sequential") {
+    await runLane([]);
+  }
+
+  if (timedOut) {
+    pushWarning(`search stopped after ${timeoutMs} ms`);
+  }
+  if (truncated) {
+    pushWarning("search output was truncated");
   }
 
   if (max !== Number.POSITIVE_INFINITY && matches.length >= max && !warnings.some((warning) => warning.includes("display capped at"))) {
-    warnings.push(`display capped at ${max} matches`);
+    pushWarning(`display capped at ${max} matches`);
   }
 
   return {
@@ -97,7 +144,59 @@ export async function runContentSearch(options: ContentSearchOptions): Promise<C
   };
 }
 
-function buildRipgrepArgs(options: { query: string; regex: boolean; all: boolean; globs: string[]; excludes: string[]; laneArgs: string[] }): string[] {
+interface ContentSearchLocation {
+  cwd: string;
+  rootIsFile: boolean;
+  rootName: string | undefined;
+}
+
+async function resolveContentSearchRoot(root: string): Promise<ContentSearchLocation> {
+  const resolved = resolve(root);
+  try {
+    const stats = await stat(resolved);
+    if (stats.isDirectory()) {
+      return { cwd: resolved, rootIsFile: false, rootName: undefined };
+    }
+    if (stats.isFile()) {
+      return { cwd: dirname(resolved), rootIsFile: true, rootName: basename(resolved) };
+    }
+    throw new Error(`invalid root: ${root}`);
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith("invalid root:")) {
+      throw error;
+    }
+    if (error !== null && typeof error === "object" && "code" in error && (error as NodeJS.ErrnoException).code === "ENOENT") {
+      throw new Error(`invalid root: ${root}`);
+    }
+    throw error;
+  }
+}
+
+function accumulateMetrics(target: ContentSearchRunMetrics, source: ContentSearchRunMetrics | undefined): void {
+  if (source === undefined) {
+    return;
+  }
+  const keys: (keyof ContentSearchRunMetrics)[] = [
+    "searches",
+    "bytesSearched",
+    "bytesPrinted",
+    "matchedLines",
+    "matches",
+    "spawnCallMs",
+    "spawnReadyMs",
+    "childRunMs",
+    "childTotalMs",
+    "parseMs",
+  ];
+  for (const key of keys) {
+    const value = source[key];
+    if (typeof value === "number") {
+      target[key] = (target[key] ?? 0) + value;
+    }
+  }
+}
+
+function buildRipgrepArgs(options: { query: string; regex: boolean; all: boolean; globs: string[]; excludes: string[]; laneArgs: string[]; rootIsFile: boolean; rootName: string | undefined }): string[] {
   const args = ["--line-number", "--color=never", "--json", "--max-filesize", DEFAULT_MAX_FILE_SIZE];
   if (!options.regex) {
     args.push("-F");
@@ -114,7 +213,7 @@ function buildRipgrepArgs(options: { query: string; regex: boolean; all: boolean
   }
   args.push(...options.laneArgs);
   args.push("--");
-  args.push(".");
+  args.push(options.rootIsFile ? (options.rootName ?? ".") : ".");
   return args;
 }
 
