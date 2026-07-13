@@ -96,15 +96,15 @@ function buildSearchPerfMetadata(
     }
     : undefined;
 
-  const ripgrepMetrics = isRipgrepMetricsPayload(metricsValue)
-    ? metricsValue.ripgrepMetrics
+  const searchMetrics = isSearchMetricsPayload(metricsValue)
+    ? metricsValue.searchMetrics
     : undefined;
 
   return {
     searchInvocation,
     normalization: { kind, matchCount: envelope.data?.matches?.length ?? 0 },
     ...(xrayMetrics === undefined ? {} : { xrayMetrics }),
-    ...(ripgrepMetrics === undefined ? {} : { ripgrepMetrics }),
+    ...(searchMetrics === undefined ? {} : { searchMetrics }),
   };
 }
 
@@ -116,8 +116,8 @@ function isXrayMetricsPayload(value: unknown): value is { elapsedMs?: number; fi
   return candidate.elapsedMs !== undefined || candidate.filesScanned !== undefined || candidate.matchesReturned !== undefined;
 }
 
-function isRipgrepMetricsPayload(value: unknown): value is { ripgrepMetrics?: SearchPerfMetadata["ripgrepMetrics"] } {
-  return typeof value === "object" && value !== null && "ripgrepMetrics" in (value as Record<string, unknown>);
+function isSearchMetricsPayload(value: unknown): value is { searchMetrics?: SearchPerfMetadata["searchMetrics"] } {
+  return typeof value === "object" && value !== null && "searchMetrics" in (value as Record<string, unknown>);
 }
 
 function isNativeSearchEnvelope(envelope: XrayEnvelope | NativeSearchEnvelope): envelope is NativeSearchEnvelope {

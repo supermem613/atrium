@@ -34,7 +34,7 @@ const program = new Command();
 
 program
   .name("atrium")
-  .description("Agent-friendly MCP wrapper for running CLIs and executables with structured JSON results.")
+  .description("Copilot CLI extension that supersedes built-in tool primitives with faster, more powerful versions out of the box.")
   .version(VERSION);
 
 program
@@ -102,7 +102,7 @@ program
 
 program
   .command("mcp-grep <root>")
-  .description("Investigate an MCP grep call locally with Atrium's native bundled-ripgrep search; rerun with --perf for a CLI-only detailed trace")
+  .description("Investigate an MCP grep call locally with Atrium's in-process native search; rerun with --perf for a CLI-only detailed trace")
   .option("--query <pattern>", "Single query string to search for")
   .option("--queries <patterns...>", "One or more query strings to match")
   .option("--regex", "Treat query patterns as regular expressions")

@@ -1,8 +1,8 @@
 # atrium
 
-> Agent-first MCP wrapper for running CLIs and executables with structured JSON results.
+> Copilot CLI extension that supersedes built-in tool primitives with faster, more powerful versions out of the box.
 
-Atrium is an MCP server for agents. It exposes a small surface:
+Atrium is a Copilot CLI extension that supersedes the built-in tool primitives with faster, more powerful versions. Its MCP server exposes a small tool surface:
 
 - `atrium.schema` — discover a tool's invocation shape by asking the tool itself.
 - `atrium.run` — run a named CLI or executable with structured args and JSON results.
@@ -45,7 +45,7 @@ npm run build
 npm link    # makes `atrium` available globally
 ```
 
-Requires Node.js 22 or newer. Atrium's search tools use the bundled ripgrep runtime directly, so no external search backend is required.
+Requires Node.js 22 or newer and a Rust toolchain (`cargo`) to compile the native search addon. Atrium's search tools run in-process through a native search engine, a napi-rs addon embedding ripgrep's crates. The addon is the only search engine, so search fails hard when no prebuilt addon is available. `npm run build` compiles the addon automatically on the first build (when it is missing) and then runs `tsc`. Run `atrium doctor` to confirm the in-process addon is active; it fails when the addon is absent.
 
 ## Commands
 
@@ -153,7 +153,7 @@ atrium mcp-operation-wait <operationId>
 
 ## Search MCP tools
 
-Atrium's MCP server exposes `find-files`, `grep`, and `grep-code` as first-class MCP tools backed by Atrium's native search implementation using bundled ripgrep directly. `grep` and `grep-code` take a `root` plus either a single `query` or a `queries` array of one or more patterns; set `regex` true to treat the patterns as regular expressions instead of literal text. `find-files` accepts `root` plus `glob`, `exclude`, and `max`, exposes `glob` for path discovery, and does not expose a `type` option. Atrium applies a fixed internal search deadline so agents do not tune timeouts. There is no `find-code` tool; use `find-files` for path discovery.
+Atrium's MCP server exposes `find-files`, `grep`, and `grep-code` as first-class MCP tools backed by Atrium's in-process native search engine, which embeds ripgrep's crates. The addon is the only search engine, and search fails hard when no prebuilt addon is available for the platform. `grep` and `grep-code` take a `root` plus either a single `query` or a `queries` array of one or more patterns; set `regex` true to treat the patterns as regular expressions instead of literal text. `find-files` accepts `root` plus `glob`, `exclude`, and `max`, exposes `glob` for path discovery, and does not expose a `type` option. Atrium applies a fixed internal search deadline so agents do not tune timeouts. There is no `find-code` tool; use `find-files` for path discovery.
 
 `grep` and `find-files` are unrestricted: they include hidden, gitignored, and vendor files such as `node_modules`. `grep-code` is ignore-aware and skips hidden, gitignored, and vendor files. Prefer `grep-code` for symbols, APIs, tests, command handlers, error strings, and docs related to code. Use `grep` for broad filesystem content or generated and dependency artifacts.
 
@@ -273,7 +273,8 @@ For the CLI-driven workflow for investigating a single MCP verb's performance, s
 ## Development
 
 ```bash
-npm run build               # lint + test type-check -> tsc -> dist/
+npm run build               # build native addon if missing, then tsc -> dist/
+npm run build:native        # force-rebuild the native search addon (cargo)
 npm run lint                # type-check (src + test)
 npm test                    # all tests
 npm run test:unit           # unit only
@@ -282,7 +283,21 @@ npm run benchmark           # compare direct, PowerShell-wrapped, and Atrium MCP
 npm run clean               # remove dist/
 ```
 
-CI runs on Ubuntu + Windows via GitHub Actions (`.github/workflows/ci.yml`).
+CI runs on Ubuntu + Windows via GitHub Actions (`.github/workflows/ci.yml`),
+caching the Rust build with `Swatinem/rust-cache` and pinning `actions/checkout`
+and `actions/setup-node` at v5.
+
+The test runner (`test/run.mjs`) runs each test file in its own child process
+with bounded parallelism. Concurrency defaults to `min(cpu count, 4)`; override
+it with `ATRIUM_TEST_CONCURRENCY`. Each child gets a sandboxed `HOME` so tests
+cannot read your real `~/.atrium/` state; set `ATRIUM_TEST_REAL_HOME=1` to opt
+out. Per-test time budgets live in
+[`test/perf-budgets.json`](test/perf-budgets.json) (`defaultTestMs`,
+`slowThresholdMs`, and per-test `maxMs` overrides matched by `file` and
+`nameIncludes`); a test that exceeds its budget fails the run. Every run writes a
+machine-readable report to `test-results/atrium-tests.json`; CI uploads
+`test-results/` on failure and emits inline `::error` annotations for failing
+tests.
 
 Architecture details: [docs/architecture.md](docs/architecture.md).
 
@@ -293,9 +308,11 @@ src/
   cli.ts              # Entry point — Commander.js program
   server.ts           # stdio MCP server entry point
   registry.ts         # Command catalog for schema/docs/skill parity
-  core/               # executable runner, queue, artifacts, schemas, denylist
+  core/               # executable runner, queue, artifacts, denylist, in-process search
   mcp/                # MCP result formatting
   commands/           # One file per CLI command
+crates/
+  atrium-search/      # Rust napi-rs native search addon (embeds ripgrep crates)
 docs/
   architecture.md # Internal execution, schema discovery, and artifact flow
   read-primitive.md # MCP read contract and range behavior
@@ -303,7 +320,8 @@ docs/
 scripts/
   benchmark-atrium.mjs # Performance harness for direct vs PowerShell vs Atrium
 test/
-  run.mjs             # Cross-platform test runner (HOME-sandboxed)
+  run.mjs             # Cross-platform parallel test runner (HOME-sandboxed)
+  perf-budgets.json   # Per-test time budgets enforced by the runner
   tsconfig.json       # Test type-check config
   unit/               # Unit tests (*.test.ts)
   integration/        # Integration tests (*.test.ts)

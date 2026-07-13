@@ -1,12 +1,12 @@
 # Atrium Architecture
 
-Atrium is a stdio MCP server that gives agents a structured path for single CLI and executable calls plus local search primitives. It is not a shell, not a scripting runtime, and not a curated registry of every tool Marcus Markiewicz uses. It exposes these MCP tools:
+Atrium is a Copilot CLI extension that supersedes the host's built-in tool primitives with faster, more powerful versions. Its stdio MCP server gives agents a structured path for single CLI and executable calls plus local search primitives. It is not a shell, not a scripting runtime, and not a curated registry of every tool Marcus Markiewicz uses. It exposes these MCP tools:
 
 - `schema` discovers how a target executable wants to be called.
 - `run` executes a target executable with an argument vector and returns a compact JSON result.
 - `operation-wait` waits for a durable operation handle handed off by any Atrium tool.
 - `read` reads UTF-8 text files with deterministic line-range clamping.
-- `find-files`, `grep`, and `grep-code` search local files through first-class MCP primitives backed by Atrium's native bundled-ripgrep implementation.
+- `find-files`, `grep`, and `grep-code` search local files through first-class MCP primitives backed by an in-process native search engine, a napi-rs addon embedding ripgrep's crates. The addon is the only search engine, so search fails hard when the addon is missing. `atrium doctor` reports the native-addon health check and fails when the addon is absent.
 
 PowerShell remains the right tool for ad-hoc scripting, variables, loops, pipelines, and interactive commands. Long-running single executable calls hand off a durable operation handle that the caller waits on with `operation-wait`.
 
@@ -361,6 +361,8 @@ is removed.
 | `src\core\runner.ts` | Process spawning, shell denylist, Windows resolution, npm shim handling, timeout, stdout/stderr capture. |
 | `src\core\artifacts.ts` | Materializes output buffers as inline strings or `{file, bytes}` values. |
 | `src\core\readFile.ts` | Implements `read` text-file range clamping and non-content outcomes. |
+| `src\core\search\` | In-process search for `find-files`, `grep`, and `grep-code`: request normalization, the napi-rs addon loader, and the file and content search runners. |
+| `crates\atrium-search\` | Rust napi-rs addon embedding ripgrep's crates. It is the only search engine, so a missing prebuilt makes search fail hard. |
 | `src\commands\mcpDebug.ts` | Local debug CLI commands that call Atrium through an MCP client. |
 | `scripts\benchmark-atrium.mjs` | Performance harness comparing direct, PowerShell-wrapped, and Atrium MCP calls. |
 

@@ -28,7 +28,7 @@ describe("MCP initialize instructions", () => {
       assert.match(text, /operation-wait/);
       assert.match(text, /\{file: path\}/);
       assert.match(text, /native search/i);
-      assert.match(text, /bundled-ripgrep/i);
+      assert.match(text, /in-process native search engine/i);
     } finally {
       await client.close();
     }

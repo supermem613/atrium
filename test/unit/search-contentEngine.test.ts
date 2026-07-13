@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { runContentSearch, DEFAULT_CONTENT_SEARCH_EXCLUDES } from "../../src/core/search/contentSearch.js";
+import { runContentSearch, parseNativeContentArgs, DEFAULT_CONTENT_SEARCH_EXCLUDES } from "../../src/core/search/contentSearch.js";
 import type { ContentSearchRunner } from "../../src/core/search/types.js";
 
 test("content search uses fixed-string defaults and exact default exclusions", async () => {
@@ -61,7 +61,7 @@ test("content search surfaces timeout warnings and aggregates ripgrep metrics ac
     warnings: ["partial result"],
     timedOut: true,
     truncated: false,
-    metrics: { searches: 2, bytesSearched: 4096, bytesPrinted: 256, matchedLines: 1, matches: 1 },
+    metrics: { searches: 2, childRunMs: 10 },
   });
 
   const result = await runContentSearch({ query: "needle", root: "/tmp", timeoutMs: 59000, perf: true, runner });
@@ -70,8 +70,7 @@ test("content search surfaces timeout warnings and aggregates ripgrep metrics ac
   // A literal query fans out across the markdown, code, and everything lanes, so the runner is
   // invoked once per lane and the reported metrics are the sum over all three invocations.
   assert.equal(result.metrics?.searches, 6);
-  assert.equal(result.metrics?.bytesSearched, 12288);
-  assert.equal(result.metrics?.bytesPrinted, 768);
+  assert.equal(result.metrics?.childRunMs, 30);
 });
 
 test("content search deduplicates identical warnings from every lane", async () => {
@@ -116,16 +115,16 @@ test("content search runs a single walk for regex queries", async () => {
   assert.ok(!seen[0].includes("-F"));
 });
 
-test("content search does not double-wrap fatal ripgrep errors", async () => {
+test("content search does not double-wrap fatal search errors", async () => {
   const runner: ContentSearchRunner = async () => {
-    throw new Error("fatal ripgrep error: spawn rg.exe ENOENT");
+    throw new Error("fatal search error: addon boom");
   };
 
   await assert.rejects(
     runContentSearch({ query: "needle", root: "/tmp", runner }),
     (error: Error) => {
-      assert.equal(error.message, "fatal ripgrep error: spawn rg.exe ENOENT");
-      assert.ok(!error.message.includes("fatal ripgrep error: fatal ripgrep error:"));
+      assert.equal(error.message, "fatal search error: addon boom");
+      assert.ok(!error.message.includes("fatal search error: fatal search error:"));
       return true;
     },
   );
@@ -170,38 +169,53 @@ test("content search finds literal matches inside code files", async () => {
   }
 });
 
-test("content search turns fatal ripgrep errors into explicit failures", async () => {
+test("content search turns fatal search errors into explicit failures", async () => {
   const runner: ContentSearchRunner = async () => {
     throw new Error("regex parse error");
   };
 
   await assert.rejects(
     runContentSearch({ query: "[", root: "/tmp", regex: true, runner }),
-    /fatal ripgrep error/u,
+    /fatal search error/u,
   );
 });
 
-test("content search emits complete ripgrep lifecycle metrics only when perf is enabled", async () => {
-  const root = await mkdtemp(join(tmpdir(), "atrium-content-perf-"));
-  try {
-    await writeFile(join(root, "sample.txt"), "needle\n", "utf8");
+test("parseNativeContentArgs treats the -e query value as data, not a flag", () => {
+  // The query is emitted as the value of `-e`, before globs/excludes/lane args.
+  // A query that happens to equal a ripgrep flag must not flip include/exclude
+  // or type-lane options, or the native path would diverge from spawned rg.
+  const args = [
+    "--line-number", "--color=never", "--json", "--max-filesize", "2M", "-F",
+    "-e", "--hidden",
+    "--glob", "!**/.git/**",
+    "--type-add", "xraymarkdown:*.md",
+    "--type", "xraymarkdown",
+    "--", ".",
+  ];
 
-    const withoutPerf = await runContentSearch({ query: "needle", root });
-    const withPerf = await runContentSearch({ query: "needle", root, perf: true });
+  const parsed = parseNativeContentArgs(args);
 
-    assert.equal(withoutPerf.metrics?.spawnCallMs, undefined);
-    assert.equal(withoutPerf.metrics?.childTotalMs, undefined);
-    assertLifecycleMetrics(withPerf.metrics);
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
+  assert.equal(parsed.all, false, "query value --hidden must not enable all mode");
+  assert.deepEqual(parsed.excludes, ["**/.git/**"]);
+  assert.deepEqual(parsed.globs, []);
+  assert.deepEqual(parsed.typeSelect, ["xraymarkdown"]);
+  assert.deepEqual(parsed.typeDefs, [{ name: "xraymarkdown", glob: "*.md" }]);
 });
 
-function assertLifecycleMetrics(metrics: Awaited<ReturnType<typeof runContentSearch>>["metrics"]): void {
-  assert.ok(metrics);
-  for (const field of ["spawnCallMs", "spawnReadyMs", "childRunMs", "childTotalMs", "parseMs"] as const) {
-    assert.equal(typeof metrics[field], "number", `expected numeric ${field}`);
-    assert.ok((metrics[field] ?? -1) >= 0, `expected nonnegative ${field}`);
-  }
-  assert.ok((metrics.childTotalMs ?? 0) >= (metrics.spawnCallMs ?? 0) + (metrics.spawnReadyMs ?? 0) + (metrics.childRunMs ?? 0));
-}
+test("parseNativeContentArgs keeps lane args when the query value is a separator", () => {
+  // A `--` query value must not be mistaken for the flags/paths separator, or
+  // the native path would drop the lane selection and default excludes.
+  const args = [
+    "--line-number", "--color=never", "--json", "--max-filesize", "2M", "-F",
+    "-e", "--",
+    "--glob", "!**/node_modules/**",
+    "--type-add", "xraycode:*.ts",
+    "--type", "xraycode",
+    "--", ".",
+  ];
+
+  const parsed = parseNativeContentArgs(args);
+
+  assert.deepEqual(parsed.excludes, ["**/node_modules/**"]);
+  assert.deepEqual(parsed.typeSelect, ["xraycode"]);
+});

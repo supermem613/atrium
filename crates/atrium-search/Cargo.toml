@@ -1,0 +1,25 @@
+[package]
+name = "atrium-search"
+version = "0.1.0"
+edition = "2021"
+description = "In-process native search engine for Atrium (napi-rs addon embedding ripgrep crates)."
+license = "MIT"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+napi = { version = "2", default-features = false, features = ["napi8"] }
+napi-derive = "2"
+ignore = "0.4"
+grep-regex = "0.1"
+grep-searcher = "0.1"
+regex = "1"
+
+[build-dependencies]
+napi-build = "2"
+
+[profile.release]
+lto = true
+strip = "symbols"

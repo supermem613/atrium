@@ -35,10 +35,9 @@ class FakeNativeSearchClient {
       },
       warnings: ["native warning"],
       metrics: {
-        ripgrepMetrics: {
+        searchMetrics: {
           searches: 2,
-          bytesSearched: 4096,
-          matches: 1,
+          childRunMs: 3,
         },
       },
     };

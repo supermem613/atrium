@@ -1,0 +1,23 @@
+{
+  "name": "atrium-search",
+  "version": "0.1.0",
+  "description": "In-process native search engine for Atrium (napi-rs addon embedding ripgrep crates).",
+  "author": "Marcus Markiewicz",
+  "license": "MIT",
+  "private": true,
+  "main": "index.js",
+  "types": "index.d.ts",
+  "engines": {
+    "node": ">=22"
+  },
+  "napi": {
+    "binaryName": "index",
+    "targets": [
+      "x86_64-pc-windows-msvc",
+      "aarch64-apple-darwin",
+      "x86_64-apple-darwin",
+      "x86_64-unknown-linux-gnu",
+      "x86_64-unknown-linux-musl"
+    ]
+  }
+}

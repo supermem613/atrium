@@ -10,7 +10,7 @@ describe("native search integration", () => {
         kind: "content",
         matches: [{ path: "src/alpha.ts", line: 9, text: "needle" }],
         warnings: ["native content warning"],
-        metrics: { searches: 1, bytesSearched: 512, matches: 1 },
+        metrics: { searches: 1, childRunMs: 4 },
       } satisfies ContentSearchResult),
       runFileSearch: async () => {
         throw new Error("unexpected file search");

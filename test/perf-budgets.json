@@ -1,0 +1,11 @@
+{
+  "defaultTestMs": 20000,
+  "slowThresholdMs": 3000,
+  "tests": [
+    {
+      "file": "test/unit/mcpDebugAllVerbsPerf.test.ts",
+      "nameIncludes": "mcp debug CLI verbs expose stable payloads and perf reports",
+      "maxMs": 40000
+    }
+  ]
+}

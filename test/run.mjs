@@ -3,75 +3,286 @@
 // real ~/.atrium/ state, mirroring CI exactly. Set ATRIUM_TEST_REAL_HOME=1 to opt out.
 //
 // Avoids `node --test` worker subprocesses (their IPC pipe intermittently
-// fails on Windows runners with deserialize errors). Uses node:test auto-start
-// in a single process with a TAP reporter for the aggregate summary.
-import { mkdirSync, readdirSync, mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+// fails on Windows runners with deserialize errors). Spawns one child process
+// per file with a TAP reporter and aggregates the per-file summaries.
+import { mkdirSync, readdirSync, mkdtempSync, rmSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir, cpus } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL, fileURLToPath } from "node:url";
 import { minimatch } from "minimatch";
-import { execSync } from "node:child_process";
+import { spawn } from "node:child_process";
 
-const pattern = process.argv[2] || "test/**/*.test.ts";
-const baseDir = pattern.split(/[/\\]/)[0] || ".";
-const allFiles = readdirSync(baseDir, { recursive: true })
-  .map((f) => join(baseDir, f).split("\\").join("/"))
-  .filter((f) => minimatch(f, pattern));
-
-if (allFiles.length === 0) {
-  console.error(`No test files found matching: ${pattern}`);
-  process.exit(1);
-}
-
-const testTempRoot = join(tmpdir(), "atrium", "tests");
-mkdirSync(testTempRoot, { recursive: true });
-
-const sandboxHome = process.env.ATRIUM_TEST_REAL_HOME
-  ? null
-  : mkdtempSync(join(testTempRoot, "home-"));
-
-const env = { ...process.env };
-if (sandboxHome) {
-  env.HOME = sandboxHome;
-  env.USERPROFILE = sandboxHome;
-  env.LOCALAPPDATA = join(sandboxHome, "AppData", "Local");
-}
-
-let exitCode = 0;
-let totalTests = 0;
-let totalPass = 0;
-let totalFail = 0;
-const failedFiles = [];
-try {
-  for (const file of allFiles) {
-    const cmd = `node --import tsx --test-reporter=tap ${file}`;
-    let stdout = "";
-    let fileFailed = false;
-    try {
-      stdout = execSync(cmd, { env, encoding: "utf8", stdio: ["ignore", "pipe", "inherit"] });
-    } catch (err) {
-      fileFailed = true;
-      stdout = (err.stdout ?? "").toString();
-      failedFiles.push(file);
-    }
-    process.stdout.write(stdout);
-    const tests = parseInt((stdout.match(/^# tests (\d+)/m) ?? [])[1] ?? "0", 10);
-    const pass  = parseInt((stdout.match(/^# pass (\d+)/m)  ?? [])[1] ?? "0", 10);
-    const fail  = parseInt((stdout.match(/^# fail (\d+)/m)  ?? [])[1] ?? "0", 10);
-    totalTests += tests;
-    totalPass += pass;
-    totalFail += fail;
-    if (fileFailed && fail === 0) {
-      totalFail += 1;
+// Bounded concurrency for the per-file worker pool. Explicit override via
+// ATRIUM_TEST_CONCURRENCY, otherwise cap at the machine's cpu count but never
+// exceed 4 so a many-core CI box does not oversubscribe the native addon.
+export function resolveConcurrency(env, cpuCount) {
+  const override = env?.ATRIUM_TEST_CONCURRENCY;
+  if (override !== undefined && override !== "") {
+    const parsed = Number.parseInt(override, 10);
+    if (Number.isInteger(parsed) && parsed > 0) {
+      return parsed;
     }
   }
+  return Math.max(1, Math.min(cpuCount || 1, 4));
+}
+
+// Expand one or more glob patterns into a de-duplicated, ordered file list.
+export function discoverTestFiles(patterns) {
+  const found = new Set();
+  for (const pattern of patterns) {
+    const baseDir = pattern.split(/[/\\]/)[0] || ".";
+    const matches = readdirSync(baseDir, { recursive: true })
+      .map((f) => join(baseDir, f).split("\\").join("/"))
+      .filter((f) => minimatch(f, pattern));
+    for (const match of matches) {
+      found.add(match);
+    }
+  }
+  return [...found].sort();
+}
+
+// Parse the three TAP summary counts emitted by node:test's tap reporter.
+export function parseTapCounts(tapText) {
+  const tests = parseInt((tapText.match(/^# tests (\d+)/m) ?? [])[1] ?? "0", 10);
+  const pass = parseInt((tapText.match(/^# pass (\d+)/m) ?? [])[1] ?? "0", 10);
+  const fail = parseInt((tapText.match(/^# fail (\d+)/m) ?? [])[1] ?? "0", 10);
+  return { tests, pass, fail };
+}
+
+// Compare per-test timings against the budgets file and return violations.
+// A test's budget is the last matching tests[] rule (by file glob and
+// nameIncludes substring), otherwise defaultTestMs.
+export function evaluateBudgets(timings, budgets) {
+  const rules = Array.isArray(budgets.tests) ? budgets.tests : [];
+  const violations = [];
+  for (const timing of timings) {
+    let budgetMs = budgets.defaultTestMs;
+    for (const rule of rules) {
+      if (rule.file && rule.file !== timing.file && !minimatch(timing.file, rule.file)) {
+        continue;
+      }
+      if (rule.nameIncludes && !timing.name.includes(rule.nameIncludes)) {
+        continue;
+      }
+      budgetMs = Number(rule.maxMs);
+    }
+    if (Number.isFinite(budgetMs) && timing.ms > budgetMs) {
+      violations.push({ file: timing.file, name: timing.name, ms: timing.ms, budgetMs });
+    }
+  }
+  return violations;
+}
+
+// Extract per-test durations from one file's TAP output. node:test emits a
+// `duration_ms:` line inside each test's YAML diagnostic block.
+export function parseTestTimings(tapText, file) {
+  const timings = [];
+  let currentName = null;
+  for (const line of tapText.split(/\r?\n/)) {
+    const result = line.match(/^\s*(?:ok|not ok) \d+ - (.+?)(?:\s+#.*)?$/);
+    if (result) {
+      currentName = result[1].trim();
+      continue;
+    }
+    const duration = line.match(/^\s*duration_ms:\s*([\d.]+)/);
+    if (duration && currentName !== null) {
+      timings.push({ file, name: currentName, ms: Number(duration[1]) });
+      currentName = null;
+    }
+  }
+  return timings;
+}
+
+// Build a machine-readable report object from per-file results.
+export function buildReport(fileResults) {
+  const summary = { files: fileResults.length, tests: 0, pass: 0, fail: 0, durationMs: 0 };
+  const files = [];
+  for (const result of fileResults) {
+    const tests = result.tests ?? 0;
+    const pass = result.pass ?? 0;
+    const fail = result.fail ?? 0;
+    const durationMs = result.durationMs ?? 0;
+    summary.tests += tests;
+    summary.pass += pass;
+    summary.fail += fail;
+    summary.durationMs += durationMs;
+    files.push({ file: result.file, tests, pass, fail, durationMs });
+  }
+  return { schemaVersion: 1, generatedAt: new Date().toISOString(), summary, files };
+}
+
+// Extract GitHub Actions error annotations from a failing file's TAP output.
+// Mirrors the `::error file=,line=,col=,title=::message` format so CI surfaces
+// the failure inline on the offending source line.
+export function extractGitHubAnnotations(tapText, file) {
+  const titleMatch = tapText.match(/^\s*not ok\s+\d+\s+-\s+(.+)$/m);
+  const title = titleMatch ? titleMatch[1].trim() : "";
+  const messageMatch = tapText.match(/^\s*(?:error|message):\s*'([^']*)'/m);
+  const message = messageMatch ? messageMatch[1].trim() : "";
+  if (!title && !message) {
+    return [];
+  }
+  // Prefer the repo-relative test path we control for the annotation target so
+  // GitHub can link the annotation to the source. The absolute location path
+  // node:test reports is only used for its trailing line:col.
+  const target = file.split("\\").join("/");
+  const locationMatch = tapText.match(/^\s*location:\s*'([^']+)'/m);
+  const parts = (locationMatch ? locationMatch[1] : "").match(/:(\d+):(\d+)'?\s*$/);
+  const body = message || "test failed";
+  if (!parts) {
+    return [`::error file=${target},title=${title}::${body}`];
+  }
+  return [`::error file=${target},line=${parts[1]},col=${parts[2]},title=${title}::${body}`];
+}
+
+function loadBudgets(path) {
+  try {
+    const parsed = JSON.parse(readFileSync(path, "utf8"));
+    return {
+      defaultTestMs: Number(parsed.defaultTestMs ?? 120_000),
+      slowThresholdMs: Number(parsed.slowThresholdMs ?? 10_000),
+      tests: Array.isArray(parsed.tests) ? parsed.tests : [],
+    };
+  } catch (err) {
+    if (err.code === "ENOENT") {
+      return { defaultTestMs: 120_000, slowThresholdMs: 10_000, tests: [] };
+    }
+    throw err;
+  }
+}
+
+// Run one test file in its own child process with a private sandbox HOME so
+// parallel files cannot collide on ~/.atrium state. Resolves rather than
+// rejects so one crashed file cannot abort the pool.
+function runOneFile(file, baseEnv, sandboxRoot) {
+  return new Promise((resolve) => {
+    const home = process.env.ATRIUM_TEST_REAL_HOME
+      ? null
+      : mkdtempSync(join(sandboxRoot, "home-"));
+    const env = { ...baseEnv };
+    if (home) {
+      env.HOME = home;
+      env.USERPROFILE = home;
+      env.LOCALAPPDATA = join(home, "AppData", "Local");
+    }
+    const child = spawn("node", ["--import", "tsx", "--test-reporter=tap", file], { env });
+    const startedAt = Date.now();
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk; 
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk; 
+    });
+    const cleanup = () => {
+      if (home) {
+        rmSync(home, { recursive: true, force: true });
+      }
+    };
+    child.on("close", (code) => {
+      cleanup();
+      resolve({ file, stdout, stderr, counts: parseTapCounts(stdout), durationMs: Date.now() - startedAt, failed: code !== 0 });
+    });
+    child.on("error", (err) => {
+      cleanup();
+      resolve({
+        file,
+        stdout,
+        stderr: `${stderr}${err}`,
+        counts: { tests: 0, pass: 0, fail: 0 },
+        durationMs: Date.now() - startedAt,
+        failed: true,
+      });
+    });
+  });
+}
+
+async function main() {
+  const pattern = process.argv[2] || "test/**/*.test.ts";
+  const files = discoverTestFiles([pattern]);
+
+  if (files.length === 0) {
+    console.error(`No test files found matching: ${pattern}`);
+    process.exit(1);
+  }
+
+  const testTempRoot = join(tmpdir(), "atrium", "tests");
+  mkdirSync(testTempRoot, { recursive: true });
+
+  const baseEnv = { ...process.env };
+  const concurrency = resolveConcurrency(process.env, cpus().length);
+  const workerCount = Math.min(concurrency, files.length);
+
+  const results = new Array(files.length);
+  let next = 0;
+  const workers = Array.from({ length: workerCount }, async () => {
+    while (next < files.length) {
+      const index = next++;
+      results[index] = await runOneFile(files[index], baseEnv, testTempRoot);
+    }
+  });
+  await Promise.all(workers);
+
+  let totalTests = 0;
+  let totalPass = 0;
+  let totalFail = 0;
+  const failedFiles = [];
+  const timings = [];
+  for (const result of results) {
+    process.stdout.write(result.stdout);
+    if (result.stderr) {
+      process.stderr.write(result.stderr);
+    }
+    totalTests += result.counts.tests;
+    totalPass += result.counts.pass;
+    totalFail += result.counts.fail;
+    timings.push(...parseTestTimings(result.stdout, result.file));
+    if (result.failed) {
+      failedFiles.push(result.file);
+      for (const annotation of extractGitHubAnnotations(result.stdout, result.file)) {
+        console.log(annotation);
+      }
+      if (result.counts.fail === 0) {
+        totalFail += 1;
+      }
+    }
+  }
+
   console.log(`\n# AGGREGATE: tests ${totalTests} | pass ${totalPass} | fail ${totalFail}`);
+  let exitCode = 0;
   if (failedFiles.length) {
     console.log(`# Failed files:\n${failedFiles.map((f) => `#   ${f}`).join("\n")}`);
     exitCode = 1;
   }
-} finally {
-  if (sandboxHome) {
-    rmSync(sandboxHome, { recursive: true, force: true });
+
+  const budgets = loadBudgets(fileURLToPath(new URL("./perf-budgets.json", import.meta.url)));
+  const violations = evaluateBudgets(timings, budgets);
+  if (violations.length) {
+    console.log(`# Budget violations (${violations.length}):`);
+    for (const v of violations) {
+      console.log(`#   ${v.ms.toFixed(1)}ms > ${v.budgetMs}ms  ${v.file}  ${v.name}`);
+    }
+    exitCode = 1;
   }
+
+  const report = buildReport(results.map((result) => ({
+    file: result.file,
+    tests: result.counts.tests,
+    pass: result.counts.pass,
+    fail: result.counts.fail,
+    durationMs: result.durationMs,
+  })));
+  const reportDir = fileURLToPath(new URL("../test-results", import.meta.url));
+  mkdirSync(reportDir, { recursive: true });
+  writeFileSync(join(reportDir, "atrium-tests.json"), JSON.stringify(report, null, 2));
+
+  process.exit(exitCode);
 }
-process.exit(exitCode);
+
+if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch((err) => {
+    console.error(err);
+    process.exit(1);
+  });
+}

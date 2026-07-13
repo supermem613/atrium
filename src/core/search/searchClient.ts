@@ -6,7 +6,7 @@ import type {
   NativeFileSearchResult,
   NativeSearchEnvelope,
   NativeSearchRunOptions,
-  RipgrepMetricsPerfAttributes,
+  NativeSearchPerfMetrics,
 } from "./types.js";
 
 export interface NativeSearchClientDependencies {
@@ -46,7 +46,7 @@ export function createNativeSearchClient(dependencies: NativeSearchClientDepende
           warnings: result.warnings,
           ...(options.perf === true ? {
             metrics: {
-              ripgrepMetrics: buildRipgrepMetrics(result),
+              searchMetrics: buildSearchMetrics(result),
             },
           } : {}),
         };
@@ -75,7 +75,7 @@ export function createNativeSearchClient(dependencies: NativeSearchClientDepende
         warnings: result.warnings,
         ...(options.perf === true ? {
           metrics: {
-            ripgrepMetrics: buildRipgrepMetrics(result),
+            searchMetrics: buildSearchMetrics(result),
           },
         } : {}),
       };
@@ -83,28 +83,12 @@ export function createNativeSearchClient(dependencies: NativeSearchClientDepende
   };
 }
 
-function buildRipgrepMetrics(result: ContentSearchResult | NativeFileSearchResult): RipgrepMetricsPerfAttributes | undefined {
-  if (result.kind === "content") {
-    return {
-      searches: result.metrics?.searches,
-      bytesSearched: result.metrics?.bytesSearched,
-      bytesPrinted: result.metrics?.bytesPrinted,
-      matchedLines: result.metrics?.matchedLines,
-      matches: result.metrics?.matches,
-      ...(result.metrics?.spawnCallMs === undefined ? {} : { spawnCallMs: result.metrics.spawnCallMs }),
-      ...(result.metrics?.spawnReadyMs === undefined ? {} : { spawnReadyMs: result.metrics.spawnReadyMs }),
-      ...(result.metrics?.childRunMs === undefined ? {} : { childRunMs: result.metrics.childRunMs }),
-      ...(result.metrics?.childTotalMs === undefined ? {} : { childTotalMs: result.metrics.childTotalMs }),
-      ...(result.metrics?.parseMs === undefined ? {} : { parseMs: result.metrics.parseMs }),
-    };
+function buildSearchMetrics(result: ContentSearchResult | NativeFileSearchResult): NativeSearchPerfMetrics | undefined {
+  if (result.metrics === undefined) {
+    return undefined;
   }
-
-  return result.metrics === undefined ? undefined : {
-    searches: result.metrics?.searches,
-    ...(result.metrics.spawnCallMs === undefined ? {} : { spawnCallMs: result.metrics.spawnCallMs }),
-    ...(result.metrics.spawnReadyMs === undefined ? {} : { spawnReadyMs: result.metrics.spawnReadyMs }),
+  return {
+    ...(result.metrics.searches === undefined ? {} : { searches: result.metrics.searches }),
     ...(result.metrics.childRunMs === undefined ? {} : { childRunMs: result.metrics.childRunMs }),
-    ...(result.metrics.childTotalMs === undefined ? {} : { childTotalMs: result.metrics.childTotalMs }),
-    ...(result.metrics.parseMs === undefined ? {} : { parseMs: result.metrics.parseMs }),
   };
 }

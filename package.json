@@ -1,7 +1,7 @@
 {
   "name": "atrium",
-  "version": "2.6.4",
-  "description": "Agent-only MCP wrapper for running CLIs and executables with structured JSON results.",
+  "version": "2.7.0",
+  "description": "Copilot CLI extension that supersedes built-in tool primitives with faster, more powerful versions out of the box.",
   "type": "module",
   "bin": {
     "atrium": "./dist/cli.js",
@@ -9,7 +9,8 @@
   },
   "scripts": {
     "prebuild": "eslint src/ test/ && tsc --noEmit -p test/tsconfig.json",
-    "build": "tsc",
+    "build": "node scripts/build.mjs",
+    "build:native": "napi build --release --platform --js-package-name atrium-search --manifest-path crates/atrium-search/Cargo.toml --output-dir crates/atrium-search",
     "test": "node test/run.mjs test/**/*.test.ts",
     "test:unit": "node test/run.mjs test/unit/**/*.test.ts",
     "test:integration": "node test/run.mjs test/integration/**/*.test.ts",
@@ -26,27 +27,13 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
-    "@vscode/ripgrep": "^1.18.0",
     "chalk": "^5.4.1",
     "commander": "^13.1.0",
     "zod": "^3.24.4"
   },
-  "optionalDependencies": {
-    "@vscode/ripgrep-darwin-arm64": "1.18.0",
-    "@vscode/ripgrep-darwin-x64": "1.18.0",
-    "@vscode/ripgrep-linux-arm": "1.18.0",
-    "@vscode/ripgrep-linux-arm64": "1.18.0",
-    "@vscode/ripgrep-linux-ia32": "1.18.0",
-    "@vscode/ripgrep-linux-ppc64": "1.18.0",
-    "@vscode/ripgrep-linux-riscv64": "1.18.0",
-    "@vscode/ripgrep-linux-s390x": "1.18.0",
-    "@vscode/ripgrep-linux-x64": "1.18.0",
-    "@vscode/ripgrep-win32-arm64": "1.18.0",
-    "@vscode/ripgrep-win32-ia32": "1.18.0",
-    "@vscode/ripgrep-win32-x64": "1.18.0"
-  },
   "devDependencies": {
     "@eslint/js": "^9.18.0",
+    "@napi-rs/cli": "^3.7.2",
     "@types/node": "^22.15.0",
     "eslint": "^9.18.0",
     "globals": "^15.14.0",

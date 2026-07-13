@@ -1,6 +1,6 @@
-import { existsSync } from "node:fs";
-import { createRequire } from "node:module";
 import chalk from "chalk";
+import { loadNativeSearchAddon } from "../core/search/nativeAddon.js";
+import type { NativeSearchAddon } from "../core/search/nativeAddon.js";
 
 // CheckResult shape is the convention across rotunda/reflux/kash/sp-tools.
 // Keep it stable: tooling and `--json` consumers depend on it.
@@ -10,8 +10,6 @@ export interface CheckResult {
   detail: string;
   hint?: string;
 }
-
-const require = createRequire(import.meta.url);
 
 function checkNode(): CheckResult {
   const major = parseInt(process.versions.node.split(".")[0], 10);
@@ -26,34 +24,30 @@ function checkNode(): CheckResult {
   return { name: "node", ok: true, detail: `Node ${process.versions.node}` };
 }
 
-function checkBundledRipgrep(): CheckResult {
-  try {
-    const mod = require("@vscode/ripgrep") as { rgPath?: string };
-    const rgPath = typeof mod.rgPath === "string" && mod.rgPath.length > 0 ? mod.rgPath : null;
-
-    if (rgPath && existsSync(rgPath)) {
-      return {
-        name: "bundled-ripgrep",
-        ok: true,
-        detail: `bundled-ripgrep resolved and healthy for Atrium-owned native search at ${rgPath}`,
-      };
-    }
-  } catch {
-    // fall through to failure result below
+// The native search addon is the only search engine, so a missing or unloadable
+// addon means grep/grep-code/find-files cannot run. That is a hard doctor
+// failure with a build hint.
+export function checkNativeSearchAddon(load: () => NativeSearchAddon | null = loadNativeSearchAddon): CheckResult {
+  const addon = load();
+  if (addon !== null) {
+    return {
+      name: "native-search-addon",
+      ok: true,
+      detail: "native search addon loaded; grep/grep-code/find-files run in-process",
+    };
   }
-
   return {
-    name: "bundled-ripgrep",
+    name: "native-search-addon",
     ok: false,
-    detail: "bundled-ripgrep not resolved for Atrium-owned native search",
-    hint: "Install the @vscode/ripgrep runtime dependency so Atrium's native search can use bundled ripgrep.",
+    detail: "native search addon not present; grep/grep-code/find-files are unavailable",
+    hint: "Run `npm run build:native`, or install the platform prebuilt, to build the in-process search engine.",
   };
 }
 
 async function runChecks(): Promise<CheckResult[]> {
   return [
     checkNode(),
-    checkBundledRipgrep(),
+    checkNativeSearchAddon(),
     // Add more checks here. Pattern: each check is a pure function returning
     // CheckResult. Failures should always carry a `hint` with remediation.
   ];
@@ -72,7 +66,7 @@ export async function doctorCommand(opts: { json?: boolean }): Promise<void> {
   for (const r of results) {
     const icon = r.ok ? chalk.green("✓") : chalk.red("✗");
     console.log(`  ${icon} ${r.name.padEnd(20, ".")} ${r.detail}`);
-    if (!r.ok && r.hint) {
+    if (r.hint) {
       console.log(`      ${chalk.dim(r.hint)}`);
     }
   }
