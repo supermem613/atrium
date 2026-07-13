@@ -5,26 +5,17 @@
 // Avoids `node --test` worker subprocesses (their IPC pipe intermittently
 // fails on Windows runners with deserialize errors). Spawns one child process
 // per file with a TAP reporter and aggregates the per-file summaries.
+//
+// Files run one at a time on purpose. Running several files in parallel
+// oversubscribes the 4-core Windows CI runners because each perf and
+// background-run file spawns its own child processes. That contention made
+// timing-sensitive tests flake, so the runner stays serial.
 import { mkdirSync, readdirSync, mkdtempSync, rmSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir, cpus } from "node:os";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL, fileURLToPath } from "node:url";
 import { minimatch } from "minimatch";
 import { spawn } from "node:child_process";
-
-// Bounded concurrency for the per-file worker pool. Explicit override via
-// ATRIUM_TEST_CONCURRENCY, otherwise cap at the machine's cpu count but never
-// exceed 4 so a many-core CI box does not oversubscribe the native addon.
-export function resolveConcurrency(env, cpuCount) {
-  const override = env?.ATRIUM_TEST_CONCURRENCY;
-  if (override !== undefined && override !== "") {
-    const parsed = Number.parseInt(override, 10);
-    if (Number.isInteger(parsed) && parsed > 0) {
-      return parsed;
-    }
-  }
-  return Math.max(1, Math.min(cpuCount || 1, 4));
-}
 
 // Expand one or more glob patterns into a de-duplicated, ordered file list.
 export function discoverTestFiles(patterns) {
@@ -211,18 +202,11 @@ async function main() {
   mkdirSync(testTempRoot, { recursive: true });
 
   const baseEnv = { ...process.env };
-  const concurrency = resolveConcurrency(process.env, cpus().length);
-  const workerCount = Math.min(concurrency, files.length);
 
   const results = new Array(files.length);
-  let next = 0;
-  const workers = Array.from({ length: workerCount }, async () => {
-    while (next < files.length) {
-      const index = next++;
-      results[index] = await runOneFile(files[index], baseEnv, testTempRoot);
-    }
-  });
-  await Promise.all(workers);
+  for (let index = 0; index < files.length; index++) {
+    results[index] = await runOneFile(files[index], baseEnv, testTempRoot);
+  }
 
   let totalTests = 0;
   let totalPass = 0;

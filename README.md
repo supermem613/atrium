@@ -287,11 +287,12 @@ CI runs on Ubuntu + Windows via GitHub Actions (`.github/workflows/ci.yml`),
 caching the Rust build with `Swatinem/rust-cache` and pinning `actions/checkout`
 and `actions/setup-node` at v5.
 
-The test runner (`test/run.mjs`) runs each test file in its own child process
-with bounded parallelism. Concurrency defaults to `min(cpu count, 4)`; override
-it with `ATRIUM_TEST_CONCURRENCY`. Each child gets a sandboxed `HOME` so tests
-cannot read your real `~/.atrium/` state; set `ATRIUM_TEST_REAL_HOME=1` to opt
-out. Per-test time budgets live in
+The test runner (`test/run.mjs`) runs each test file in its own child process,
+one file at a time. Serial execution keeps the timing-sensitive perf and
+background-run tests stable on the 4-core Windows CI runners, where running
+files in parallel oversubscribed the CPU and made them flake. Each child gets a
+sandboxed `HOME` so tests cannot read your real `~/.atrium/` state; set
+`ATRIUM_TEST_REAL_HOME=1` to opt out. Per-test time budgets live in
 [`test/perf-budgets.json`](test/perf-budgets.json) (`defaultTestMs`,
 `slowThresholdMs`, and per-test `maxMs` overrides matched by `file` and
 `nameIncludes`); a test that exceeds its budget fails the run. Every run writes a
