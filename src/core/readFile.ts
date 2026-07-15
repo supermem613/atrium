@@ -3,6 +3,7 @@ import { access, readFile, stat } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 import { performance } from "node:perf_hooks";
+import { TextDecoder } from "node:util";
 import { defaultInlineOutputLimitBytes, materializeOutputValue, OutputValue } from "./artifacts.js";
 import { sanitizePerfAttributes } from "./perf.js";
 import { atriumTempPath } from "./tempPaths.js";
@@ -17,6 +18,9 @@ export interface ReadTextFileSliceInput {
   startLine?: number;
   endLine?: number;
   count?: number;
+  startByte?: number;
+  countBytes?: number;
+  snapshot?: string;
 }
 
 export type ReadTextFileSliceResult = ReadTextFileSliceSuccess | ReadTextFileSliceFailure;
@@ -29,12 +33,16 @@ export interface ReadTextFileSliceSuccess {
   meta: {
     totalLines: number;
     bytes: number;
+    totalBytes?: number;
     cache: {
       hit: boolean;
       reason: "miss" | "same-file";
     };
   };
   content: OutputValue;
+  byteRange?: [number, number];
+  snapshot?: string;
+  nextRead?: { path: string; startByte: number; countBytes: number; snapshot: string } | null;
   perf?: ReadTextFileSlicePerf;
 }
 
@@ -53,7 +61,7 @@ export interface ReadTextFileSliceOptions {
 
 export interface ReadTextFileSliceFailure {
   ok: false;
-  status: "not-found" | "unsupported" | "invalid-args";
+  status: "not-found" | "unsupported" | "invalid-args" | "mutation_rejected";
   path: string;
   hint: string;
 }
@@ -70,6 +78,19 @@ interface CachedLineSliceCacheEntry {
 }
 
 export async function readTextFileSlice(input: ReadTextFileSliceInput, options: ReadTextFileSliceOptions = {}): Promise<ReadTextFileSliceResult> {
+  const useByteMode = input.startByte !== undefined || input.countBytes !== undefined;
+  if (useByteMode) {
+    if (input.startLine !== undefined || input.endLine !== undefined || input.count !== undefined) {
+      return invalidArgs(input.path, "provide either line input or byte input, not both");
+    }
+    if (input.startByte !== undefined && input.startByte < 0) {
+      return invalidArgs(input.path, "startByte must be at least 0");
+    }
+    if (input.countBytes !== undefined && input.countBytes < 1) {
+      return invalidArgs(input.path, "countBytes must be at least 1");
+    }
+  }
+
   const startLine = input.startLine ?? 1;
   if (startLine < 1) {
     return invalidArgs(input.path, "startLine must be at least 1");
@@ -111,7 +132,8 @@ export async function readTextFileSlice(input: ReadTextFileSliceInput, options: 
     };
   }
 
-  const cacheKey = createCacheKey(input.path, fileStat);
+  const snapshot = createCacheKey(input.path, fileStat);
+  const cacheKey = snapshot;
   const cachedEntry = fileStat.size <= maxCachedFileSizeBytes ? getCachedLineSliceEntry(cacheKey) : undefined;
 
   let readMs = 0;
@@ -120,6 +142,86 @@ export async function readTextFileSlice(input: ReadTextFileSliceInput, options: 
   let bytes = 0;
   let totalLines = 0;
   let cacheMeta: ReadTextFileSliceSuccess["meta"]["cache"] = { hit: false, reason: "miss" };
+
+  if (useByteMode) {
+    if (input.snapshot !== undefined && input.snapshot !== snapshot) {
+      return {
+        ok: false,
+        status: "mutation_rejected",
+        path: input.path,
+        hint: "snapshot token does not match current file state",
+      };
+    }
+
+    const readStart = performance.now();
+    const buffer = await readFile(input.path);
+    readMs = roundTimingValue(performance.now() - readStart);
+    if (buffer.includes(0)) {
+      return {
+        ok: false,
+        status: "unsupported",
+        path: input.path,
+        hint: "binary content is not supported",
+      };
+    }
+
+    const totalBytes = buffer.byteLength;
+    const startByte = input.startByte ?? 0;
+    const safeStartByte = Math.min(startByte, totalBytes);
+    const requestedCountBytes = Math.min(input.countBytes ?? defaultInlineOutputLimitBytes, defaultInlineOutputLimitBytes);
+    const remainingBytes = Math.max(0, totalBytes - safeStartByte);
+    const initialServedEnd = Math.min(safeStartByte + requestedCountBytes, safeStartByte + remainingBytes);
+    let servedEnd = initialServedEnd;
+
+    if (safeStartByte < totalBytes && isContinuationByte(buffer[safeStartByte])) {
+      return invalidArgs(input.path, "startByte points into the middle of a UTF-8 codepoint");
+    }
+
+    if (servedEnd > safeStartByte && !isValidUtf8Window(buffer, safeStartByte, servedEnd)) {
+      let shrinkEnd = servedEnd;
+      while (shrinkEnd > safeStartByte + 1 && !isValidUtf8Window(buffer, safeStartByte, shrinkEnd)) {
+        shrinkEnd -= 1;
+      }
+      if (isValidUtf8Window(buffer, safeStartByte, shrinkEnd)) {
+        servedEnd = shrinkEnd;
+      } else {
+        const codePointLength = measureUtf8CodePointLength(buffer, safeStartByte);
+        if (codePointLength > 0 && safeStartByte + codePointLength <= totalBytes) {
+          servedEnd = safeStartByte + codePointLength;
+        } else {
+          servedEnd = totalBytes;
+        }
+      }
+    }
+
+    if (safeStartByte < totalBytes && servedEnd <= safeStartByte) {
+      const codePointLength = measureUtf8CodePointLength(buffer, safeStartByte);
+      if (codePointLength > 0 && safeStartByte + codePointLength <= totalBytes) {
+        servedEnd = safeStartByte + codePointLength;
+      } else {
+        servedEnd = totalBytes;
+      }
+    }
+
+    const contentBuffer = buffer.subarray(safeStartByte, servedEnd);
+    const totalMs = roundTimingValue(performance.now() - totalStart);
+    return {
+      ok: true,
+      path: input.path,
+      timingMs: totalMs,
+      range: [safeStartByte, servedEnd],
+      meta: {
+        totalLines: 0,
+        bytes: totalBytes,
+        totalBytes,
+        cache: { hit: false, reason: "miss" },
+      },
+      content: contentBuffer.toString("utf8"),
+      byteRange: [safeStartByte, servedEnd],
+      snapshot,
+      nextRead: servedEnd < totalBytes ? { path: input.path, startByte: servedEnd, countBytes: requestedCountBytes, snapshot } : null,
+    };
+  }
 
   if (cachedEntry !== undefined) {
     text = cachedEntry.text;
@@ -209,6 +311,43 @@ function invalidArgs(path: string, hint: string): ReadTextFileSliceFailure {
     path,
     hint,
   };
+}
+
+function isContinuationByte(byte: number): boolean {
+  return (byte & 0xC0) === 0x80;
+}
+
+function isValidUtf8Window(buffer: Buffer, startByte: number, endByte: number): boolean {
+  if (endByte <= startByte) {
+    return false;
+  }
+  const decoder = new TextDecoder("utf-8", { fatal: true });
+  try {
+    decoder.decode(buffer.subarray(startByte, endByte));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function measureUtf8CodePointLength(buffer: Buffer, startByte: number): number {
+  const firstByte = buffer[startByte];
+  if (firstByte === undefined) {
+    return 0;
+  }
+  if (firstByte <= 0x7F) {
+    return 1;
+  }
+  if ((firstByte & 0xE0) === 0xC0) {
+    return 2;
+  }
+  if ((firstByte & 0xF0) === 0xE0) {
+    return 3;
+  }
+  if ((firstByte & 0xF8) === 0xF0) {
+    return 4;
+  }
+  return 0;
 }
 
 function lineSlices(text: string): LineSlice[] {

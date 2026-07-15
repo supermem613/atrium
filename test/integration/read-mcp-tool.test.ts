@@ -24,7 +24,7 @@ describe("read MCP tool", () => {
       const inputSchema = readTool.inputSchema as Record<string, unknown>;
       const properties = inputSchema.properties as Record<string, unknown> | undefined;
       assert.ok(properties, "read should expose properties");
-      for (const propertyName of ["path", "startLine", "endLine", "count"]) {
+      for (const propertyName of ["path", "startLine", "endLine", "count", "startByte", "countBytes", "snapshot"]) {
         assert.ok(properties[propertyName], `read should define ${propertyName}`);
       }
       assert.deepEqual(inputSchema.required, ["path"]);

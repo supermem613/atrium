@@ -36,6 +36,9 @@ export interface McpRunOptions extends McpDebugOptions {
 export interface McpReadOptions extends McpDebugOptions {
   startLine?: string;
   endLine?: string;
+  startByte?: string;
+  countBytes?: string;
+  snapshot?: string;
 }
 
 export interface McpFindFilesOptions extends McpDebugOptions {
@@ -163,15 +166,7 @@ export async function mcpReadCommand(path: string, options: McpReadOptions = {})
   const perfRecorder = createPerfRecorder(options.perf === true);
   const perfOperation = perfRecorder?.startOperation(randomUUID());
   if (options.perf === true) {
-    const input: { path: string; startLine?: number; endLine?: number } = { path };
-    const startLine = parseOptionalInteger(options.startLine, "--start-line");
-    const endLine = parseOptionalInteger(options.endLine, "--end-line");
-    if (startLine !== undefined) {
-      input.startLine = startLine;
-    }
-    if (endLine !== undefined) {
-      input.endLine = endLine;
-    }
+    const input = buildReadArguments(path, options);
     const result = await readTextFileSlice(input, { perf: true });
     if (result.ok) {
       for (const span of buildReadTextFileSlicePerfSpans(result)) {
@@ -362,8 +357,22 @@ function attachPerf(payload: unknown, perfReport: PerfOperationReport | undefine
   return { value: payload, perf: perfReport };
 }
 
-function buildReadArguments(path: string, options: McpReadOptions): Record<string, unknown> {
-  const args: Record<string, unknown> = { path };
+export function buildReadArguments(path: string, options: McpReadOptions): {
+  path: string;
+  startLine?: number;
+  endLine?: number;
+  startByte?: number;
+  countBytes?: number;
+  snapshot?: string;
+} {
+  const args: {
+    path: string;
+    startLine?: number;
+    endLine?: number;
+    startByte?: number;
+    countBytes?: number;
+    snapshot?: string;
+  } = { path };
   const startLine = parseOptionalInteger(options.startLine, "--start-line");
   if (startLine !== undefined) {
     args.startLine = startLine;
@@ -372,15 +381,22 @@ function buildReadArguments(path: string, options: McpReadOptions): Record<strin
   if (endLine !== undefined) {
     args.endLine = endLine;
   }
+  const startByte = parseOptionalInteger(options.startByte, "--start-byte");
+  if (startByte !== undefined) {
+    args.startByte = startByte;
+  }
+  const countBytes = parseOptionalInteger(options.countBytes, "--count-bytes");
+  if (countBytes !== undefined) {
+    args.countBytes = countBytes;
+  }
+  if (options.snapshot !== undefined) {
+    args.snapshot = options.snapshot;
+  }
   return args;
 }
 
 function readPayload(result: Awaited<ReturnType<typeof readTextFileSlice>>): unknown {
-  if (result.ok) {
-    return { ok: true, path: result.path, timingMs: result.timingMs, range: result.range, meta: result.meta, content: result.content };
-  }
-
-  return { ok: false, status: result.status, path: result.path, hint: result.hint };
+  return result;
 }
 
 function buildFindFilesArguments(root: string, options: McpFindFilesOptions): Record<string, unknown> {
