@@ -316,6 +316,14 @@ exact same surface-tailored text and injects it as `additionalContext` from the
 `onSessionStart` and `onUserPromptSubmitted` hooks, so the guardrails reach the
 model at cold start and on every turn, surviving context compaction.
 
+When the `search` surface is enabled, the composed `additionalContext` also
+carries the explicit blocked-tool to primitive mapping: it names the direct
+search tools that are off limits (`rg`, `grep`, `find`, and the rest) and maps
+them to `atrium-find-files`, `atrium-grep`, and `atrium-grep-code`. Broadcasting
+that mapping up front, rather than only after a raw search is denied, means the
+pre-emptive guidance reaches the model before it reaches for a blocked tool
+instead of one turn too late.
+
 The extension reads the same `mcpServers.atrium.args` selection from
 `mcp-config.json` that launches the server, so changing `--surface` re-tailors
 the injected instructions with no separate coordination. The selection parsing
@@ -336,7 +344,10 @@ When the `search` surface is enabled it registers `onPermissionRequest` and
 `git grep`, `find`, `findstr`, `xray`, and `Select-String` tool use, shell
 commands that shell out to those binaries, and `atrium run` calls that spawn a
 raw search binary. Each denial returns feedback that points the model back at
-`atrium-find-files`, `atrium-grep`, and `atrium-grep-code`. The decision logic
+`atrium-find-files`, `atrium-grep`, and `atrium-grep-code`. That deny feedback
+and the load-time mapping described above are the same `SEARCH_POLICY_CONTEXT`
+constant, so the up-front broadcast and the deny/repair message can never drift
+apart. The constant is gated on the search surface in both places. The decision logic
 lives in `src\mcp\searchPolicy.ts` as the pure `evaluatePreToolUse` and
 `evaluatePermissionRequest` functions, gated on the search surface through
 `isSearchSurfaceEnabled`. Gating enforcement on the same surface that advertises

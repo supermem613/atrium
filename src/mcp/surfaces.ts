@@ -6,6 +6,7 @@ import { adoptBackgroundRun, waitForBackgroundRun, withLongRunningDefault } from
 import { RunExecutableInput, RunExecutableResult, startExecutableRun } from "../core/runner.js";
 import { ExecutionQueue } from "../core/executionQueue.js";
 import { toolTextResult } from "./format.js";
+import { SEARCH_POLICY_CONTEXT } from "./searchPolicy.js";
 import { normalizeSearchResult } from "../core/search/normalize.js";
 import { readTextFileSlice } from "../core/readFile.js";
 import type { SearchClientLike } from "../core/search/types.js";
@@ -379,6 +380,13 @@ const searchInstructionFragment = [
   "- Always pass a root. Use find-files for path or name discovery, grep-code for git-aware code content search, and grep for unrestricted content search.",
   "- Do not fall back to a separate shell search or a separate glob tool for discovery. These primitives replace shelling out to rg, grep, find, findstr, or Select-String.",
   "- On a timeout, retry narrower: a tighter glob, a more specific query or queries, or a lower max. Never fall back to a raw shell search.",
+  "",
+  // Reuse the deny path's constant so the explicit blocked-tool to primitive
+  // mapping reaches the model at load time, not only after a raw search is
+  // denied. Sharing one source keeps the load-time and deny-time text from
+  // drifting, and gating it inside this search fragment drops it whenever the
+  // search surface is disabled.
+  SEARCH_POLICY_CONTEXT,
 ].join("\n");
 
 // Ordered so instruction composition reproduces the historical layout: core

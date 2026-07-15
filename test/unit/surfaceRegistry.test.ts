@@ -70,6 +70,8 @@ const GOLDEN_DEFAULT_INSTRUCTIONS = [
   "- Always pass a root. Use find-files for path or name discovery, grep-code for git-aware code content search, and grep for unrestricted content search.",
   "- Do not fall back to a separate shell search or a separate glob tool for discovery. These primitives replace shelling out to rg, grep, find, findstr, or Select-String.",
   "- On a timeout, retry narrower: a tighter glob, a more specific query or queries, or a lower max. Never fall back to a raw shell search.",
+  "",
+  "Search-policy is active. Do not call direct search commands or tools: rg, ripgrep, grep, git grep, xray, find, findstr, or Select-String. Use the Atrium MCP search primitives instead: atrium-find-files for path or name discovery, atrium-grep for a single content query, and atrium-grep-code for git-aware code search. Pass one query or a queries array. These Atrium primitives are deferred MCP tools. If atrium-find-files, atrium-grep, or atrium-grep-code is not in your immediately callable tool list, call the tool search tool first (for example with the pattern find-files|grep) to surface them, then call them. Do not abandon the search or read files blindly because a primitive looks unavailable. Always pass root and a query; narrow with glob, exclude, and max. Do not pass caller timeout knobs to search primitives. If a search times out, retry with a narrower glob, a more specific query, or a lower max. Do not fall back to raw search commands.",
 ].join("\n");
 
 const EXPECTED_DEFAULT_TOOLS = [
