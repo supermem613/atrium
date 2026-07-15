@@ -50,8 +50,10 @@ const GOLDEN_DEFAULT_INSTRUCTIONS = [
   "- Do not post-process a file-backed tool result through a separate shell. Read it with the read tool, or rerun the producing command with narrower output.",
   "",
   "Read contract:",
-  "- The read tool takes a path plus an optional startLine and either endLine or count. Line numbers are 1-based and positive.",
-  "- A successful read returns ok, path, range, meta, and content. Treat the returned range together with meta.totalLines as authoritative for end-of-file and clamping instead of guessing bounds.",
+  "- The read tool takes a path plus optional startLine/endLine or count for line-mode reads, or startByte/countBytes with an optional snapshot for byte-mode paging. Line numbers are 1-based and positive.",
+  "- A successful read returns ok, path, range, meta, content, and nextRead. Treat the returned range together with meta.totalLines as authoritative for end-of-file and clamping instead of guessing bounds.",
+  "- Reads stay inline when the payload fits the output contract; otherwise the tool uses Atrium's {file, bytes} value contract.",
+  "- Byte paging uses snapshot as a stale-page continuation guard, and the read rejects continuation after a mutation instead of silently returning stale bytes.",
   "",
   "Read safety:",
   "- Use the read tool only for exact paths that are known to exist or came from an owning tool's file-value output. Do not use a read as an existence probe.",
@@ -188,8 +190,9 @@ describe("surface registry — tool-contract delta", () => {
   const DELTA_SENTENCES = [
     "A tool result is itself either an inline value or an object {file, bytes}",
     "Read contract:",
-    "The read tool takes a path plus an optional startLine and either endLine or count. Line numbers are 1-based and positive.",
+    "The read tool takes a path plus optional startLine/endLine or count for line-mode reads, or startByte/countBytes with an optional snapshot for byte-mode paging.",
     "Treat the returned range together with meta.totalLines as authoritative",
+    "Byte paging uses snapshot as a stale-page continuation guard",
     "Patterns match literally by default.",
     "content matches also carry matches[].line and matches[].text",
   ];

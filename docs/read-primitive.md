@@ -14,6 +14,10 @@
 
 `path` is required. `startLine` defaults to `1`. Provide either `endLine` or `count`, not both. When neither is provided, Atrium serves up to 120 lines.
 
+### Byte paging inputs
+
+Byte paging uses `startByte` and `countBytes` instead of line inputs. `startByte` and `countBytes` are 0-based half-open byte paging inputs: `startByte` is the first byte to return and `countBytes` is the number of bytes to return in the page, so the page covers bytes `[startByte, startByte + countBytes)`. `startByte`/`countBytes` are mutually exclusive with `startLine`, `endLine`, and `count`. `snapshot` is an optional opaque continuation token from a prior byte read. It protects against stale continuation by rejecting a request if the source has been mutated since the snapshot was created; that mutation rejection returns `ok: false`, `status: "mutation_rejected"`, and no stale content.
+
 ## Success
 
 Successful reads return only the content contract:
@@ -56,6 +60,36 @@ Large content uses Atrium's existing file-value contract:
 ```
 The inline threshold is 8192 bytes. Larger served content is written as `{ "file": "...", "bytes": n }`.
 
+### Byte paging success
+
+Byte reads return the normal success shape plus `byteRange`, `meta.totalBytes`, `snapshot`, and `nextRead`. A response looks like this:
+
+```json
+{
+  "ok": true,
+  "path": "C:\\repo\\sample.txt",
+  "range": [0, 4],
+  "byteRange": [0, 4],
+  "meta": {
+    "totalBytes": 13,
+    "cache": {
+      "hit": false,
+      "reason": "miss"
+    }
+  },
+  "snapshot": "snap-001",
+  "content": "Hell",
+  "nextRead": {
+    "startByte": 4,
+    "countBytes": 4
+  }
+}
+```
+
+The inline guarantee is that byte pages are inline strings rather than file-backed values. `nextRead` is `null` at EOF; otherwise it is the next request to issue. Byte paging is UTF-8 safe: pages do not split codepoints, valid non-EOF pages make non-zero progress, and `startByte` must be on a codepoint boundary. The mutation rejection status is `mutation_rejected` and no stale content is returned.
+
+A worked paging example follows `nextRead` until EOF. Start with `startByte: 0, countBytes: 4` and `content: "Hell"`, then continue with `startByte: 4, countBytes: 4` and `content: "o, w"`, then `startByte: 8, countBytes: 4` and `content: "orld"`, and finally `startByte: 12, countBytes: 4` with `content: "!"` and `nextRead: null`.
+
 ## Non-content outcomes
 
 Expected failures return `ok:false` instead of throwing MCP tool errors:
@@ -69,4 +103,4 @@ Expected failures return `ok:false` instead of throwing MCP tool errors:
 }
 ```
 
-Statuses are `not-found`, `unsupported`, and `invalid-args`. `status` and `hint` are for non-content outcomes only.
+Statuses are `not-found`, `unsupported`, `invalid-args`, and `mutation_rejected`. `status` and `hint` are for non-content outcomes only.

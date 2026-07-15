@@ -1,6 +1,6 @@
 {
   "name": "atrium",
-  "version": "2.7.2",
+  "version": "2.8.0",
   "description": "Copilot CLI extension that supersedes built-in tool primitives with faster, more powerful versions out of the box.",
   "type": "module",
   "bin": {

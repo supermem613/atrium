@@ -88,6 +88,9 @@ program
   .description("Investigate an MCP read call locally; rerun with --perf for a CLI-only detailed trace")
   .option("--start-line <line>", "1-based line number to start the read window")
   .option("--end-line <line>", "1-based line number to end the read window")
+  .option("--start-byte <byte>", "Byte offset to start the read window")
+  .option("--count-bytes <bytes>", "Maximum number of bytes to read")
+  .option("--snapshot <token>", "Snapshot token for byte-page continuation rejection")
   .option("--perf", "Emit a CLI-only detailed report for this single CLI rerun. Normal MCP responses stay token-light")
   .action((path: string, options: McpReadOptions) => mcpReadCommand(path, options));
 

@@ -233,12 +233,15 @@ function readTools(): ToolRegistration[] {
       "read",
       {
         title: "Read text file range",
-        description: "Read a UTF-8 text file with deterministic line-range clamping. Successful reads return ok, path, range, meta, and content. Large content uses Atrium's {file, bytes} value contract.",
+        description: "Read a UTF-8 text file with deterministic line-range clamping or byte-range paging. The read payload stays inline when it fits the output contract and otherwise uses Atrium's {file, bytes} value contract. Successful reads return ok, path, range, meta, content, and nextRead; byte paging also accepts snapshot-based stale-page rejection and mutation rejection semantics.",
         inputSchema: {
           path: z.string().min(1).describe("File path to read."),
           startLine: z.number().int().positive().optional().describe("First 1-based line to read. Defaults to 1."),
           endLine: z.number().int().positive().optional().describe("Last 1-based line to read. Mutually exclusive with count."),
           count: z.number().int().positive().optional().describe("Maximum number of lines to read. Mutually exclusive with endLine."),
+          startByte: z.number().int().nonnegative().optional().describe("First byte offset to read for byte-mode paging."),
+          countBytes: z.number().int().positive().optional().describe("Maximum number of bytes to read for byte-mode paging."),
+          snapshot: z.string().optional().describe("Optional snapshot token for stale byte-page continuation rejection."),
         },
       },
       async (input) => toolTextResult(await readTextFileSlice(input)),
@@ -354,8 +357,10 @@ const coreInstructionFragment = [
 // external instructions. Empty until this surface is enabled.
 const readInstructionFragment = [
   "Read contract:",
-  "- The read tool takes a path plus an optional startLine and either endLine or count. Line numbers are 1-based and positive.",
-  "- A successful read returns ok, path, range, meta, and content. Treat the returned range together with meta.totalLines as authoritative for end-of-file and clamping instead of guessing bounds.",
+  "- The read tool takes a path plus optional startLine/endLine or count for line-mode reads, or startByte/countBytes with an optional snapshot for byte-mode paging. Line numbers are 1-based and positive.",
+  "- A successful read returns ok, path, range, meta, content, and nextRead. Treat the returned range together with meta.totalLines as authoritative for end-of-file and clamping instead of guessing bounds.",
+  "- Reads stay inline when the payload fits the output contract; otherwise the tool uses Atrium's {file, bytes} value contract.",
+  "- Byte paging uses snapshot as a stale-page continuation guard, and the read rejects continuation after a mutation instead of silently returning stale bytes.",
   "",
   "Read safety:",
   "- Use the read tool only for exact paths that are known to exist or came from an owning tool's file-value output. Do not use a read as an existence probe.",
