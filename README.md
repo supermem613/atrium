@@ -116,7 +116,10 @@ handshake, but some hosts (including Copilot CLI) do not inject that field into
 model context. Atrium ships a companion Copilot CLI extension that composes the
 same surface-tailored text and injects it as `additionalContext` on every turn
 and at session start, so the guardrails reach the model reliably and survive
-context compaction.
+context compaction. When the `search` surface is enabled, that injected text
+includes the explicit search-tool to primitive mapping, so the model learns to
+reach for `atrium-grep`, `atrium-grep-code`, and `atrium-find-files` instead of
+`rg`, `grep`, or `find` before it is ever denied.
 
 Install it once:
 
