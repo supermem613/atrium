@@ -21,6 +21,7 @@ Copilot CLI on Windows often wraps simple CLI calls in PowerShell. That adds pro
 - runs the executable directly from structured args
 - resolves Windows npm shims to their underlying Node entrypoint where possible
 - supports `{ "file": "..." }` input values for UTF-8 file content in `args[]` and `stdin`
+- accepts `args` as a single value or an array of values; a lone value becomes exactly one argument and is never shell-split, so the `{file}` variant and the no-shell rule still hold
 - returns stdout/stderr and read content with a fixed heuristic: empty omitted when applicable, 1-8192 bytes inline, larger output as `{ "file": "...", "bytes": n }`
 - trims agent-facing results to the fields needed for routing: `ok`, `tool`, `timingMs`, stdout/stderr, and errors
 - limits one MCP server process to 4 concurrent child executions and reports queue metrics in run results

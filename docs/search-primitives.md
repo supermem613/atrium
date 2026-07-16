@@ -68,11 +68,11 @@ Required:
 
 Optional:
 
-- `regex`: treat the patterns as regular expressions. Defaults to `false`, which matches patterns literally.
+- `regex`: treat the patterns as regular expressions. Defaults to `false`, which matches patterns literally. Accepts a boolean or the strings `"true"`/`"false"`.
 - `path`: restrict a `grep` or `grep-code` content search to a single file instead of walking `root`.
 - `glob`: constrain searched paths.
 - `exclude`: skip matching paths, applied as a negated glob.
-- `max`: cap returned results.
+- `max`: cap returned results. Accepts an integer or a numeric string such as `"20"`.
 
 ## Choosing a tool
 

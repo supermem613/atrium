@@ -52,7 +52,7 @@ Output semantics:
 - Empty streams are omitted.
 - The inline threshold is fixed at 8192 bytes. There is no caller-controlled output-size knob.
 
-Initial input support covers `args[]` and `stdin`.
+Initial input support covers `args[]` and `stdin`. The `args` input accepts either a single value or an array of values; a lone value is treated as exactly one argument and is never split on whitespace.
 
 ## `schema` flow
 

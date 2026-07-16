@@ -12,7 +12,7 @@
 }
 ```
 
-`path` is required. `startLine` defaults to `1`. Provide either `endLine` or `count`, not both. When neither is provided, Atrium serves up to 120 lines.
+`path` is required. `startLine` defaults to `1`. Provide either `endLine` or `count`, not both. When neither is provided, Atrium serves up to 120 lines. `startLine`, `endLine`, `count`, `startByte`, and `countBytes` each accept either an integer or a numeric string such as `"2"`.
 
 ### Byte paging inputs
 
