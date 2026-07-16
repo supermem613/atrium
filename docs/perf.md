@@ -71,7 +71,7 @@ atrium mcp-read /tmp/file.txt --perf
 atrium mcp-grep /tmp --query alpha --max 5 --perf
 ```
 
-Search reruns accept the same scope controls as their MCP verbs. Use `--queries`, `--regex`, `--glob`, and `--exclude` when those arguments shaped the original request. `mcp-find-files` also accepts `--exclude`.
+Search reruns accept the same scope controls as their MCP verbs. Use `--query`, `--regex`, `--glob`, and `--exclude` when those arguments shaped the original request. `mcp-find-files` also accepts `--exclude`.
 
 Search traces separate the in-process native operation into a timed `search` span and a timed `normalize` span. No child process is created, so the search and normalize span timings are the only search clocks. They are enabled only for CLI `--perf` reruns. Normal MCP search and CLI search without `--perf` do not calculate or return them.
 

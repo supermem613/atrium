@@ -262,12 +262,7 @@ export const commandSpecs: CommandSpec[] = [
         {
           name: "--query",
           type: "string",
-          summary: "Single query string to search for.",
-        },
-        {
-          name: "--queries",
-          type: "string",
-          summary: "One or more query strings to match.",
+          summary: "One or more query patterns to match.",
         },
         {
           name: "--regex",
@@ -312,12 +307,7 @@ export const commandSpecs: CommandSpec[] = [
         {
           name: "--query",
           type: "string",
-          summary: "Single query string to search for.",
-        },
-        {
-          name: "--queries",
-          type: "string",
-          summary: "One or more query strings to match.",
+          summary: "One or more query patterns to match.",
         },
         {
           name: "--regex",

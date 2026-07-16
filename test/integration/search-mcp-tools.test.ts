@@ -65,14 +65,14 @@ describe("search MCP tools", () => {
         const inputSchema = tool.inputSchema as Record<string, unknown>;
         const properties = inputSchema.properties as Record<string, unknown> | undefined;
         assert.ok(properties, `${toolName} should expose properties`);
-        for (const propertyName of ["root", "query", "queries", "regex", "glob", "exclude", "max"]) {
+        for (const propertyName of ["root", "query", "regex", "path", "glob", "exclude", "max"]) {
           assert.ok(properties?.[propertyName], `${toolName} should define ${propertyName}`);
         }
         assert.equal(properties?.timeoutMs, undefined);
-        assert.equal((properties?.queries as Record<string, unknown>).type, "array", `${toolName} queries should be an array`);
+        assert.equal(properties?.queries, undefined, `${toolName} should not expose a separate queries field`);
         assert.equal((properties?.regex as Record<string, unknown>).type, "boolean", `${toolName} regex should be a boolean`);
         const required = inputSchema.required as string[] | undefined;
-        assert.deepEqual(required, ["root"], `${toolName} should require only root`);
+        assert.deepEqual(required, ["root", "query"], `${toolName} should require root and query`);
       }
 
       const findFiles = listedTools.tools.find((candidate) => candidate.name === "find-files");
@@ -101,14 +101,14 @@ describe("search MCP tools", () => {
         { name: "grep-code", expected: { command: "search", root: "/tmp/x", query: "alpha|beta\\(x\\)|gamma", regex: true, glob: "**/*.ts", exclude: "**/dist/**", max: 5, timeoutMs: 59_000 } },
       ] as const;
       for (const routing of multiLiteralRouting) {
-        const parsed = await callJson(client, routing.name, { root: "/tmp/x", queries: ["alpha", "beta(x)", "gamma"], glob: "**/*.ts", exclude: "**/dist/**", max: 5 });
+        const parsed = await callJson(client, routing.name, { root: "/tmp/x", query: ["alpha", "beta(x)", "gamma"], glob: "**/*.ts", exclude: "**/dist/**", max: 5 });
         assert.deepEqual(parsed, expectedContentResult);
         assert.deepEqual(fakeClient.calls.at(-1), routing.expected);
       }
 
       // regex:true passes patterns through as a raw alternation without escaping.
       const regexRouting = [
-        { name: "grep", args: { root: "/tmp/x", queries: ["alpha", "beta(x)", "gamma"], regex: true }, expected: { command: "search", root: "/tmp/x", query: "alpha|beta(x)|gamma", regex: true, all: true, timeoutMs: 59_000 } },
+        { name: "grep", args: { root: "/tmp/x", query: ["alpha", "beta(x)", "gamma"], regex: true }, expected: { command: "search", root: "/tmp/x", query: "alpha|beta(x)|gamma", regex: true, all: true, timeoutMs: 59_000 } },
         { name: "grep-code", args: { root: "/tmp/x", query: "be.n", regex: true }, expected: { command: "search", root: "/tmp/x", query: "be.n", regex: true, timeoutMs: 59_000 } },
       ] as const;
       for (const routing of regexRouting) {
@@ -117,14 +117,10 @@ describe("search MCP tools", () => {
         assert.deepEqual(fakeClient.calls.at(-1), routing.expected);
       }
 
-      // Ambiguous or empty pattern input is rejected with a clear, actionable message.
+      // A query is required. Omitting it is rejected at the schema boundary.
       for (const toolName of ["grep", "grep-code"] as const) {
-        const both = await client.callTool({ name: toolName, arguments: { root: "/tmp/x", query: "a", queries: ["b"] } });
-        assert.equal(both.isError, true, `${toolName} should reject query and queries together`);
-        assert.match((both.content as Array<{ text: string }>)[0].text, /exactly one of query or queries/);
-        const neither = await client.callTool({ name: toolName, arguments: { root: "/tmp/x" } });
-        assert.equal(neither.isError, true, `${toolName} should reject missing query and queries`);
-        assert.match((neither.content as Array<{ text: string }>)[0].text, /exactly one of query or queries/);
+        const missing = await client.callTool({ name: toolName, arguments: { root: "/tmp/x" } });
+        assert.equal(missing.isError, true, `${toolName} should reject a call with no query`);
       }
 
       const parsedFiles = await callJson(client, "find-files", { root: "/tmp/f", glob: "**/*.ts", exclude: "**/dist/**", max: 50 });
@@ -188,6 +184,55 @@ describe("search MCP tools", () => {
       const parsed = await callJson(client, "grep", { root: "/tmp/x", query: "needle" });
       assert.deepEqual(parsed, { kind: "content", matches: [{ path: "src/native.ts", line: 11, text: "native hit" }], warnings: ["native warning"] });
       assert.equal(fakeClient.calls.at(-1)?.perf, undefined);
+    } finally {
+      await client.close();
+      await serverTransport.close();
+    }
+  });
+
+  it("accepts one or many patterns through the single query field without a separate queries field", async () => {
+    const fakeClient = new FakeXrayClient();
+    const server = createAtriumServer({ searchClient: fakeClient });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const client = new Client({ name: "test-client", version: "1.0.0" });
+
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+
+    try {
+      const expectedContentResult = { kind: "content", matches: [{ path: "src/one.ts", line: 7, text: "matched text" }], warnings: [] };
+
+      // A single string keeps the literal single-pattern search unchanged.
+      const single = await callJson(client, "grep", { root: "/tmp/x", query: "needle", glob: "**/*.ts", exclude: "**/dist/**", max: 5 });
+      assert.deepEqual(single, expectedContentResult);
+      assert.deepEqual(fakeClient.calls.at(-1), { command: "search", root: "/tmp/x", query: "needle", all: true, glob: "**/*.ts", exclude: "**/dist/**", max: 5, timeoutMs: 59_000 });
+
+      // An array of patterns handed directly to query is accepted and joined into
+      // one escaped alternation. This is the shape a model reaches for when it has
+      // several patterns, so it must not fail schema validation with a type error.
+      const many = await callJson(client, "grep", { root: "/tmp/x", query: ["alpha", "beta(x)", "gamma"], glob: "**/*.ts", exclude: "**/dist/**", max: 5 });
+      assert.deepEqual(many, expectedContentResult);
+      assert.deepEqual(fakeClient.calls.at(-1), { command: "search", root: "/tmp/x", query: "alpha|beta\\(x\\)|gamma", regex: true, all: true, glob: "**/*.ts", exclude: "**/dist/**", max: 5, timeoutMs: 59_000 });
+    } finally {
+      await client.close();
+      await serverTransport.close();
+    }
+  });
+
+  it("restricts the search to a single file when path is set", async () => {
+    const fakeClient = new FakeXrayClient();
+    const server = createAtriumServer({ searchClient: fakeClient });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const client = new Client({ name: "test-client", version: "1.0.0" });
+
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+
+    try {
+      const parsed = await callJson(client, "grep", { root: "/tmp/x", query: "needle", path: "/tmp/x/only.ts" });
+      assert.deepEqual(parsed, { kind: "content", matches: [{ path: "src/one.ts", line: 7, text: "matched text" }], warnings: [] });
+      // path narrows the search to the one file, so the search client runs against that file as its root.
+      assert.deepEqual(fakeClient.calls.at(-1), { command: "search", root: "/tmp/x/only.ts", query: "needle", all: true, timeoutMs: 59_000 });
     } finally {
       await client.close();
       await serverTransport.close();
