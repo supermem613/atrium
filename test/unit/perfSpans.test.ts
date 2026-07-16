@@ -148,7 +148,7 @@ describe("CLI perf spans and search metrics", { concurrency: false }, () => {
 
     const payload = await captureJsonOutput(() => mcpGrepCommand(
       fixture.root,
-      { perf: true, query: "alpha", max: "5" },
+      { perf: true, query: ["alpha"], max: "5" },
       fakeSearchClient,
     ));
 
@@ -199,17 +199,17 @@ describe("CLI perf spans and search metrics", { concurrency: false }, () => {
     ));
     await captureJsonOutput(() => mcpGrepCommand(
       fixture.root,
-      { perf: true, queries: ["a.b", "c"], glob: "**/*.txt", exclude: "**/vendor/**" },
+      { perf: true, query: ["a.b", "c"], glob: "**/*.txt", exclude: "**/vendor/**" },
       fakeSearchClient,
     ));
     await captureJsonOutput(() => mcpGrepCodeCommand(
       fixture.root,
-      { perf: true, queries: ["a.b", "c"], regex: true, glob: "**/*.ts", exclude: "**/dist/**" },
+      { perf: true, query: ["a.b", "c"], regex: true, glob: "**/*.ts", exclude: "**/dist/**" },
       fakeSearchClient,
     ));
     await captureJsonOutput(() => mcpGrepCodeCommand(
       fixture.root,
-      { perf: true, queries: ["literal.pattern"] },
+      { perf: true, query: ["literal.pattern"] },
       fakeSearchClient,
     ));
 

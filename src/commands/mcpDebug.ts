@@ -50,8 +50,7 @@ export interface McpFindFilesOptions extends McpDebugOptions {
 export interface McpGrepOptions extends McpDebugOptions {
   exclude?: string;
   glob?: string;
-  query?: string;
-  queries?: string[];
+  query?: string[];
   regex?: boolean;
   max?: string;
 }
@@ -422,11 +421,10 @@ function buildGrepArguments(root: string, options: McpGrepOptions): Record<strin
   if (options.glob !== undefined) {
     args.glob = options.glob;
   }
+  // grep and grep-code take a single query field that accepts one pattern or an
+  // array of patterns. The variadic --query is passed through as given.
   if (options.query !== undefined) {
     args.query = options.query;
-  }
-  if (options.queries !== undefined) {
-    args.queries = options.queries;
   }
   if (options.regex === true) {
     args.regex = true;
@@ -443,23 +441,18 @@ function buildGrepCodeArguments(root: string, options: McpGrepCodeOptions): Reco
 }
 
 function resolveCliSearchQuery(options: McpGrepOptions): { query: string; regex: boolean } {
-  if ((options.query === undefined) === (options.queries === undefined)) {
-    throw new Error("Provide exactly one of --query or --queries");
+  const patterns = options.query ?? [];
+  if (patterns.length === 0) {
+    throw new Error("Provide at least one --query pattern");
   }
-  if (options.query !== undefined) {
-    return { query: options.query, regex: options.regex === true };
+  if (options.regex === true) {
+    return { query: patterns.join("|"), regex: true };
   }
-  const queries = options.queries ?? [];
-  if (queries.length === 0) {
-    throw new Error("--queries requires at least one pattern");
-  }
-  if (options.regex !== true && queries.length === 1) {
-    return { query: queries[0], regex: false };
+  if (patterns.length === 1) {
+    return { query: patterns[0], regex: false };
   }
   return {
-    query: options.regex === true
-      ? queries.join("|")
-      : queries.map((query) => query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|"),
+    query: patterns.map((query) => query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|"),
     regex: true,
   };
 }

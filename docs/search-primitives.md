@@ -18,29 +18,39 @@ The two content verbs (`grep`, `grep-code`) share one input shape. Pass a single
 }
 ```
 
-Or pass a `queries` array of one or more patterns. Atrium escapes each pattern and joins them into one alternation before running the native search:
+Or pass `query` as an array of one or more patterns to match any of. Atrium escapes each pattern and joins them into one alternation before running the native search:
 
 ```json
 {
   "root": "C:\\repo",
-  "queries": ["TODO", "FIXME", "HACK"],
+  "query": ["TODO", "FIXME", "HACK"],
   "glob": "**/*.{ts,md}",
   "exclude": "**/node_modules/**",
   "max": 20
 }
 ```
 
-Provide exactly one of `query` or `queries`; sending both or neither is rejected. Patterns match literally by default. Set `regex` to `true` to treat them as regular expressions instead, in which case Atrium joins them verbatim with `|`:
+Patterns match literally by default. Set `regex` to `true` to treat them as regular expressions instead, in which case Atrium joins them verbatim with `|`:
 
 ```json
 {
   "root": "C:\\repo",
-  "queries": ["foo\\d+", "bar.*baz"],
+  "query": ["foo\\d+", "bar.*baz"],
   "regex": true
 }
 ```
 
-`find-files` is path discovery only and takes the same shape **without** `query` or `queries`. It never reads file contents; it exposes `glob` for path discovery and does not expose a `type` option. Narrow the listing by `glob` and `exclude` instead:
+To restrict a content search to a single file, pass `path`:
+
+```json
+{
+  "root": "C:\\repo",
+  "query": "TODO",
+  "path": "C:\\repo\\src\\server.ts"
+}
+```
+
+`find-files` is path discovery only and takes the same shape **without** `query`. It never reads file contents; it exposes `glob` for path discovery and does not expose a `type` option. Narrow the listing by `glob` and `exclude` instead:
 
 ```json
 {
@@ -54,16 +64,15 @@ Provide exactly one of `query` or `queries`; sending both or neither is rejected
 Required:
 
 - `root`: the directory to search from.
-- exactly one of `query` or `queries` for the content verbs `grep` and `grep-code`. `query` is a single pattern; `queries` is an array of one or more patterns that Atrium combines into an alternation such as `foo|bar|baz`.
+- `query` for the content verbs `grep` and `grep-code`. It is one pattern, or an array of one or more patterns that Atrium combines into an alternation such as `foo|bar|baz`.
 
 Optional:
 
 - `regex`: treat the patterns as regular expressions. Defaults to `false`, which matches patterns literally.
+- `path`: restrict a `grep` or `grep-code` content search to a single file instead of walking `root`.
 - `glob`: constrain searched paths.
 - `exclude`: skip matching paths, applied as a negated glob.
 - `max`: cap returned results.
-
-Atrium applies a fixed internal search deadline. Callers cannot tune search timeouts.
 
 ## Choosing a tool
 

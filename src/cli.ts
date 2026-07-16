@@ -106,8 +106,7 @@ program
 program
   .command("mcp-grep <root>")
   .description("Investigate an MCP grep call locally with Atrium's in-process native search; rerun with --perf for a CLI-only detailed trace")
-  .option("--query <pattern>", "Single query string to search for")
-  .option("--queries <patterns...>", "One or more query strings to match")
+  .option("--query <patterns...>", "One or more query patterns to match")
   .option("--regex", "Treat query patterns as regular expressions")
   .option("--glob <pattern>", "Glob pattern to constrain the search")
   .option("--exclude <pattern>", "Glob pattern to exclude")
@@ -118,8 +117,7 @@ program
 program
   .command("mcp-grep-code <root>")
   .description("Investigate an MCP grep-code call locally with Atrium's native ignore-aware search; rerun with --perf for a CLI-only detailed trace")
-  .option("--query <pattern>", "Single query string to search for")
-  .option("--queries <patterns...>", "One or more query strings to match")
+  .option("--query <patterns...>", "One or more query patterns to match")
   .option("--regex", "Treat query patterns as regular expressions")
   .option("--glob <pattern>", "Glob pattern to constrain the search")
   .option("--exclude <pattern>", "Glob pattern to exclude")

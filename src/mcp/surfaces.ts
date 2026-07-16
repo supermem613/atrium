@@ -1,5 +1,4 @@
 import { z } from "zod";
-import { McpError, ErrorCode } from "@modelcontextprotocol/sdk/types.js";
 import type { McpServer, ToolCallback } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { introspectTool } from "../core/introspect.js";
 import { adoptBackgroundRun, waitForBackgroundRun, withLongRunningDefault } from "../core/backgroundRuns.js";
@@ -68,12 +67,12 @@ const contentVerbs: Record<"grep" | "grep-code", SearchVerbSpec> = {
   "grep": {
     command: "search", all: true, kind: "content",
     title: "Grep files",
-    description: "Unrestricted content search across the filesystem, including hidden, gitignored, and vendor files. Pass a single literal query, or a queries array of one or more patterns. Set regex true to treat patterns as regular expressions. For ignore-aware code search prefer grep-code.",
+    description: "Unrestricted content search across the filesystem, including hidden, gitignored, and vendor files. Pass query as one pattern string or an array of patterns to match any of. Set regex true to treat patterns as regular expressions. For ignore-aware code search prefer grep-code.",
   },
   "grep-code": {
     command: "search", all: false, kind: "content",
     title: "Grep code",
-    description: "Ignore-aware content search that skips hidden, gitignored, and vendor files. Pass a single literal query, or a queries array of one or more patterns. Set regex true to treat patterns as regular expressions. Prefer this first for symbols, APIs, tests, command handlers, error strings, and docs related to code.",
+    description: "Ignore-aware content search that skips hidden, gitignored, and vendor files. Pass query as one pattern string or an array of patterns to match any of. Set regex true to treat patterns as regular expressions. Prefer this first for symbols, APIs, tests, command handlers, error strings, and docs related to code.",
   },
 };
 
@@ -89,24 +88,16 @@ function escapeRegExp(pattern: string): string {
   return pattern.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-// Resolves query/queries/regex into one native-search query plus whether native
-// search runs in regex mode. A lone literal query stays a plain literal search so
-// grep and grep-code keep their prior single-pattern behavior. Multiple literal
-// patterns are escaped and joined into an alternation. When regex is set,
-// patterns are joined verbatim. Exactly one of query or queries must be present.
+// Resolves the query union plus regex into one native-search query and whether
+// native search runs in regex mode. A lone literal string stays a plain literal
+// search so grep and grep-code keep their single-pattern behavior. An array of
+// literal patterns is escaped and joined into one alternation. When regex is set,
+// patterns are joined verbatim.
 function resolveSearchQuery(
-  toolName: string,
-  query: string | undefined,
-  queries: string[] | undefined,
+  query: string | string[],
   regex: boolean,
 ): { query: string; regex: boolean } {
-  if ((query === undefined) === (queries === undefined)) {
-    throw new McpError(
-      ErrorCode.InvalidParams,
-      `Invalid arguments for tool ${toolName}: provide exactly one of query or queries.`,
-    );
-  }
-  const patterns = query !== undefined ? [query] : queries as string[];
+  const patterns = Array.isArray(query) ? query : [query];
   if (regex) {
     return { query: patterns.join("|"), regex: true };
   }
@@ -204,7 +195,7 @@ function coreTools(deps: SurfaceDeps): ToolRegistration[] {
       "run",
       {
         title: "Run a CLI or executable",
-        description: "Execute named CLIs with structured args and structured JSON returns. Returns the normal result when the command finishes inside the handoff window, otherwise returns a durable operationId and a prescriptive nextCheck instruction telling you to call operation-wait. The child process uses Atrium's fixed server-side execution deadline; callers cannot tune it.",
+        description: "Execute named CLIs with structured args and structured JSON returns. Returns the normal result when the command finishes inside the handoff window, otherwise returns a durable operationId and a prescriptive nextCheck instruction telling you to call operation-wait.",
         inputSchema: {
           tool: z.string().min(1).describe("Binary name on PATH or executable path. Shells such as pwsh, powershell, bash, cmd, sh, and zsh are denied."),
           args: z.array(z.union([z.string(), z.object({ file: z.string().min(1) })])).optional().describe("Argument vector. Use {file} to replace that argument with UTF-8 file contents. Do not pass a shell command string."),
@@ -218,7 +209,7 @@ function coreTools(deps: SurfaceDeps): ToolRegistration[] {
       "operation-wait",
       {
         title: "Wait for a durable operation",
-        description: "Wait briefly for a durable operation handed off by any Atrium tool. Returns the terminal result when complete. If still running after Atrium's fixed request-safe wait window, returns status continue with the same operationId and a nextCheck instruction to call operation-wait again. This does not cancel, shorten, or tune the underlying operation.",
+        description: "Wait briefly for a durable operation handed off by any Atrium tool. Returns the terminal result when complete. If still running, returns status continue with the same operationId and a nextCheck instruction to call operation-wait again.",
         inputSchema: {
           operationId: z.string().min(1).describe("Durable operationId returned by an Atrium tool handoff."),
         },
@@ -276,17 +267,17 @@ function searchTools(deps: SurfaceDeps): ToolRegistration[] {
         description: spec.description,
         inputSchema: {
           root: z.string().min(1).describe("Root path to search from."),
-          query: z.string().min(1).optional().describe("A single search pattern. Provide either query or queries, not both."),
-          queries: z.array(z.string().min(1)).min(1).optional().describe("One or more patterns to match any of. Atrium combines them into one alternation. Provide either query or queries, not both."),
+          query: z.union([z.string().min(1), z.array(z.string().min(1)).min(1)]).describe("A search pattern, or an array of patterns to match any of. A string matches literally; an array is combined into one alternation. Set regex true to treat patterns as regular expressions."),
           regex: z.boolean().optional().describe("Treat the patterns as regular expressions. Defaults to false, which matches patterns literally."),
+          path: z.string().min(1).optional().describe("Optional single file to restrict the search to. When set, only this file is searched instead of walking root."),
           glob: z.string().min(1).optional().describe("Optional glob to constrain the search by path or name."),
           exclude: z.string().min(1).optional().describe("Optional exclude pattern applied as a negated glob."),
           max: z.number().int().positive().optional().describe("Optional maximum number of results to return."),
         },
       },
-      async ({ root, query, queries, regex, glob, exclude, max }) => {
-        const resolved = resolveSearchQuery(toolName, query, queries, regex ?? false);
-        return runContentSearch(spec, resolved.query, resolved.regex, root, glob, exclude, max);
+      async ({ root, query, regex, path, glob, exclude, max }) => {
+        const resolved = resolveSearchQuery(query, regex ?? false);
+        return runContentSearch(spec, resolved.query, resolved.regex, path ?? root, glob, exclude, max);
       },
     ));
   }
@@ -372,14 +363,14 @@ const readInstructionFragment = [
 const searchInstructionFragment = [
   "Search primitives:",
   "- Content search verbs grep and grep-code use Atrium's in-process native search engine. find-files lists paths with Atrium's native file engine and never reads contents.",
-  "- grep and grep-code take a single literal query or a queries array of one or more patterns to match any of several patterns. Set regex true to treat patterns as regular expressions. grep and find-files are unrestricted and include hidden, gitignored, and vendor files. grep-code is ignore-aware and skips hidden, gitignored, and vendor files.",
+  "- grep and grep-code take query as one pattern or an array of patterns to match any of. Set regex true to treat patterns as regular expressions. grep and find-files are unrestricted and include hidden, gitignored, and vendor files. grep-code is ignore-aware and skips hidden, gitignored, and vendor files.",
   "- Patterns match literally by default. Narrow with glob and exclude, and cap results with max. Results are structured JSON: file matches carry matches[].path, and content matches also carry matches[].line and matches[].text. Surface any normalization warnings.",
   "- These are first-class Atrium MCP tools. Use them for search instead of shelling out.",
   "",
   "Search safety:",
   "- Always pass a root. Use find-files for path or name discovery, grep-code for git-aware code content search, and grep for unrestricted content search.",
   "- Do not fall back to a separate shell search or a separate glob tool for discovery. These primitives replace shelling out to rg, grep, find, findstr, or Select-String.",
-  "- On a timeout, retry narrower: a tighter glob, a more specific query or queries, or a lower max. Never fall back to a raw shell search.",
+  "- On a timeout, retry narrower: a tighter glob, a more specific query, or a lower max. Never fall back to a raw shell search.",
   "",
   // Reuse the deny path's constant so the explicit blocked-tool to primitive
   // mapping reaches the model at load time, not only after a raw search is
