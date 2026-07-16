@@ -17,6 +17,13 @@ import {
   selectEnabledSurfaces,
   surfaceOptionDescription,
 } from "./mcp/surfaces.js";
+import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
+import {
+  defaultStderrSink,
+  registerProcessCrashHandlers,
+  registerTransportDiagnostics,
+  type DiagnosticSink,
+} from "./mcp/transportDiagnostics.js";
 
 const defaultBackgroundHandoffAfterMs = 45_000;
 
@@ -28,6 +35,8 @@ export interface AtriumServerOptions {
   executionQueue?: ExecutionQueue | false;
   searchClient?: SearchClientLike;
   surfaces?: string[];
+  transport?: Transport;
+  sink?: DiagnosticSink;
 }
 
 export function createAtriumServer(options: AtriumServerOptions = {}): McpServer {
@@ -65,7 +74,19 @@ export function createAtriumServer(options: AtriumServerOptions = {}): McpServer
 }
 
 export async function startAtriumServer(options: AtriumServerOptions = {}): Promise<void> {
-  await createAtriumServer(options).connect(new StdioServerTransport());
+  const transport: Transport = options.transport ?? new StdioServerTransport();
+  const sink = options.sink ?? defaultStderrSink;
+  const server = createAtriumServer(options);
+
+  registerTransportDiagnostics(transport, sink);
+  registerProcessCrashHandlers({
+    sink,
+    exit: (code: number) => {
+      process.exit(code);
+    },
+  });
+
+  await server.connect(transport);
 }
 
 // Parses the atrium-mcp entrypoint argv so this bin honors --surface exactly

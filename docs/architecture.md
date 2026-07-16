@@ -30,6 +30,8 @@ atrium mcp-run node -- --version
 
 Those commands start `dist\server.js` through a real MCP client, call the MCP tool, and print the tool response. They exist to debug the server path without opening a new Copilot session. `mcp-run` follows a returned auto/background handle inside that same debug MCP server process until the operation reaches a terminal state or the local debug request timeout expires.
 
+Transport diagnostics are a stable, secret-safe observability contract. Atrium emits `ATRIUM_TRANSPORT_CLOSE`, `ATRIUM_TRANSPORT_ERROR`, and `ATRIUM_SERVER_CRASH` lines on stderr only because stdout is reserved for MCP JSON-RPC. Each line uses fixed detail text and never includes raw error, path, argument, stack, or rejection data. Crash diagnostics are emitted synchronously before the non-zero exit path runs. This change adds evidence only and does not reconnect, retry, keep alive, or otherwise change transport-close behavior.
+
 ## File value contract
 
 Atrium uses one compact file indirection shape anywhere it reads or returns text values:
