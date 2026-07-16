@@ -8,6 +8,7 @@ import { toolTextResult } from "./format.js";
 import { SEARCH_POLICY_CONTEXT } from "./searchPolicy.js";
 import { normalizeSearchResult } from "../core/search/normalize.js";
 import { readTextFileSlice } from "../core/readFile.js";
+import { lenientBool, lenientInt, scalarOrArray } from "./lenient.js";
 import type { SearchClientLike } from "../core/search/types.js";
 
 const defaultSearchTimeoutMs = 59_000;
@@ -40,6 +41,13 @@ export interface Surface {
   instructionFragment: string;
 }
 
+// Registers one tool with a bare object inputSchema. The inputSchema must stay a
+// plain ZodRawShape and its fields must never be wrapped in an object-level effect
+// such as a z.preprocess or .transform over the whole object. The
+// @modelcontextprotocol/sdk advertises tool properties only for a bare ZodObject,
+// so an object-level effect makes ListTools emit an empty schema while runtime
+// parsing still passes, which hides the loss until a client inspects the schema.
+// Apply leniency with the field-level codecs in ./lenient.js instead.
 function defineTool<Args extends z.ZodRawShape>(
   name: string,
   config: { title: string; description: string; inputSchema: Args },
@@ -198,7 +206,7 @@ function coreTools(deps: SurfaceDeps): ToolRegistration[] {
         description: "Execute named CLIs with structured args and structured JSON returns. Returns the normal result when the command finishes inside the handoff window, otherwise returns a durable operationId and a prescriptive nextCheck instruction telling you to call operation-wait.",
         inputSchema: {
           tool: z.string().min(1).describe("Binary name on PATH or executable path. Shells such as pwsh, powershell, bash, cmd, sh, and zsh are denied."),
-          args: z.array(z.union([z.string(), z.object({ file: z.string().min(1) })])).optional().describe("Argument vector. Use {file} to replace that argument with UTF-8 file contents. Do not pass a shell command string."),
+          args: scalarOrArray(z.union([z.string(), z.object({ file: z.string().min(1) })])).optional().describe("Argument vector. Accepts a single value coerced to exactly one argument, never shell-split, or an array of values. Use {file} to replace that argument with UTF-8 file contents. Do not pass a shell command string. Example: \"status\" or [\"status\"]."),
           cwd: z.string().optional().describe("Working directory for the process."),
           stdin: z.union([z.string(), z.object({ file: z.string().min(1) })]).optional().describe("Optional stdin content. Use {file} to read UTF-8 stdin content from a file."),
         },
@@ -228,11 +236,11 @@ function readTools(): ToolRegistration[] {
         description: "Read a UTF-8 text file with deterministic line-range clamping or byte-range paging. The read payload stays inline when it fits the output contract and otherwise uses Atrium's {file, bytes} value contract. Successful reads return ok, path, range, meta, content, and nextRead; byte paging also accepts snapshot-based stale-page rejection and mutation rejection semantics.",
         inputSchema: {
           path: z.string().min(1).describe("File path to read."),
-          startLine: z.number().int().positive().optional().describe("First 1-based line to read. Defaults to 1."),
-          endLine: z.number().int().positive().optional().describe("Last 1-based line to read. Mutually exclusive with count."),
-          count: z.number().int().positive().optional().describe("Maximum number of lines to read. Mutually exclusive with endLine."),
-          startByte: z.number().int().nonnegative().optional().describe("First byte offset to read for byte-mode paging."),
-          countBytes: z.number().int().positive().optional().describe("Maximum number of bytes to read for byte-mode paging."),
+          startLine: lenientInt({ positive: true }).optional().describe("First 1-based line to read. Accepts an integer or a numeric string. Defaults to 1."),
+          endLine: lenientInt({ positive: true }).optional().describe("Last 1-based line to read. Accepts an integer or a numeric string. Mutually exclusive with count."),
+          count: lenientInt({ positive: true }).optional().describe("Maximum number of lines to read. Accepts an integer or a numeric string. Mutually exclusive with endLine."),
+          startByte: lenientInt({ nonnegative: true }).optional().describe("First byte offset to read for byte-mode paging. Accepts an integer or a numeric string."),
+          countBytes: lenientInt({ positive: true }).optional().describe("Maximum number of bytes to read for byte-mode paging. Accepts an integer or a numeric string."),
           snapshot: z.string().optional().describe("Optional snapshot token for stale byte-page continuation rejection."),
         },
       },
@@ -267,12 +275,12 @@ function searchTools(deps: SurfaceDeps): ToolRegistration[] {
         description: spec.description,
         inputSchema: {
           root: z.string().min(1).describe("Root path to search from."),
-          query: z.union([z.string().min(1), z.array(z.string().min(1)).min(1)]).describe("A search pattern, or an array of patterns to match any of. A string matches literally; an array is combined into one alternation. Set regex true to treat patterns as regular expressions."),
-          regex: z.boolean().optional().describe("Treat the patterns as regular expressions. Defaults to false, which matches patterns literally."),
+          query: scalarOrArray(z.string().min(1), { nonEmpty: true }).describe("A search pattern, or an array of patterns to match any of. Accepts a single string or a non-empty array. A string matches literally; an array is combined into one alternation. Set regex true to treat patterns as regular expressions. Example: \"needle\" or [\"alpha\", \"beta\"]."),
+          regex: lenientBool.optional().describe("Treat the patterns as regular expressions. Accepts a boolean or the strings \"true\"/\"false\". Defaults to false, which matches patterns literally."),
           path: z.string().min(1).optional().describe("Optional single file to restrict the search to. When set, only this file is searched instead of walking root."),
           glob: z.string().min(1).optional().describe("Optional glob to constrain the search by path or name."),
           exclude: z.string().min(1).optional().describe("Optional exclude pattern applied as a negated glob."),
-          max: z.number().int().positive().optional().describe("Optional maximum number of results to return."),
+          max: lenientInt({ positive: true }).optional().describe("Optional maximum number of results to return. Accepts an integer or a numeric string. Example: 5 or \"5\"."),
         },
       },
       async ({ root, query, regex, path, glob, exclude, max }) => {
@@ -291,7 +299,7 @@ function searchTools(deps: SurfaceDeps): ToolRegistration[] {
         root: z.string().min(1).describe("Root path to list files from."),
         glob: z.string().min(1).optional().describe("Optional glob to constrain the listing by path or name."),
         exclude: z.string().min(1).optional().describe("Optional exclude pattern applied as a negated glob."),
-        max: z.number().int().positive().optional().describe("Optional maximum number of files to return."),
+        max: lenientInt({ positive: true }).optional().describe("Optional maximum number of files to return. Accepts an integer or a numeric string. Example: 50 or \"50\"."),
       },
     },
     async ({ root, glob, exclude, max }) => toolTextResult(await runSearchWithHandoff(
