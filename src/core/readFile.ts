@@ -42,7 +42,7 @@ export interface ReadTextFileSliceSuccess {
   content: OutputValue;
   byteRange?: [number, number];
   snapshot?: string;
-  nextRead?: { path: string; startByte: number; countBytes: number; snapshot: string } | null;
+  nextRead: { path: string; startByte: number; countBytes: number; snapshot: string } | null;
   perf?: ReadTextFileSlicePerf;
 }
 
@@ -264,6 +264,19 @@ export async function readTextFileSlice(input: ReadTextFileSliceInput, options: 
   const content = await materializeOutputValue(contentBuffer, defaultInlineOutputLimitBytes, atriumTempPath("reads", randomUUID()), "content.txt");
   materializeMs = roundTimingValue(performance.now() - materializeStart);
 
+  let nextRead: ReadTextFileSliceSuccess["nextRead"];
+  if (typeof content === "string") {
+    nextRead = null;
+  } else {
+    const fileStat = await stat(content.file);
+    nextRead = {
+      path: content.file,
+      startByte: 0,
+      countBytes: defaultInlineOutputLimitBytes,
+      snapshot: createCacheKey(content.file, fileStat),
+    };
+  }
+
   const totalMs = roundTimingValue(performance.now() - totalStart);
   return {
     ok: true,
@@ -276,6 +289,7 @@ export async function readTextFileSlice(input: ReadTextFileSliceInput, options: 
       cache: cacheMeta,
     },
     content,
+    nextRead,
     ...(options.perf === true
       ? {
         perf: {

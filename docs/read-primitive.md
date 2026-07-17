@@ -36,7 +36,8 @@ Successful reads return only the content contract:
       "reason": "miss"
     }
   },
-  "content": "two\nthree\n"
+  "content": "two\nthree\n",
+  "nextRead": null
 }
 ```
 
@@ -45,6 +46,8 @@ Successful reads return only the content contract:
 For repeated unchanged-file reads, `meta.cache.hit` reports whether Atrium served the read from cache and `meta.cache.reason` explains why. On a cache hit for an unchanged file, `meta.cache.hit` is `true` and `meta.cache.reason` is `"same-file"`.
 
 `range + meta.totalLines` is the paging signal. EOF is `range[1] === meta.totalLines`. More content exists when `range[1] < meta.totalLines`. If the requested range goes past EOF, Atrium returns the served range instead of failing.
+
+Every successful read returns `nextRead`. It is `null` when there is no continuation. For inline line-mode reads, `nextRead` is `null`.
 
 Large content uses Atrium's existing file-value contract:
 
@@ -59,6 +62,8 @@ Large content uses Atrium's existing file-value contract:
 }
 ```
 The inline threshold is 8192 bytes. Larger served content is written as `{ "file": "...", "bytes": n }`.
+
+If a line-mode selection exceeds the inline threshold, the response keeps the oversized content as the file-backed value in `content` and returns `nextRead` as a byte-mode continuation against that artifact. The continuation targets `content.file` with `startByte: 0`, `countBytes: 8192`, and the response `snapshot` token. Callers follow the continuation in byte mode against the materialized artifact, reconstruct only from page content strings, and stop when `nextRead` is `null`. The top-level `path`, `range`, and `meta` continue to describe the original source. No input fields are added, and the explicit byte-mode semantics remain unchanged.
 
 ### Byte paging success
 
