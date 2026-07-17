@@ -51,7 +51,8 @@ test("content search deduplicates matches and caps the global result set", async
   const result = await runContentSearch({ query: "needle", root: "/tmp", max: 2, runner });
 
   assert.deepEqual(result.matches.map((match) => match.path), ["src/a.ts", "src/b.ts"]);
-  assert.ok(result.warnings.some((warning) => warning.includes("display capped at 2 matches")));
+  assert.ok(result.matches.length <= 2);
+  assert.ok(result.warnings.some((warning) => warning.includes("search output was truncated")));
 });
 
 test("content search surfaces timeout warnings and aggregates ripgrep metrics across lanes", async () => {

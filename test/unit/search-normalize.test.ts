@@ -37,11 +37,11 @@ describe("normalizeXrayResult", () => {
     const envelope: XrayEnvelope = {
       ok: true,
       command: "files",
-      warnings: ["display capped at 50 files"],
+      warnings: ["search output was truncated"],
       data: { matches: [], summary: { fileCount: 50, truncated: true, timedOut: true } },
     };
     const result = normalizeXrayResult(envelope, "files");
-    assert.ok(result.warnings.includes("display capped at 50 files"));
+    assert.ok(result.warnings.includes("search output was truncated"));
     assert.ok(result.warnings.includes("results truncated by max"));
     assert.ok(result.warnings.includes("search timed out"));
   });

@@ -12,6 +12,11 @@ import {
   runNativeFileSearch,
   createNativeFileSearchRunner,
 } from "../../src/core/search/fileSearch.js";
+import type {
+  NativeContentSearchOptions,
+  NativeFilesSearchOptions,
+  NativeSearchAddon,
+} from "../../src/core/search/nativeAddon.js";
 
 let root: string;
 
@@ -49,6 +54,22 @@ describe("native search runner (in-process)", () => {
     assert.equal(typeof native.metrics?.childRunMs, "number");
   });
 
+  it("content: the default runner forwards max to the native addon", async () => {
+    const requestedMax = 7;
+    let capturedOptions: NativeContentSearchOptions | undefined;
+    const addon: NativeSearchAddon = {
+      searchContent: async (options) => {
+        capturedOptions = options;
+        return { matches: [], truncated: false, timedOut: false };
+      },
+      searchFiles: async () => ({ paths: [], truncated: false, timedOut: false }),
+    };
+    const runner = createNativeContentSearchRunner({ loadAddon: () => addon });
+    await runContentSearch({ query: "needle", root, max: requestedMax, runner });
+    assert.ok(capturedOptions);
+    assert.equal(capturedOptions?.max, requestedMax);
+  });
+
   it("content: a missing addon is a hard error", async () => {
     const runner = createNativeContentSearchRunner({ loadAddon: () => null });
     await assert.rejects(
@@ -67,6 +88,22 @@ describe("native search runner (in-process)", () => {
     const native = await runNativeFileSearch({ root, perf: true });
     assert.equal(typeof native.metrics?.searches, "number");
     assert.equal(typeof native.metrics?.childRunMs, "number");
+  });
+
+  it("files: the default runner forwards max to the native addon", async () => {
+    const requestedMax = 7;
+    let capturedOptions: NativeFilesSearchOptions | undefined;
+    const addon: NativeSearchAddon = {
+      searchContent: async () => ({ matches: [], truncated: false, timedOut: false }),
+      searchFiles: async (options) => {
+        capturedOptions = options;
+        return { paths: [], truncated: false, timedOut: false };
+      },
+    };
+    const runner = createNativeFileSearchRunner({ loadAddon: () => addon });
+    await runNativeFileSearch({ root, max: requestedMax, runner });
+    assert.ok(capturedOptions);
+    assert.equal(capturedOptions?.max, requestedMax);
   });
 
   it("files: a missing addon is a hard error", async () => {

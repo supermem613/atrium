@@ -1,4 +1,4 @@
-import { surfaceOptionDescription } from "./mcp/surfaces.js";
+import { contentMaxOptionDescription, fileMaxOptionDescription, surfaceOptionDescription } from "./mcp/surfaces.js";
 
 export type CommandEffect = "read" | "write" | "network" | "local";
 
@@ -237,7 +237,7 @@ export const commandSpecs: CommandSpec[] = [
         {
           name: "--max",
           type: "number",
-          summary: "Maximum number of matches to return.",
+          summary: fileMaxOptionDescription,
         },
         {
           name: "--perf",
@@ -282,7 +282,7 @@ export const commandSpecs: CommandSpec[] = [
         {
           name: "--max",
           type: "number",
-          summary: "Maximum number of matches to return.",
+          summary: contentMaxOptionDescription,
         },
         {
           name: "--perf",
@@ -327,7 +327,7 @@ export const commandSpecs: CommandSpec[] = [
         {
           name: "--max",
           type: "number",
-          summary: "Maximum number of matches to return.",
+          summary: contentMaxOptionDescription,
         },
         {
           name: "--perf",

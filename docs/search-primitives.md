@@ -72,7 +72,7 @@ Optional:
 - `path`: restrict a `grep` or `grep-code` content search to a single file instead of walking `root`.
 - `glob`: constrain searched paths.
 - `exclude`: skip matching paths, applied as a negated glob.
-- `max`: cap returned results. Accepts an integer or a numeric string such as `"20"`.
+- `max`: native produced-result cap. The native search stops after producing `max` matches or paths, and truncation is surfaced in warnings. It does not bound files visited or work for sparse or zero-match searches. Lower `max` is only useful when enough results are already being produced to reach the cap; otherwise narrow the query, glob, or path. Accepts an integer or a numeric string such as `"20"`.
 
 ## Choosing a tool
 
@@ -112,7 +112,7 @@ Optional:
 }
 ```
 
-`timingMs` is how long the whole search call took, in milliseconds. Warnings from the native search engine, including truncated and timed-out results, are surfaced in `warnings`. Callers should show them instead of treating a partial result as clean.
+`timingMs` is how long the whole search call took, in milliseconds. Warnings from the native search engine, including truncation and timeouts, are surfaced in `warnings`. A search that hits `max` is truncated by the native produced-result cap, so a result can be partial even when the search completed. Callers should show these warnings instead of treating a partial result as clean.
 
 ## Long-running contract
 
