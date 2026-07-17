@@ -93,7 +93,7 @@ test("filters files by glob patterns", async () => {
   }
 });
 
-test("caps results and warns when the display limit is reached", async () => {
+test("caps results and warns when the native output is truncated", async () => {
   const root = await mkdtemp(join(tmpdir(), "atrium-native-cap-"));
   try {
     for (let i = 0; i < 4; i += 1) {
@@ -103,7 +103,8 @@ test("caps results and warns when the display limit is reached", async () => {
     const result = await runNativeFileSearch({ root, max: 2 });
 
     assert.equal(result.matches.length, 2);
-    assert.ok(result.warnings.some((warning) => warning.includes("display capped at 2 files")));
+    assert.ok(result.matches.length <= 2);
+    assert.ok(result.warnings.some((warning) => warning.includes("search output was truncated")));
   } finally {
     await rm(root, { recursive: true, force: true });
   }

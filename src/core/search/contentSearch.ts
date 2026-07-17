@@ -75,7 +75,15 @@ export async function runContentSearch(options: ContentSearchOptions): Promise<C
 
     let invocation: ContentSearchInvocation;
     try {
-      invocation = await runner(args, { cwd: location.cwd, timeoutMs, query, regex, perf: options.perf === true });
+      const runnerOptions: Parameters<ContentSearchRunner>[1] = {
+        cwd: location.cwd,
+        timeoutMs,
+        query,
+        regex,
+        perf: options.perf === true,
+        ...(options.max !== undefined ? { max: options.max } : {}),
+      };
+      invocation = await runner(args, runnerOptions);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       // The runner may already prefix its failures. Re-prefixing here produced a
@@ -126,12 +134,11 @@ export async function runContentSearch(options: ContentSearchOptions): Promise<C
   if (timedOut) {
     pushWarning(`search stopped after ${timeoutMs} ms`);
   }
+  if (max !== Number.POSITIVE_INFINITY && matches.length >= max && !truncated) {
+    truncated = true;
+  }
   if (truncated) {
     pushWarning("search output was truncated");
-  }
-
-  if (max !== Number.POSITIVE_INFINITY && matches.length >= max && !warnings.some((warning) => warning.includes("display capped at"))) {
-    pushWarning(`display capped at ${max} matches`);
   }
 
   return {
@@ -288,8 +295,9 @@ export function parseNativeContentArgs(args: string[]): {
 
 // Runs the search in-process through the napi addon, which is the only search
 // engine. A missing or unloadable addon is a hard, loud failure so search never
-// silently degrades. `max` is deliberately not forwarded so the TS normalize
-// layer owns display capping.
+// silently degrades. `max` is forwarded as the native produced-result cap; the
+// TypeScript layer only uses it as a defensive normalization boundary when
+// multi-lane merges would otherwise exceed it.
 export function createNativeContentSearchRunner(deps: ContentSearchRunnerDeps = {}): ContentSearchRunner {
   const loadAddon = deps.loadAddon ?? loadNativeSearchAddon;
 
@@ -300,6 +308,8 @@ export function createNativeContentSearchRunner(deps: ContentSearchRunnerDeps = 
     }
 
     const parsed = parseNativeContentArgs(args);
+    const providedMax = options.max;
+    const max = typeof providedMax === "number" && Number.isFinite(providedMax) ? providedMax : undefined;
     try {
       const result = await addon.searchContent({
         root: options.cwd,
@@ -312,6 +322,7 @@ export function createNativeContentSearchRunner(deps: ContentSearchRunnerDeps = 
         typeSelect: parsed.typeSelect,
         typeNegate: parsed.typeNegate,
         timeoutMs: options.timeoutMs,
+        max,
         perf: options.perf,
       });
       const metrics: ContentSearchRunMetrics | undefined = options.perf

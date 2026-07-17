@@ -228,7 +228,7 @@ export interface ContentSearchOptions {
   runner?: ContentSearchRunner;
 }
 
-export type ContentSearchRunner = (args: string[], options: { cwd: string; timeoutMs: number; query: string; regex: boolean; perf: boolean }) => Promise<ContentSearchInvocation>;
+export type ContentSearchRunner = (args: string[], options: { cwd: string; timeoutMs: number; query: string; regex: boolean; perf: boolean; max?: number }) => Promise<ContentSearchInvocation>;
 
 export interface ContentSearchResult {
   kind: "content";

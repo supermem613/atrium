@@ -13,6 +13,12 @@ import type { SearchClientLike } from "../core/search/types.js";
 
 const defaultSearchTimeoutMs = 59_000;
 
+export const fileMaxOptionDescription =
+  "Native produced-result cap: maximum number of file paths to return. Truncation is reported.";
+
+export const contentMaxOptionDescription =
+  "Native produced-result cap: maximum number of matches to return. Truncation is reported.";
+
 // Dependencies the surface tool handlers close over. Kept as an explicit object
 // so the registry stays a pure function of its inputs with no environment reads.
 export interface SurfaceDeps {
@@ -280,7 +286,7 @@ function searchTools(deps: SurfaceDeps): ToolRegistration[] {
           path: z.string().min(1).optional().describe("Optional single file to restrict the search to. When set, only this file is searched instead of walking root."),
           glob: z.string().min(1).optional().describe("Optional glob to constrain the search by path or name."),
           exclude: z.string().min(1).optional().describe("Optional exclude pattern applied as a negated glob."),
-          max: lenientInt({ positive: true }).optional().describe("Optional maximum number of results to return. Accepts an integer or a numeric string. Example: 5 or \"5\"."),
+          max: lenientInt({ positive: true }).optional().describe(`${contentMaxOptionDescription} Accepts an integer or a numeric string. Example: 5 or "5".`),
         },
       },
       async ({ root, query, regex, path, glob, exclude, max }) => {
@@ -299,7 +305,7 @@ function searchTools(deps: SurfaceDeps): ToolRegistration[] {
         root: z.string().min(1).describe("Root path to list files from."),
         glob: z.string().min(1).optional().describe("Optional glob to constrain the listing by path or name."),
         exclude: z.string().min(1).optional().describe("Optional exclude pattern applied as a negated glob."),
-        max: lenientInt({ positive: true }).optional().describe("Optional maximum number of files to return. Accepts an integer or a numeric string. Example: 50 or \"50\"."),
+        max: lenientInt({ positive: true }).optional().describe(`${fileMaxOptionDescription} Accepts an integer or a numeric string. Example: 5 or "5".`),
       },
     },
     async ({ root, glob, exclude, max }) => toolTextResult(await runSearchWithHandoff(
@@ -372,13 +378,13 @@ const searchInstructionFragment = [
   "Search primitives:",
   "- Content search verbs grep and grep-code use Atrium's in-process native search engine. find-files lists paths with Atrium's native file engine and never reads contents.",
   "- grep and grep-code take query as one pattern or an array of patterns to match any of. Set regex true to treat patterns as regular expressions. grep and find-files are unrestricted and include hidden, gitignored, and vendor files. grep-code is ignore-aware and skips hidden, gitignored, and vendor files.",
-  "- Patterns match literally by default. Narrow with glob and exclude, and cap results with max. Results are structured JSON: file matches carry matches[].path, and content matches also carry matches[].line and matches[].text. Surface any normalization warnings.",
+  "- Patterns match literally by default. Narrow with glob and exclude, and cap results with max. max is the native produced-result cap: the native search stops after producing max matches or paths, truncation is surfaced in warnings, and max does not bound files visited or work for sparse or zero-match searches. Results are structured JSON: file matches carry matches[].path, and content matches also carry matches[].line and matches[].text. Surface any normalization warnings.",
   "- These are first-class Atrium MCP tools. Use them for search instead of shelling out.",
   "",
   "Search safety:",
   "- Always pass a root. Use find-files for path or name discovery, grep-code for git-aware code content search, and grep for unrestricted content search.",
   "- Do not fall back to a separate shell search or a separate glob tool for discovery. These primitives replace shelling out to rg, grep, find, findstr, or Select-String.",
-  "- On a timeout, retry narrower: a tighter glob, a more specific query, or a lower max. Never fall back to a raw shell search.",
+  "- On a timeout, retry narrower: a tighter glob, a more specific query, or a lower max. Lower max is only useful when enough results are already being produced to reach the cap; otherwise narrow the query, glob, or path instead. Never fall back to a raw shell search.",
   "",
   // Reuse the deny path's constant so the explicit blocked-tool to primitive
   // mapping reaches the model at load time, not only after a raw search is

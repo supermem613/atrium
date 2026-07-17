@@ -48,9 +48,10 @@ export async function runNativeFileSearch(options: NativeFileSearchOptions): Pro
   const matches: NativeFileSearchInvocation["paths"] = [];
   const warnings: string[] = [];
   let invocation: NativeFileSearchInvocation;
+  let truncated = false;
 
   try {
-    invocation = await runner(args, { cwd, timeoutMs, max, perf: options.perf === true });
+    invocation = await runner(args, { cwd, timeoutMs, max: options.max ?? Number.POSITIVE_INFINITY, perf: options.perf === true });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     throw new Error(`fatal search error: ${message}`);
@@ -60,7 +61,7 @@ export async function runNativeFileSearch(options: NativeFileSearchOptions): Pro
     warnings.push(`search stopped after ${timeoutMs} ms`);
   }
   if (invocation.truncated) {
-    warnings.push("search output was truncated");
+    truncated = true;
   }
   for (const warning of invocation.warnings ?? []) {
     warnings.push(warning);
@@ -77,8 +78,11 @@ export async function runNativeFileSearch(options: NativeFileSearchOptions): Pro
     matches.push(normalized);
   }
 
-  if (max !== Number.POSITIVE_INFINITY && matches.length >= max && !warnings.some((warning) => warning.includes("display capped at"))) {
-    warnings.push(`display capped at ${max} files`);
+  if (max !== Number.POSITIVE_INFINITY && matches.length >= max && !truncated) {
+    truncated = true;
+  }
+  if (truncated && !warnings.some((warning) => warning.includes("search output was truncated"))) {
+    warnings.push("search output was truncated");
   }
 
   return {
@@ -170,6 +174,8 @@ export function createNativeFileSearchRunner(deps: FileSearchRunnerDeps = {}): N
     }
 
     const parsed = parseNativeFileArgs(args);
+    const providedMax = options.max;
+    const max = typeof providedMax === "number" && Number.isFinite(providedMax) ? providedMax : undefined;
     try {
       const result = await addon.searchFiles({
         root: options.cwd,
@@ -179,6 +185,7 @@ export function createNativeFileSearchRunner(deps: FileSearchRunnerDeps = {}): N
         rootIsFile: parsed.rootIsFile,
         rootName: parsed.rootName,
         timeoutMs: options.timeoutMs,
+        max,
         perf: options.perf,
       });
       const metrics: ContentSearchRunMetrics | undefined = options.perf

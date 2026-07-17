@@ -23,7 +23,7 @@ import {
 import { mcpConfigCommand } from "./commands/mcpConfig.js";
 import { schemaCommand } from "./commands/schema.js";
 import { startAtriumServer } from "./server.js";
-import { parseSurfaceArg, surfaceOptionDescription } from "./mcp/surfaces.js";
+import { contentMaxOptionDescription, fileMaxOptionDescription, parseSurfaceArg, surfaceOptionDescription } from "./mcp/surfaces.js";
 import { updateCommand } from "./commands/update.js";
 
 // Read version from package.json so it stays in sync with the published version.
@@ -99,7 +99,7 @@ program
   .description("Investigate an MCP find-files call locally with Atrium's native file discovery; rerun with --perf for a CLI-only detailed trace")
   .option("--glob <pattern>", "Glob pattern to match files")
   .option("--exclude <pattern>", "Glob pattern to exclude")
-  .option("--max <count>", "Maximum number of matches to return")
+  .option("--max <count>", fileMaxOptionDescription)
   .option("--perf", "Emit a CLI-only detailed report for this single CLI rerun. Normal MCP responses stay token-light")
   .action((root: string, options: McpFindFilesOptions) => mcpFindFilesCommand(root, options));
 
@@ -110,7 +110,7 @@ program
   .option("--regex", "Treat query patterns as regular expressions")
   .option("--glob <pattern>", "Glob pattern to constrain the search")
   .option("--exclude <pattern>", "Glob pattern to exclude")
-  .option("--max <count>", "Maximum number of matches to return")
+  .option("--max <count>", contentMaxOptionDescription)
   .option("--perf", "Emit a CLI-only detailed report for this single CLI rerun. Normal MCP responses stay token-light")
   .action((root: string, options: McpGrepOptions) => mcpGrepCommand(root, options));
 
@@ -121,7 +121,7 @@ program
   .option("--regex", "Treat query patterns as regular expressions")
   .option("--glob <pattern>", "Glob pattern to constrain the search")
   .option("--exclude <pattern>", "Glob pattern to exclude")
-  .option("--max <count>", "Maximum number of matches to return")
+  .option("--max <count>", contentMaxOptionDescription)
   .option("--perf", "Emit a CLI-only detailed report for this single CLI rerun. Normal MCP responses stay token-light")
   .action((root: string, options: McpGrepCodeOptions) => mcpGrepCodeCommand(root, options));
 
