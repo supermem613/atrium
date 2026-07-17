@@ -71,7 +71,98 @@ describe("read MCP tool", () => {
       await serverTransport.close();
     }
   });
+
+  it("line-mode reads always carry nextRead; oversized reads return a byte continuation over the materialized artifact", async () => {
+    const server = createAtriumServer();
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const client = new Client({ name: "test-client", version: "1.0.0" });
+
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+
+    try {
+      const dir = await mkdtemp(join(tmpdir(), "atrium-read-linemode-"));
+      const smallFixturePath = join(dir, "small.txt");
+      const smallFixtureContent = "alpha\nbeta\n";
+      await writeFile(smallFixturePath, smallFixtureContent);
+
+      const small = await callJson(client, "read", { path: smallFixturePath, startLine: 1, endLine: 2 });
+      assert.equal(small.ok, true);
+      assert.equal(typeof small.content, "string");
+      assert.equal(small.nextRead, null, "line-mode nextRead is missing or not the required artifact byte continuation");
+
+      const oversizedSingleLinePath = join(dir, "single-line.txt");
+      const oversizedSingleLineContent = "x".repeat(9000);
+      await writeFile(oversizedSingleLinePath, oversizedSingleLineContent);
+
+      const oversizedSingleLine = await callJson(client, "read", { path: oversizedSingleLinePath, startLine: 1, endLine: 1 });
+      assert.equal(oversizedSingleLine.ok, true);
+      await verifyLineModeContinuationChain(client, oversizedSingleLine, oversizedSingleLineContent, 8192, "oversized single-line");
+
+      const oversizedMultiLinePath = join(dir, "multi-line.txt");
+      const oversizedMultiLineContent = ["prefix-", "x".repeat(4000), "y".repeat(4000), "z".repeat(4000)].join("\n");
+      await writeFile(oversizedMultiLinePath, oversizedMultiLineContent);
+
+      const oversizedMultiLine = await callJson(client, "read", { path: oversizedMultiLinePath, startLine: 1, endLine: 4 });
+      assert.equal(oversizedMultiLine.ok, true);
+      await verifyLineModeContinuationChain(client, oversizedMultiLine, oversizedMultiLineContent, 8192, "oversized multi-line");
+    } finally {
+      await client.close();
+      await serverTransport.close();
+    }
+  });
 });
+
+async function verifyLineModeContinuationChain(
+  client: Client,
+  initial: Record<string, unknown>,
+  expectedContent: string,
+  countBytes: number,
+  label: string,
+): Promise<void> {
+  assert.equal(typeof initial.content, "object", `${label} should materialize oversized content as a file value`);
+  const content = initial.content as Record<string, unknown>;
+  assert.ok(content, `${label} should materialize oversized content as a file value`);
+  assert.equal(typeof content.file, "string", `${label} should expose the materialized artifact path`);
+  const artifactPath = content.file as string;
+  const artifactBytes = numberField(content, "bytes");
+  assert.equal(artifactBytes, Buffer.byteLength(expectedContent, "utf8"), `${label} should report the exact byte length`);
+
+  const nextRead = initial.nextRead as Record<string, unknown> | undefined | null;
+  const hasRequiredContinuation = nextRead !== null && nextRead !== undefined && nextRead.path === artifactPath && nextRead.startByte === 0 && nextRead.countBytes === countBytes && typeof nextRead.snapshot === "string" && nextRead.snapshot !== "";
+  assert.ok(hasRequiredContinuation, "line-mode nextRead is missing or not the required artifact byte continuation");
+
+  let current: Record<string, unknown> = initial;
+  const pages: string[] = [];
+  let previousStartByte = -1;
+  let pageCount = 0;
+  while (true) {
+    if (typeof current.content === "string") {
+      pages.push(current.content as string);
+      const byteRange = current.byteRange as [number, number] | undefined;
+      assert.ok(byteRange, `${label} should expose the byte range on each page`);
+      assert.ok(byteRange[0] > previousStartByte, `${label} should advance through the byte pages`);
+      previousStartByte = byteRange[0];
+      pageCount += 1;
+    }
+
+    const continuation = current.nextRead as Record<string, unknown> | undefined | null;
+    if (continuation === null || continuation === undefined) {
+      break;
+    }
+
+    current = await callJson(client, "read", {
+      path: continuation.path as string,
+      startByte: continuation.startByte as number,
+      countBytes: continuation.countBytes as number,
+      snapshot: continuation.snapshot as string,
+    });
+    assert.equal(current.ok, true);
+  }
+
+  assert.equal(pageCount, Math.ceil(artifactBytes / countBytes), `${label} should use ${Math.ceil(artifactBytes / countBytes)} byte pages`);
+  assert.equal(pages.join(""), expectedContent, `${label} should reconstruct the selected content exactly`);
+}
 
 async function callJson(client: Client, name: string, args: Record<string, unknown>): Promise<Record<string, unknown>> {
   const response = await client.callTool({ name, arguments: args });
