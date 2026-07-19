@@ -24,7 +24,7 @@ test("transport close/error and process crash emit typed diagnostics through the
   const stdoutChunks: string[] = [];
   const originalStdoutWrite = process.stdout.write;
   const originalProcessOn = process.on;
-  let capturedCrashHandler: ((...args: unknown[]) => void) | undefined;
+  const capturedCrashHandlers: Record<string, (...args: unknown[]) => void> = {};
   let exitCode: number | undefined;
   let closeCallbackCount = 0;
   let errorCallbackCount = 0;
@@ -41,7 +41,7 @@ test("transport close/error and process crash emit typed diagnostics through the
   process.on = ((event: string, handler: (...args: unknown[]) => void) => {
     if (event === "uncaughtException" || event === "unhandledRejection") {
       processOnEventCount += 1;
-      capturedCrashHandler = handler;
+      capturedCrashHandlers[event] = handler;
     }
     return process;
   }) as typeof process.on;
@@ -69,9 +69,9 @@ test("transport close/error and process crash emit typed diagnostics through the
       exitCode = code;
     }, fallbackSink });
 
-    assert.ok(capturedCrashHandler, "expected process crash handler to be registered");
+    assert.ok(capturedCrashHandlers["uncaughtException"], "expected process crash handler to be registered");
     assert.equal(processOnEventCount, 2, "expected process crash handlers to be registered once");
-    capturedCrashHandler?.(new Error("process crash"));
+    capturedCrashHandlers["uncaughtException"]?.(new Error("process crash"));
 
     assert.equal(exitCode, 1, "expected a non-zero exit code for a process crash");
     assert.equal(closeCallbackCount, 1, "expected the previous close callback to run");
