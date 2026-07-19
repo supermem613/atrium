@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Component, Path, PathBuf};
 use std::time::Instant;
 
 use ignore::overrides::{Override, OverrideBuilder};
@@ -50,6 +50,100 @@ impl Control {
   }
 }
 
+pub fn safe_walk_root(root: &Path, globs_opt: &Option<Vec<String>>) -> PathBuf {
+  let Some(_globs) = globs_opt else {
+    return root.to_path_buf();
+  };
+
+  let mut prefixes: Vec<Vec<String>> = Vec::new();
+  if let Some(globs) = globs_opt.as_ref() {
+    for glob in globs {
+      let Some(prefix) = literal_directory_prefix(glob) else {
+        return root.to_path_buf();
+      };
+      prefixes.push(prefix);
+    }
+  }
+
+  if prefixes.is_empty() {
+    return root.to_path_buf();
+  }
+
+  let mut common = prefixes[0].clone();
+  for prefix in prefixes.iter().skip(1) {
+    let len = common.len().min(prefix.len());
+    let mut shared_len = 0;
+    while shared_len < len && common[shared_len] == prefix[shared_len] {
+      shared_len += 1;
+    }
+    common.truncate(shared_len);
+    if common.is_empty() {
+      break;
+    }
+  }
+
+  if common.is_empty() {
+    root.to_path_buf()
+  } else {
+    let walk_root = root.join(PathBuf::from(common.join("/")));
+    if walk_root == root {
+      root.to_path_buf()
+    } else {
+      walk_root
+    }
+  }
+}
+
+fn literal_directory_prefix(glob: &str) -> Option<Vec<String>> {
+  if glob.is_empty() || glob.starts_with('/') || glob.contains('\\') || glob.contains('{') || glob.contains('}') || glob.contains('[') || glob.contains(']') {
+    return None;
+  }
+  if Path::new(glob)
+    .components()
+    .any(|component| matches!(component, Component::Prefix(_) | Component::RootDir | Component::ParentDir))
+  {
+    return None;
+  }
+
+  let mut segments: Vec<String> = Vec::new();
+  let mut saw_non_literal = false;
+  let mut saw_literal = false;
+
+  for segment in glob.split('/') {
+    if segment.is_empty() || segment == "." {
+      continue;
+    }
+    if segment == ".." {
+      return None;
+    }
+    if is_literal_segment(segment) {
+      saw_literal = true;
+      segments.push(segment.to_string());
+    } else {
+      saw_non_literal = true;
+      break;
+    }
+  }
+
+  if !saw_literal {
+    return None;
+  }
+
+  if !saw_non_literal && segments.len() > 1 {
+    segments.pop();
+  }
+
+  if segments.is_empty() {
+    None
+  } else {
+    Some(segments)
+  }
+}
+
+fn is_literal_segment(segment: &str) -> bool {
+  !segment.contains('*') && !segment.contains('?') && !segment.contains('[') && !segment.contains(']') && !segment.contains('{') && !segment.contains('}')
+}
+
 // Include globs act as a whitelist; excludes are added as `!glob` blacklist
 // entries. This mirrors ripgrep's `--glob` / `--glob !pat` handling.
 pub fn build_overrides(
@@ -90,4 +184,56 @@ pub fn relative_display(base: &Path, path: &Path) -> String {
     .unwrap_or(path)
     .to_string_lossy()
     .into_owned()
+}
+
+#[cfg(test)]
+mod tests {
+  use super::{literal_directory_prefix, safe_walk_root};
+  use std::path::Path;
+
+  #[test]
+  fn derives_shared_literal_directory_prefix() {
+    let root = Path::new("/tmp/root");
+    let globs = Some(vec!["test/**/*undo*.test.ts".to_string()]);
+
+    assert_eq!(safe_walk_root(root, &globs), root.join("test"));
+    assert_eq!(literal_directory_prefix("test/**/*undo*.test.ts"), Some(vec!["test".to_string()]));
+  }
+
+  #[test]
+  fn falls_back_for_basename_only_globs() {
+    let root = Path::new("/tmp/root");
+    let globs = Some(vec!["*.ts".to_string()]);
+
+    assert_eq!(safe_walk_root(root, &globs), root.to_path_buf());
+    assert_eq!(literal_directory_prefix("*.ts"), None);
+  }
+
+  #[test]
+  fn falls_back_for_unsafe_globs() {
+    let root = Path::new("/tmp/root");
+    let globs = Some(vec!["test/{foo,bar}.ts".to_string()]);
+
+    assert_eq!(safe_walk_root(root, &globs), root.to_path_buf());
+    assert_eq!(literal_directory_prefix("test/{foo,bar}.ts"), None);
+    assert_eq!(literal_directory_prefix("/outside/**/*.ts"), None);
+  }
+
+  #[cfg(windows)]
+  #[test]
+  fn falls_back_for_windows_drive_prefixed_globs() {
+    let root = Path::new(r"C:\requested\root");
+    let globs = Some(vec!["C:/outside/**/*.ts".to_string()]);
+
+    assert_eq!(safe_walk_root(root, &globs), root.to_path_buf());
+    assert_eq!(literal_directory_prefix("C:/outside/**/*.ts"), None);
+  }
+
+  #[test]
+  fn falls_back_for_non_common_globs() {
+    let root = Path::new("/tmp/root");
+    let globs = Some(vec!["src/**/*.ts".to_string(), "test/**/*.ts".to_string()]);
+
+    assert_eq!(safe_walk_root(root, &globs), root.to_path_buf());
+  }
 }

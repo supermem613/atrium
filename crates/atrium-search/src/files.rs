@@ -4,7 +4,7 @@ use std::time::Instant;
 use ignore::WalkBuilder;
 use napi::Result;
 
-use crate::common::{build_overrides, configure_ignore, relative_display, Control};
+use crate::common::{build_overrides, configure_ignore, relative_display, safe_walk_root, Control};
 use crate::{NativeFilesSearchOptions, NativeSearchMetrics};
 
 pub struct FilesSearchOutcome {
@@ -29,7 +29,7 @@ pub fn search(options: &NativeFilesSearchOptions) -> Result<FilesSearchOutcome> 
       None => base_dir.clone(),
     }
   } else {
-    base_dir.clone()
+    safe_walk_root(&base_dir, &options.globs)
   };
 
   let overrides = build_overrides(&base_dir, &options.globs, &options.excludes)?;

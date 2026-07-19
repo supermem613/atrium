@@ -110,6 +110,36 @@ test("caps results and warns when the native output is truncated", async () => {
   }
 });
 
+test("finds a narrow glob before unrelated vendor files exhaust the deadline", async () => {
+  const root = await mkdtemp(join(tmpdir(), "atrium-native-sparse-glob-"));
+  try {
+    await mkdir(join(root, "test", "unit"), { recursive: true });
+    await writeFile(join(root, "test", "unit", "undo.test.ts"), "target\n", "utf8");
+
+    for (let batch = 0; batch < 50; batch += 1) {
+      await Promise.all(Array.from({ length: 100 }, async (_, index) => {
+        const packageName = `package-${String(batch * 100 + index).padStart(4, "0")}`;
+        const packageRoot = join(root, "node_modules", packageName);
+        await mkdir(packageRoot, { recursive: true });
+        await writeFile(join(packageRoot, "index.js"), "vendor\n", "utf8");
+      }));
+    }
+
+    const result = await runNativeFileSearch({
+      root,
+      all: true,
+      globs: ["test/**/*undo*.test.ts"],
+      max: 100,
+      timeoutMs: 25,
+    });
+
+    assert.deepEqual(paths(result), ["test/unit/undo.test.ts"], JSON.stringify(result));
+    assert.equal(result.warnings.some((warning) => warning.includes("search stopped after")), false);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("surfaces timeout warnings", async () => {
   const root = await mkdtemp(join(tmpdir(), "atrium-native-timeout-"));
   try {
