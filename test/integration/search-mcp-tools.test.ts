@@ -4,6 +4,7 @@ import { describe, it } from "node:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { createAtriumServer } from "../../src/server.js";
+import { adoptBackgroundRun } from "../../src/core/backgroundRuns.js";
 import type { NativeSearchEnvelope, NativeSearchRunOptions, XrayEnvelope, XrayRunOptions, XraySearchClientLike } from "../../src/core/search/types.js";
 
 class FakeXrayClient implements XraySearchClientLike {
@@ -165,6 +166,42 @@ describe("search MCP tools", () => {
       assert.equal(typeof completedResult.timingMs, "number", "backgrounded search result should include timingMs");
       delete completedResult.timingMs;
       assert.deepEqual(completedResult, { kind: "files", matches: [{ path: "src/slow.ts" }], warnings: [] });
+    } finally {
+      await client.close();
+      await serverTransport.close();
+    }
+  });
+
+  it("returns handoff and continue responses with margin before the host request deadline", { timeout: 55_000 }, async () => {
+    const never = new Promise<XrayEnvelope>(() => {});
+    const fakeClient: XraySearchClientLike = {
+      run: async () => never,
+    };
+    const server = createAtriumServer({ searchClient: fakeClient });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const client = new Client({ name: "test-client", version: "1.0.0" });
+    const existing = await adoptBackgroundRun({
+      startedAt: new Date().toISOString(),
+      result: new Promise(() => {}),
+    });
+
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+
+    try {
+      const startedAt = Date.now();
+      const [handoff, continued] = await Promise.all([
+        callJson(client, "find-files", { root: "/tmp/slow" }),
+        callJson(client, "operation-wait", { operationId: existing.operationId }),
+      ]);
+      const elapsedMs = Date.now() - startedAt;
+
+      assert.equal(handoff.status, "running");
+      assert.equal(continued.status, "continue");
+      assert.ok(
+        elapsedMs < 15_000,
+        `handoff and operation-wait must return inside the request-safe 15-second window; elapsed ${elapsedMs} ms`,
+      );
     } finally {
       await client.close();
       await serverTransport.close();

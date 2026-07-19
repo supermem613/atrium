@@ -9,7 +9,8 @@ import { atriumTempPath } from "./tempPaths.js";
 type BackgroundRunStatus = "running" | "completed" | "failed";
 
 export const defaultLongRunningTimeoutMs = 3_600_000;
-export const defaultWaitTimeoutMs = 45_000;
+export const defaultRequestSafeResponseBudgetMs = 10_000;
+export const defaultWaitTimeoutMs = defaultRequestSafeResponseBudgetMs;
 
 export interface OperationNextCheck {
   tool: "atrium.operation-wait";
