@@ -8,6 +8,13 @@ Atrium is a Copilot CLI extension that supersedes the host's built-in tool primi
 - `read` reads UTF-8 text files with deterministic line-range clamping.
 - `find-files`, `grep`, and `grep-code` search local files through first-class MCP primitives backed by an in-process native search engine, a napi-rs addon embedding ripgrep's crates. The addon is the only search engine, so search fails hard when the addon is missing. `atrium doctor` reports the native-addon health check and fails when the addon is absent.
 
+Native `find-files` derives the shared complete literal directory prefix from
+positive globs and starts traversal there when the prefix is safe beneath the
+requested root. Basename-only, absolute, parent-traversal, unsafe, and
+non-common patterns fall back to the requested root. Overrides remain relative
+to that original root, results remain root-relative, and all-mode searches still
+include hidden, ignored, and vendor files.
+
 PowerShell remains the right tool for ad-hoc scripting, variables, loops, pipelines, and interactive commands. Long-running single executable calls hand off a durable operation handle that the caller waits on with `operation-wait`.
 
 ## Process model
@@ -148,12 +155,12 @@ in FIFO order for a slot. This limit is intentionally per-process, not
 machine-wide; separate Copilot tabs can still have separate Atrium server
 processes.
 
-`run` starts the process once and waits inside the safe MCP request window.
-If the process finishes before the handoff threshold, Atrium returns the normal
-compact result. If the process is still running near 45 seconds, Atrium adopts it
-into the durable operation store and returns an `operationId`, a `resultPath`, and
-a prescriptive `nextCheck` object. The adopted operation keeps its queue slot
-until the child process result settles.
+`run` starts the process once and waits inside the fixed 10-second request-safe
+response budget. If the process finishes before that budget expires, Atrium
+returns the normal compact result. Otherwise Atrium adopts it into the durable
+operation store and returns an `operationId`, a `resultPath`, and a prescriptive
+`nextCheck` object. The adopted operation keeps its queue slot until the child
+process result settles.
 
 `nextCheck` names exactly what the caller does next: the `operation-wait` tool
 with that `operationId`. The handle exposes no timeout or wait knob, so callers
@@ -172,10 +179,11 @@ server-side execution deadlines instead of caller-tuned operation timeouts.
 }
 ```
 
-`operation-wait` waits inside a request-safe window for a durable operation handed
-off by any Atrium tool. If the operation is still running after that window, it
-returns `status: "continue"`, `mustReissueWait: true`, and the same prescriptive
-`nextCheck` handle. Running and continue payloads may include bounded cumulative
+`operation-wait` uses the same fixed 10-second request-safe response budget for a
+durable operation handed off by any Atrium tool. If the operation is still
+running after that budget, it returns `status: "continue"`,
+`mustReissueWait: true`, and the same prescriptive `nextCheck` handle. Running
+and continue payloads may include bounded cumulative
 stdout, stderr, and a progress snapshot, while the terminal completed response
 still preserves the final complete result. Each progress update carries a
 monotonic revision, so a later `operation-wait` waits for completion, a newer
@@ -183,7 +191,9 @@ progress revision, or the fixed request-safe window rather than spinning on the
 same snapshot. Once terminal it returns the snapshot with `status:
 "completed"` or `status: "failed"`, `completedAt`, and the `result` or `error`.
 It recovers from the persisted snapshot at `resultPath` when the handle is no
-longer in server memory.
+longer in server memory. The request-safe response budget does not change the
+underlying operation lifetime: executable runs retain their fixed one-hour
+timeout, while native searches retain their fixed 59-second timeout.
 
 The local `atrium mcp-run` debug command exposes `--request-timeout-ms` because it
 owns its MCP client. That option is only for local debugging. It reissues

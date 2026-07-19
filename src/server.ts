@@ -6,7 +6,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { defaultWaitTimeoutMs } from "./core/backgroundRuns.js";
+import { defaultRequestSafeResponseBudgetMs } from "./core/backgroundRuns.js";
 import { ExecutionQueue } from "./core/executionQueue.js";
 import { createNativeSearchClient } from "./core/search/searchClient.js";
 import type { SearchClientLike } from "./core/search/types.js";
@@ -25,8 +25,6 @@ import {
   type DiagnosticSink,
 } from "./mcp/transportDiagnostics.js";
 
-const defaultBackgroundHandoffAfterMs = 45_000;
-
 const packageVersion = (JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version: string }).version;
 
 export interface AtriumServerOptions {
@@ -40,8 +38,8 @@ export interface AtriumServerOptions {
 }
 
 export function createAtriumServer(options: AtriumServerOptions = {}): McpServer {
-  const backgroundHandoffAfterMs = options.backgroundHandoffAfterMs ?? defaultBackgroundHandoffAfterMs;
-  const waitTimeoutMs = options.waitTimeoutMs ?? defaultWaitTimeoutMs;
+  const backgroundHandoffAfterMs = options.backgroundHandoffAfterMs ?? defaultRequestSafeResponseBudgetMs;
+  const waitTimeoutMs = options.waitTimeoutMs ?? defaultRequestSafeResponseBudgetMs;
   const executionOptions = {
     executionQueue: options.executionQueue,
   };
