@@ -250,6 +250,8 @@ Flow:
    }
    ```
 
+Alongside this resolution and npm shim handling, the runner inspects the resolved tool basename before spawning. When it is a Python interpreter (`python`, `python3`, or `pythonX.Y`, with or without `.exe`) and the caller has not already passed `-X utf8`, the runner injects `-X utf8` ahead of the caller arguments. This forces the Python child to use UTF-8 for stdin and stdout instead of the Windows ANSI code page, so non-ASCII bytes survive a round trip through a Python child. The injection is argv-only and reads or writes no environment variable.
+
 Atrium intentionally does not return debug-only fields such as resolved executable path, argv echo, cwd echo, stdout preview, stderr preview, warnings, or hints by default. Queue metrics are included because they are needed to dogfood and tune the execution limiter.
 
 ## Output and artifact policy
