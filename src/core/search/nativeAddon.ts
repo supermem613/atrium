@@ -21,6 +21,8 @@ export interface NativeContentSearchOptions {
   max?: number;
   timeoutMs?: number;
   perf?: boolean;
+  rootIsFile?: boolean;
+  rootName?: string;
 }
 
 export interface NativeFilesSearchOptions {

@@ -227,6 +227,8 @@ export function parseNativeContentArgs(args: string[]): {
   typeDefs: NativeContentTypeDef[];
   typeSelect: string[];
   typeNegate: string[];
+  rootIsFile: boolean;
+  rootName?: string;
 } {
   const globs: string[] = [];
   const excludes: string[] = [];
@@ -234,9 +236,20 @@ export function parseNativeContentArgs(args: string[]): {
   const typeSelect: string[] = [];
   const typeNegate: string[] = [];
   let all = false;
+  let rootIsFile = false;
+  let rootName: string | undefined;
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i];
     if (arg === "--") {
+      // The token after `--` is the search path: `.` means the root is a
+      // directory, any other value is a single file name relative to cwd.
+      // Capturing it lets a single-file search restrict to that one file
+      // instead of scanning its whole parent directory.
+      const token = args[i + 1];
+      if (token !== undefined && token !== ".") {
+        rootIsFile = true;
+        rootName = token;
+      }
       break;
     }
     // The query is emitted as the value of `-e`. Skip that value so a query
@@ -290,7 +303,7 @@ export function parseNativeContentArgs(args: string[]): {
       }
     }
   }
-  return { all, globs, excludes, typeDefs, typeSelect, typeNegate };
+  return { all, globs, excludes, typeDefs, typeSelect, typeNegate, rootIsFile, rootName };
 }
 
 // Runs the search in-process through the napi addon, which is the only search
@@ -321,6 +334,8 @@ export function createNativeContentSearchRunner(deps: ContentSearchRunnerDeps = 
         typeDefs: parsed.typeDefs,
         typeSelect: parsed.typeSelect,
         typeNegate: parsed.typeNegate,
+        rootIsFile: parsed.rootIsFile,
+        rootName: parsed.rootName,
         timeoutMs: options.timeoutMs,
         max,
         perf: options.perf,

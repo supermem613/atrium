@@ -25,6 +25,8 @@ pub struct NativeContentSearchOptions {
   pub max: Option<u32>,
   pub timeout_ms: Option<u32>,
   pub perf: Option<bool>,
+  pub root_is_file: Option<bool>,
+  pub root_name: Option<String>,
 }
 
 /// One ripgrep-style file-type definition, e.g. name `xraycode`, glob `*.ts`.

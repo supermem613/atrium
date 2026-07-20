@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use grep_regex::RegexMatcher;
@@ -26,6 +26,19 @@ pub fn search(options: &NativeContentSearchOptions) -> Result<ContentSearchOutco
   let regex = options.regex.unwrap_or(false);
   let all = options.all.unwrap_or(false);
   let want_perf = options.perf.unwrap_or(false);
+  let root_is_file = options.root_is_file.unwrap_or(false);
+
+  // For a file root, the caller passes root = the parent directory and
+  // root_name = the file basename, mirroring ripgrep's `-- <basename>`. Walking
+  // that one file keeps a single-file search from spilling into its siblings.
+  let walk_root: PathBuf = if root_is_file {
+    match &options.root_name {
+      Some(name) => root.join(name),
+      None => root.to_path_buf(),
+    }
+  } else {
+    root.to_path_buf()
+  };
 
   // `-F` (default) means a literal query. Escaping it into a regex yields the
   // same matches ripgrep produces for fixed strings while reusing one matcher.
@@ -39,7 +52,7 @@ pub fn search(options: &NativeContentSearchOptions) -> Result<ContentSearchOutco
 
   let overrides = build_overrides(root, &options.globs, &options.excludes)?;
 
-  let mut builder = WalkBuilder::new(root);
+  let mut builder = WalkBuilder::new(&walk_root);
   builder.overrides(overrides);
   builder.max_filesize(Some(MAX_FILESIZE));
   configure_ignore(&mut builder, all);
