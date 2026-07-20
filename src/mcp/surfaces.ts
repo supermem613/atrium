@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { isAbsolute, join } from "node:path";
 import type { McpServer, ToolCallback } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { introspectTool } from "../core/introspect.js";
 import { adoptBackgroundRun, waitForBackgroundRun, withLongRunningDefault } from "../core/backgroundRuns.js";
@@ -291,7 +292,8 @@ function searchTools(deps: SurfaceDeps): ToolRegistration[] {
       },
       async ({ root, query, regex, path, glob, exclude, max }) => {
         const resolved = resolveSearchQuery(query, regex ?? false);
-        return runContentSearch(spec, resolved.query, resolved.regex, path ?? root, glob, exclude, max);
+        const searchRoot = path === undefined ? root : (isAbsolute(path) ? path : join(root, path));
+        return runContentSearch(spec, resolved.query, resolved.regex, searchRoot, glob, exclude, max);
       },
     ));
   }

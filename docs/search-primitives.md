@@ -50,6 +50,8 @@ To restrict a content search to a single file, pass `path`:
 }
 ```
 
+`path` may be absolute or relative. A relative `path` is resolved under `root`, so `path: "src\\server.ts"` with `root: "C:\\repo"` searches `C:\repo\src\server.ts`. An absolute `path` is used as-is.
+
 `find-files` is path discovery only and takes the same shape **without** `query`. It never reads file contents; it exposes `glob` for path discovery and does not expose a `type` option. Narrow the listing by `glob` and `exclude` instead:
 
 ```json
@@ -69,7 +71,7 @@ Required:
 Optional:
 
 - `regex`: treat the patterns as regular expressions. Defaults to `false`, which matches patterns literally. Accepts a boolean or the strings `"true"`/`"false"`.
-- `path`: restrict a `grep` or `grep-code` content search to a single file instead of walking `root`.
+- `path`: restrict a `grep` or `grep-code` content search to a single file instead of walking `root`. A relative `path` is resolved under `root`; an absolute `path` is used as-is.
 - `glob`: constrain searched paths.
 - `exclude`: skip matching paths, applied as a negated glob.
 - `max`: native produced-result cap. The native search stops after producing `max` matches or paths, and truncation is surfaced in warnings. It does not bound files visited or work for sparse or zero-match searches. Lower `max` is only useful when enough results are already being produced to reach the cap; otherwise narrow the query, glob, or path. Accepts an integer or a numeric string such as `"20"`.

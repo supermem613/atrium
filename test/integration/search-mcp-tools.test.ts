@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { describe, it } from "node:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -270,6 +271,30 @@ describe("search MCP tools", () => {
       assert.deepEqual(parsed, { kind: "content", matches: [{ path: "src/one.ts", line: 7, text: "matched text" }], warnings: [] });
       // path narrows the search to the one file, so the search client runs against that file as its root.
       assert.deepEqual(fakeClient.calls.at(-1), { command: "search", root: "/tmp/x/only.ts", query: "needle", all: true, timeoutMs: 59_000 });
+    } finally {
+      await client.close();
+      await serverTransport.close();
+    }
+  });
+
+  it("anchors a relative path filter under the search root instead of passing it as the bare root", async () => {
+    const fakeClient = new FakeXrayClient();
+    const server = createAtriumServer({ searchClient: fakeClient });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const client = new Client({ name: "test-client", version: "1.0.0" });
+
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+
+    try {
+      const parsed = await callJson(client, "grep", { root: "/tmp/x", query: "needle", path: "only.ts" });
+      assert.deepEqual(parsed, { kind: "content", matches: [{ path: "src/one.ts", line: 7, text: "matched text" }], warnings: [] });
+      // A relative path names a file inside root. It must be anchored to root. Passing the
+      // bare relative name as the search root makes the engine resolve it against the process
+      // working directory and reject it as `invalid root: only.ts`.
+      const receivedRoot = fakeClient.calls.at(-1)?.root;
+      assert.notEqual(receivedRoot, "only.ts", "a relative path filter must not be passed as the bare search root");
+      assert.equal(receivedRoot, join("/tmp/x", "only.ts"));
     } finally {
       await client.close();
       await serverTransport.close();
