@@ -146,6 +146,21 @@ test("content search finds matches when the root is a single file", async () => 
   }
 });
 
+test("restricts content search to only the target file when root is a single file", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "atrium-content-single-file-scope-"));
+  try {
+    await writeFile(join(dir, "target.md"), "evidence_hash lives here\n", "utf8");
+    await writeFile(join(dir, "other.md"), "evidence_hash also here\n", "utf8");
+
+    const result = await runContentSearch({ query: "evidence_hash", root: join(dir, "target.md"), all: true });
+
+    const basenames = [...new Set(result.matches.map((match) => match.path.split(/[\\/]/).pop()))].sort();
+    assert.deepEqual(basenames, ["target.md"], `expected only target.md, got: ${basenames.join(", ")}`);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("content search reports an invalid root instead of a misleading spawn error", async () => {
   const dir = await mkdtemp(join(tmpdir(), "atrium-content-missing-root-"));
   const missing = join(dir, "does-not-exist");
