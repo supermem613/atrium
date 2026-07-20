@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { once } from "node:events";
 import { access, readFile } from "node:fs/promises";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { defaultInlineOutputLimitBytes, materializeRunOutput, OutputValue } from "./artifacts.js";
 import { defaultExecutionQueue, ExecutionQueue, ExecutionQueueMetrics } from "./executionQueue.js";
 import { sanitizePerfAttributes } from "./perf.js";
@@ -232,7 +232,7 @@ async function acquireExecutionPermit(executionQueue: ExecutionQueue | false | u
 async function spawnOnce(input: RunExecutableInput, tool: string, args: string[], stdin: string | undefined, timeoutMs: number, progress?: RunningExecutableProgressTracker): Promise<SpawnAttempt> {
   const stdoutChunks: Buffer[] = [];
   const stderrChunks: Buffer[] = [];
-  const prepared = await prepareSpawn(tool, args);
+  const prepared = await prepareSpawn(tool, withPythonUtf8Mode(tool, args));
   let child: ChildProcessWithoutNullStreams;
   try {
     child = spawn(prepared.command, prepared.args, {
@@ -496,6 +496,50 @@ async function chooseWindowsExecutable(candidates: string[]): Promise<string> {
   }
 
   return candidates[0];
+}
+
+const PYTHON_INTERPRETER_PATTERN = /^python(?:\d+(?:\.\d+)?)?(?:\.exe)?$/iu;
+
+// Only interpreter options before -c, -m, --, a lone -, or the script path can carry
+// -X utf8. Anything after those tokens belongs to the Python program, so a -X utf8 there
+// is program data and must not suppress the interpreter flag Atrium injects.
+function leadingOptionsRequestUtf8Mode(args: string[]): boolean {
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (arg === "-c" || arg === "-m" || arg === "--" || arg === "-" || !arg.startsWith("-")) {
+      return false;
+    }
+    if (arg === "-X") {
+      const value = args[index + 1];
+      if (typeof value === "string" && /^utf8(?:=|$)/iu.test(value)) {
+        return true;
+      }
+      index += 1;
+      continue;
+    }
+    if (/^-Xutf8(?:=|$)/iu.test(arg)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// The child locale defect is Windows-only. There Python defaults its stdio to the legacy
+// ANSI code page, so a UTF-8 stdin payload is misdecoded and UTF-8 stdout returns as
+// mojibake. -X utf8 forces UTF-8 Mode so byte round-trips match what Atrium writes and
+// reads, without relying on any environment variable. Other platforms already default to
+// UTF-8, so forcing it there would only override a deliberate caller locale.
+function withPythonUtf8Mode(tool: string, args: string[]): string[] {
+  if (process.platform !== "win32") {
+    return args;
+  }
+  if (!PYTHON_INTERPRETER_PATTERN.test(basename(tool))) {
+    return args;
+  }
+  if (leadingOptionsRequestUtf8Mode(args)) {
+    return args;
+  }
+  return ["-X", "utf8", ...args];
 }
 
 async function prepareSpawn(tool: string, args: string[]): Promise<PreparedSpawn> {

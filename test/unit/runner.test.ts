@@ -12,6 +12,18 @@ async function loadRunnerModule() {
   return import("../../src/core/runner.js");
 }
 
+const pythonInterpreter: string | undefined = (() => {
+  for (const candidate of ["python", "python3"]) {
+    try {
+      execFileSync(candidate, ["-c", "pass"], { stdio: "ignore" });
+      return candidate;
+    } catch {
+      // Try the next candidate name.
+    }
+  }
+  return undefined;
+})();
+
 async function runExecutable(input: RunExecutableInput, options?: StartExecutableRunOptions) {
   const runnerModule = await loadRunnerModule();
   return runnerModule.runExecutable(input, options);
@@ -130,6 +142,26 @@ describe("runner", () => {
     assert.equal(payload.secondRunCalls[0].args[1], "/s");
     assert.equal(payload.secondRunCalls[0].args[2], "/c");
     assert.ok(payload.secondRunCalls[0].args[3].includes(resolvedTool));
+  });
+
+  it("preserves non-ASCII UTF-8 stdin through a child that uses text-mode stdio", {
+    skip: pythonInterpreter === undefined ? "no python interpreter available" : false,
+  }, async () => {
+    // Real scripts decode text-mode sys.stdin and must recover the true characters, not the
+    // ANSI-code-page bytes. On Windows the child defaults stdin to cp1252 with
+    // surrogateescape, so a raw stdin-to-stdout copy round-trips bytes yet still hands the
+    // script mojibake. Re-encoding the decoded text as UTF-8 exposes that: cp1252 decode
+    // yields lone surrogates that raise UnicodeEncodeError, so the run fails unless Atrium
+    // has guaranteed the child speaks UTF-8.
+    const sample = "Alejandro Quiñones — Lunch 🍔";
+    const result = await runExecutable({
+      tool: pythonInterpreter as string,
+      args: ["-c", "import sys; sys.stdout.buffer.write(sys.stdin.read().encode('utf-8'))"],
+      stdin: sample,
+    });
+
+    assert.equal(result.ok, true);
+    assert.equal(result.stdout, sample);
   });
 
   it("captures non-zero exits without throwing", async () => {
