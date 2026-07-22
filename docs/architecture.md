@@ -192,7 +192,7 @@ same snapshot. Once terminal it returns the snapshot with `status:
 "completed"` or `status: "failed"`, `completedAt`, and the `result` or `error`.
 It recovers from the persisted snapshot at `resultPath` when the handle is no
 longer in server memory. The request-safe response budget does not change the
-underlying operation lifetime: executable runs retain their fixed one-hour
+underlying operation lifetime: executable runs retain their fixed four-hour
 timeout, while native searches retain their fixed 59-second timeout.
 
 The local `atrium mcp-run` debug command exposes `--request-timeout-ms` because it
