@@ -376,6 +376,7 @@ const readInstructionFragment = [
   "- Use the read tool only for exact paths that are known to exist or came from an owning tool's file-value output. Do not use a read as an existence probe.",
   "- Do not treat paths copied from old sessions, deleted worktrees, or guessed names as known to exist. Re-derive the current path first; use find-files to discover it, then read the exact match.",
   "- Exact path existence is not enough for policy-restricted content. Use the approved route for such content instead of reading it directly.",
+  "- This read tool replaces the harness built-in view or file-reading tool. When such a built-in is disabled or unavailable, map every view or Get-Content style read to this read tool instead of retrying the built-in.",
 ].join("\n");
 
 const searchInstructionFragment = [
