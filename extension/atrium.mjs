@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { joinSession } from "@github/copilot-sdk/extension";
 import {
-  composeInstructionsForSelection,
+  createInstructionHooks,
   describeEnabledSurfaces,
   isSearchSurfaceEnabled,
   parseSurfaceSelectionFromArgs,
@@ -15,10 +15,11 @@ import {
 
 // Copilot CLI does not inject an MCP server's advertised `instructions` into
 // model context. The proven always-on channel is an extension hook that returns
-// `additionalContext`, which the runtime injects at session start and on every
-// user prompt. This extension exists solely to deliver Atrium's surface-tailored
-// guardrails through that channel so the server is self-contained and no global
-// instruction file has to carry them.
+// `additionalContext`. The runtime injects the full guardrails at session start
+// and re-sends them every 20th prompt. A bounded reminder carries the
+// non-negotiable rules on the prompts in between. This extension exists solely
+// to deliver Atrium's surface-tailored guardrails through that channel so the
+// server is self-contained and no global instruction file has to carry them.
 
 // This file lives outside the .github/extensions auto-discovery path on purpose.
 // The install shim loads it as a user extension in every repo, so keeping it out
@@ -46,15 +47,15 @@ try {
   selection = undefined;
 }
 
-let instructions;
+let instructionHooks;
 let summary;
 let searchEnabled;
 try {
-  instructions = composeInstructionsForSelection(selection);
+  instructionHooks = createInstructionHooks(selection);
   summary = describeEnabledSurfaces(selection);
   searchEnabled = isSearchSurfaceEnabled(selection);
 } catch {
-  instructions = composeInstructionsForSelection(undefined);
+  instructionHooks = createInstructionHooks(undefined);
   summary = describeEnabledSurfaces(undefined);
   searchEnabled = isSearchSurfaceEnabled(undefined);
 }
@@ -73,8 +74,7 @@ const session = await joinSession({
   tools: [],
   onPermissionRequest: async (request) => evaluatePermissionRequest(request, searchEnabled),
   hooks: {
-    onSessionStart: async () => ({ additionalContext: instructions }),
-    onUserPromptSubmitted: async () => ({ additionalContext: instructions }),
+    ...instructionHooks,
     onPreToolUse: async (input) => evaluatePreToolUse(input, searchEnabled),
   },
 });

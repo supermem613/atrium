@@ -115,12 +115,14 @@ atrium mcp-config --surface core,read
 The MCP `instructions` composed above are advertised at the `initialize`
 handshake, but some hosts (including Copilot CLI) do not inject that field into
 model context. Atrium ships a companion Copilot CLI extension that composes the
-same surface-tailored text and injects it as `additionalContext` on every turn
-and at session start, so the guardrails reach the model reliably and survive
-context compaction. When the `search` surface is enabled, that injected text
-includes the explicit search-tool to primitive mapping, so the model learns to
-reach for `atrium-grep`, `atrium-grep-code`, and `atrium-find-files` instead of
-`rg`, `grep`, or `find` before it is ever denied.
+same surface-tailored text. The full text is injected at session start and
+re-sent on every 20th prompt, and a bounded reminder under 800 characters
+carries the non-negotiable rules on the prompts in between, so the guardrails
+survive context compaction without re-paying the full block every turn. When
+the `search` surface is enabled, that injected text includes the explicit
+search-tool to primitive mapping, so the model learns to reach for
+`atrium-grep`, `atrium-grep-code`, and `atrium-find-files` instead of `rg`,
+`grep`, or `find` before it is ever denied.
 
 Install it once:
 

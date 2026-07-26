@@ -326,9 +326,13 @@ Advertising the composed instructions at the MCP `initialize` handshake is
 necessary but not sufficient: some hosts, including Copilot CLI, do not inject an
 MCP server's `instructions` field into model context. Atrium therefore ships a
 companion Copilot CLI extension in `extension\atrium.mjs` that composes the
-exact same surface-tailored text and injects it as `additionalContext` from the
-`onSessionStart` and `onUserPromptSubmitted` hooks, so the guardrails reach the
-model at cold start and on every turn, surviving context compaction.
+exact same surface-tailored text. `onSessionStart` returns the full text,
+`onUserPromptSubmitted` returns a bounded reminder and re-sends the full text on
+every 20th prompt, and both hooks come from `createInstructionHooks` in
+`src\mcp\extensionInstructions.ts` so the injection policy is unit tested
+rather than duplicated in the extension file. This per-prompt hook still exists
+so the guardrails survive host context compaction, so removing it would trade a
+token cost for silent policy loss.
 
 When the `search` surface is enabled, the composed `additionalContext` also
 carries the explicit blocked-tool to primitive mapping: it names the direct
@@ -379,7 +383,7 @@ is removed.
 | `src\mcp\surfaces.ts` | Surface registry: the single source of truth for tool registration, per-surface instruction fragments, the surface selector, and the tool-name allowlist. |
 | `src\mcp\extensionInstructions.ts` | Pure `--surface` selection parsing and instruction composition shared with the Copilot CLI extension, reusing the surface registry. Exposes `isSearchSurfaceEnabled` so the extension can gate its search-policy deny hooks on the same surface that advertises the search primitives. |
 | `src\mcp\searchPolicy.ts` | Pure search-policy decision logic (`evaluatePreToolUse`, `evaluatePermissionRequest`, and the blocking predicates) that the extension wires as surface-gated deny hooks, folding the former standalone search-policy extension into Atrium. |
-| `extension\atrium.mjs` | Copilot CLI extension entry that injects the composed instructions as `additionalContext` every turn, since the host does not inject the MCP `instructions` field, and registers the surface-gated search-policy deny hooks. Kept outside `.github\extensions` so it loads only once as a user extension. |
+| `extension\atrium.mjs` | Copilot CLI extension entry that injects the composed instructions as `additionalContext` at session start and on every 20th prompt, with a bounded reminder in between, since the host does not inject the MCP `instructions` field, and registers the surface-gated search-policy deny hooks. Kept outside `.github\extensions` so it loads only once as a user extension. |
 | `scripts\install-extension-shim.mjs` | Installs the extension by writing a redirect shim into the personal Copilot extensions directory. |
 | `src\core\executionQueue.ts` | In-memory max-concurrency limiter for child process starts. |
 | `src\core\introspect.ts` | Implements `<tool> schema` then `<tool> --help` discovery. |
