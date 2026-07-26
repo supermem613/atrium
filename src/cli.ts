@@ -5,26 +5,25 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { doctorCommand } from "./commands/doctor.js";
-import {
-  mcpFindFilesCommand,
-  mcpGrepCodeCommand,
-  mcpGrepCommand,
-  mcpOperationWaitCommand,
-  mcpReadCommand,
-  mcpRunCommand,
-  mcpSchemaCommand,
-  type McpDebugOptions,
-  type McpFindFilesOptions,
-  type McpGrepCodeOptions,
-  type McpGrepOptions,
-  type McpReadOptions,
-  type McpRunOptions,
+import type {
+  McpDebugOptions,
+  McpFindFilesOptions,
+  McpGrepCodeOptions,
+  McpGrepOptions,
+  McpReadOptions,
+  McpRunOptions,
 } from "./commands/mcpDebug.js";
 import { mcpConfigCommand } from "./commands/mcpConfig.js";
 import { schemaCommand } from "./commands/schema.js";
-import { startAtriumServer } from "./server.js";
 import { contentMaxOptionDescription, fileMaxOptionDescription, parseSurfaceArg, surfaceOptionDescription } from "./mcp/surfaces.js";
 import { updateCommand } from "./commands/update.js";
+
+// The MCP SDK costs roughly 400ms to import. ./commands/mcpDebug.js and
+// ./server.js are the only modules that pull it in, so importing them eagerly
+// charged that cost to every invocation including `atrium --version`. Loading
+// them inside the action handlers instead keeps the SDK off the startup path
+// and recovers about 630ms per invocation. The type imports above are erased at
+// compile time and cost nothing. Keep these loads dynamic.
 
 // Read version from package.json so it stays in sync with the published version.
 const pkgPath = join(dirname(fileURLToPath(import.meta.url)), "..", "package.json");
@@ -59,13 +58,19 @@ program
   .command("mcp-server")
   .description("Start the Atrium stdio MCP server")
   .option("--surface <names>", surfaceOptionDescription, parseSurfaceArg)
-  .action((options: { surface?: string[] }) => startAtriumServer({ surfaces: options.surface }));
+  .action(async (options: { surface?: string[] }) => {
+    const { startAtriumServer } = await import("./server.js");
+    return startAtriumServer({ surfaces: options.surface });
+  });
 
 program
   .command("mcp-schema <tool>")
   .description("Investigate an MCP schema call locally; rerun with --perf for a CLI-only detailed trace")
   .option("--perf", "Emit a CLI-only detailed report for this single CLI rerun. Normal MCP responses stay token-light")
-  .action((tool: string, options: McpDebugOptions) => mcpSchemaCommand(tool, options));
+  .action(async (tool: string, options: McpDebugOptions) => {
+    const { mcpSchemaCommand } = await import("./commands/mcpDebug.js");
+    return mcpSchemaCommand(tool, options);
+  });
 
 program
   .command("mcp-run <tool> [args...]")
@@ -75,13 +80,19 @@ program
   .option("--stdin-file <path>", "Read stdin content from a UTF-8 file")
   .option("--request-timeout-ms <ms>", "MCP client request timeout in milliseconds. Debug command only")
   .option("--perf", "Emit a CLI-only detailed report for this single CLI rerun. Normal MCP responses stay token-light")
-  .action((tool: string, args: string[] | undefined, options: McpRunOptions) => mcpRunCommand(tool, args, options));
+  .action(async (tool: string, args: string[] | undefined, options: McpRunOptions) => {
+    const { mcpRunCommand } = await import("./commands/mcpDebug.js");
+    return mcpRunCommand(tool, args, options);
+  });
 
 program
   .command("mcp-operation-wait <operationId>")
   .description("Investigate a durable operation wait locally; rerun with --perf for a CLI-only detailed trace")
   .option("--perf", "Emit a CLI-only detailed report for this single CLI rerun. Normal MCP responses stay token-light")
-  .action((operationId: string, options: McpDebugOptions) => mcpOperationWaitCommand(operationId, options));
+  .action(async (operationId: string, options: McpDebugOptions) => {
+    const { mcpOperationWaitCommand } = await import("./commands/mcpDebug.js");
+    return mcpOperationWaitCommand(operationId, options);
+  });
 
 program
   .command("mcp-read <path>")
@@ -92,7 +103,10 @@ program
   .option("--count-bytes <bytes>", "Maximum number of bytes to read")
   .option("--snapshot <token>", "Snapshot token for byte-page continuation rejection")
   .option("--perf", "Emit a CLI-only detailed report for this single CLI rerun. Normal MCP responses stay token-light")
-  .action((path: string, options: McpReadOptions) => mcpReadCommand(path, options));
+  .action(async (path: string, options: McpReadOptions) => {
+    const { mcpReadCommand } = await import("./commands/mcpDebug.js");
+    return mcpReadCommand(path, options);
+  });
 
 program
   .command("mcp-find-files <root>")
@@ -101,7 +115,10 @@ program
   .option("--exclude <pattern>", "Glob pattern to exclude")
   .option("--max <count>", fileMaxOptionDescription)
   .option("--perf", "Emit a CLI-only detailed report for this single CLI rerun. Normal MCP responses stay token-light")
-  .action((root: string, options: McpFindFilesOptions) => mcpFindFilesCommand(root, options));
+  .action(async (root: string, options: McpFindFilesOptions) => {
+    const { mcpFindFilesCommand } = await import("./commands/mcpDebug.js");
+    return mcpFindFilesCommand(root, options);
+  });
 
 program
   .command("mcp-grep <root>")
@@ -112,7 +129,10 @@ program
   .option("--exclude <pattern>", "Glob pattern to exclude")
   .option("--max <count>", contentMaxOptionDescription)
   .option("--perf", "Emit a CLI-only detailed report for this single CLI rerun. Normal MCP responses stay token-light")
-  .action((root: string, options: McpGrepOptions) => mcpGrepCommand(root, options));
+  .action(async (root: string, options: McpGrepOptions) => {
+    const { mcpGrepCommand } = await import("./commands/mcpDebug.js");
+    return mcpGrepCommand(root, options);
+  });
 
 program
   .command("mcp-grep-code <root>")
@@ -123,7 +143,10 @@ program
   .option("--exclude <pattern>", "Glob pattern to exclude")
   .option("--max <count>", contentMaxOptionDescription)
   .option("--perf", "Emit a CLI-only detailed report for this single CLI rerun. Normal MCP responses stay token-light")
-  .action((root: string, options: McpGrepCodeOptions) => mcpGrepCodeCommand(root, options));
+  .action(async (root: string, options: McpGrepCodeOptions) => {
+    const { mcpGrepCodeCommand } = await import("./commands/mcpDebug.js");
+    return mcpGrepCodeCommand(root, options);
+  });
 
 program
   .command("update")
