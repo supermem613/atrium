@@ -2,8 +2,9 @@ import { mkdir, readFile, rename, rm, watch, writeFile } from "node:fs/promises"
 import { dirname, join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { setImmediate as waitForImmediate } from "node:timers/promises";
+import { OutputValue } from "./artifacts.js";
 import { sanitizePerfAttributes } from "./perf.js";
-import { ProgressWaitRegistration, RunExecutableInput, RunningExecutable, RunningExecutableProgress } from "./runner.js";
+import { RunExecutableInput, RunningExecutable, RunningExecutableProgress } from "./runner.js";
 import { atriumTempPath } from "./tempPaths.js";
 
 type BackgroundRunStatus = "running" | "completed" | "failed";
@@ -28,12 +29,11 @@ export interface BackgroundRunHandle {
   startedAt: string;
   nextCheck: OperationNextCheck;
   message: string;
-  stdout?: string;
-  stderr?: string;
-  progress?: RunningExecutableProgress;
+  stdoutBytes?: number;
+  stderrBytes?: number;
 }
 
-export interface BackgroundRunSnapshot {
+export interface BackgroundRunSnapshot extends Record<string, unknown> {
   ok: boolean;
   status: BackgroundRunStatus;
   operationId: string;
@@ -47,9 +47,10 @@ export interface BackgroundRunSnapshot {
   };
   nextCheck?: OperationNextCheck;
   message?: string;
-  stdout?: string;
-  stderr?: string;
-  progress?: RunningExecutableProgress;
+  stdout?: OutputValue;
+  stderr?: OutputValue;
+  stdoutBytes?: number;
+  stderrBytes?: number;
 }
 
 export interface BackgroundRunWaitOptions {
@@ -58,7 +59,7 @@ export interface BackgroundRunWaitOptions {
 
 export type BackgroundRunWaitResult = BackgroundRunSnapshot | BackgroundRunWaitContinue;
 
-export interface BackgroundRunWaitContinue {
+export interface BackgroundRunWaitContinue extends Record<string, unknown> {
   ok: true;
   status: "continue";
   operationId: string;
@@ -68,9 +69,8 @@ export interface BackgroundRunWaitContinue {
   mustReissueWait: true;
   nextCheck: OperationNextCheck;
   message: string;
-  stdout?: string;
-  stderr?: string;
-  progress?: RunningExecutableProgress;
+  stdoutBytes?: number;
+  stderrBytes?: number;
 }
 
 interface BackgroundRunRecord {
@@ -85,10 +85,6 @@ interface BackgroundRunRecord {
     message: string;
   };
   progress: RunningExecutableProgress;
-  progressRevision: number;
-  lastDeliveredProgressRevision: number;
-  waitForProgressUpdate: (lastRevision: number) => ProgressWaitRegistration;
-  getProgressRevision: () => number;
   syncProgress: () => void;
   completion: Promise<void>;
 }
@@ -98,8 +94,6 @@ const runs = new Map<string, BackgroundRunRecord>();
 export interface RunningBackgroundTask {
   startedAt: string;
   progress?: Readonly<RunningExecutableProgress>;
-  progressRevision?: number;
-  waitForProgressUpdate?(lastRevision: number): ProgressWaitRegistration;
   result: Promise<unknown>;
 }
 
@@ -113,24 +107,16 @@ export async function adoptBackgroundRun(running: RunningExecutable | RunningBac
     startedAt: running.startedAt,
     status: "running",
     progress: createProgressSnapshot(),
-    progressRevision: isRunningExecutable(running) ? running.progressRevision : 0,
-    lastDeliveredProgressRevision: 0,
-    waitForProgressUpdate: () => createResolvedProgressWaitRegistration(),
-    getProgressRevision: () => 0,
     syncProgress: () => {},
     completion: Promise.resolve(),
   };
   record.progress = isRunningExecutable(running) ? copyProgressSnapshot(running.progress) : createProgressSnapshot();
-  record.progressRevision = isRunningExecutable(running) ? running.progressRevision : 0;
-  record.waitForProgressUpdate = isRunningExecutable(running) ? running.waitForProgressUpdate.bind(running) : () => createResolvedProgressWaitRegistration();
-  record.getProgressRevision = isRunningExecutable(running) ? () => running.progressRevision : () => 0;
   record.syncProgress = () => {
     if (!isRunningExecutable(running)) {
       return;
     }
 
     record.progress = copyProgressSnapshot(running.progress);
-    record.progressRevision = running.progressRevision;
   };
   await mkdir(directory, { recursive: true });
   runs.set(operationId, record);
@@ -174,22 +160,13 @@ export async function waitForBackgroundRun(operationId: string, options: Backgro
   }
 
   record.syncProgress();
-  const currentRevision = record.getProgressRevision();
-  if (currentRevision > record.lastDeliveredProgressRevision) {
-    record.progressRevision = currentRevision;
-    record.lastDeliveredProgressRevision = currentRevision;
-    return toContinue(toSnapshot(record));
-  }
-
-  const waitForNextEvent = waitForNextBackgroundEvent(record, waitMs, record.lastDeliveredProgressRevision);
+  const waitForNextEvent = waitForNextBackgroundEvent(record, waitMs);
   await waitForNextEvent;
   if (record.status !== "running") {
     return toSnapshot(record);
   }
 
   record.syncProgress();
-  record.progressRevision = record.getProgressRevision();
-  record.lastDeliveredProgressRevision = record.progressRevision;
   return toContinue(toSnapshot(record));
 }
 
@@ -304,11 +281,18 @@ function toHandle(record: BackgroundRunRecord): BackgroundRunHandle {
     startedAt: record.startedAt,
     nextCheck: nextCheck(record.operationId),
     message: runningMessage(),
-    ...(hasProgress(record.progress) ? { stdout: record.progress.stdout, stderr: record.progress.stderr, progress: copyProgressSnapshot(record.progress) } : {}),
+    stdoutBytes: record.progress.stdoutBytes,
+    stderrBytes: record.progress.stderrBytes,
   };
 }
 
 function toSnapshot(record: BackgroundRunRecord): BackgroundRunSnapshot {
+  const outputValue = typeof record.result === "object" && record.result !== null
+    ? (record.result as { stdout?: OutputValue; stderr?: OutputValue }).stdout
+    : undefined;
+  const errorValue = typeof record.result === "object" && record.result !== null
+    ? (record.result as { stdout?: OutputValue; stderr?: OutputValue }).stderr
+    : undefined;
   const snapshot: BackgroundRunSnapshot = {
     ok: record.status !== "failed",
     status: record.status,
@@ -318,7 +302,6 @@ function toSnapshot(record: BackgroundRunRecord): BackgroundRunSnapshot {
     completedAt: record.completedAt,
     result: record.result,
     error: record.error,
-    ...(hasProgress(record.progress) ? { stdout: record.progress.stdout, stderr: record.progress.stderr, progress: copyProgressSnapshot(record.progress) } : {}),
   };
 
   if (record.status === "running") {
@@ -326,10 +309,16 @@ function toSnapshot(record: BackgroundRunRecord): BackgroundRunSnapshot {
       ...snapshot,
       nextCheck: nextCheck(record.operationId),
       message: runningMessage(),
+      stdoutBytes: record.progress.stdoutBytes,
+      stderrBytes: record.progress.stderrBytes,
     };
   }
 
-  return snapshot;
+  return {
+    ...snapshot,
+    stdout: outputValue,
+    stderr: errorValue,
+  };
 }
 
 async function readPersistedSnapshot(operationId: string): Promise<BackgroundRunSnapshot> {
@@ -357,7 +346,7 @@ async function readSnapshotPath(operationId: string, path: string): Promise<Back
   return unknownRun(operationId, path, "Persisted background run snapshot is malformed.");
 }
 
-type PersistedSnapshot = Partial<BackgroundRunSnapshot> & { runId?: string };
+type PersistedSnapshot = Partial<BackgroundRunSnapshot> & { runId?: string; progress?: RunningExecutableProgress };
 
 function normalizePersistedSnapshot(value: PersistedSnapshot): BackgroundRunSnapshot | undefined {
   if (!isPersistedSnapshotLike(value)) {
@@ -366,6 +355,16 @@ function normalizePersistedSnapshot(value: PersistedSnapshot): BackgroundRunSnap
 
   // Legacy snapshots persisted only runId before operationId became the single id.
   const operationId = value.operationId ?? value.runId ?? "";
+  const stdoutBytes = typeof value.stdoutBytes === "number"
+    ? value.stdoutBytes
+    : value.progress === undefined
+      ? undefined
+      : Buffer.byteLength(value.progress.stdout ?? "", "utf8");
+  const stderrBytes = typeof value.stderrBytes === "number"
+    ? value.stderrBytes
+    : value.progress === undefined
+      ? undefined
+      : Buffer.byteLength(value.progress.stderr ?? "", "utf8");
   const snapshot: BackgroundRunSnapshot = {
     ok: value.ok ?? value.status !== "failed",
     status: value.status,
@@ -375,7 +374,8 @@ function normalizePersistedSnapshot(value: PersistedSnapshot): BackgroundRunSnap
     completedAt: value.completedAt,
     result: value.result,
     error: value.error,
-    ...(hasProgress(value.progress) ? { stdout: value.progress.stdout, stderr: value.progress.stderr, progress: copyProgressSnapshot(value.progress) } : {}),
+    ...(typeof stdoutBytes === "number" ? { stdoutBytes } : {}),
+    ...(typeof stderrBytes === "number" ? { stderrBytes } : {}),
   };
 
   if (value.status === "running") {
@@ -427,49 +427,32 @@ function toContinue(snapshot: BackgroundRunSnapshot): BackgroundRunWaitContinue 
     mustReissueWait: true,
     nextCheck: nextCheck(snapshot.operationId),
     message: runningMessage(),
-    ...(hasProgress(snapshot.progress) ? { stdout: snapshot.progress.stdout, stderr: snapshot.progress.stderr, progress: copyProgressSnapshot(snapshot.progress) } : {}),
+    stdoutBytes: snapshot.stdoutBytes ?? 0,
+    stderrBytes: snapshot.stderrBytes ?? 0,
   };
 }
 
-async function waitForNextBackgroundEvent(record: BackgroundRunRecord, timeoutMs: number, lastRevision: number): Promise<void> {
+async function waitForNextBackgroundEvent(record: BackgroundRunRecord, timeoutMs: number): Promise<void> {
   let timeoutHandle: NodeJS.Timeout | undefined;
-  const registration = record.waitForProgressUpdate(lastRevision);
-  const progressPromise = registration.promise;
   const deadlinePromise = new Promise<"timeout">((resolve) => {
     timeoutHandle = setTimeout(() => resolve("timeout"), timeoutMs);
   });
 
   try {
     const event = await Promise.race([
-      progressPromise.then(() => "progress" as const),
       record.completion.then(() => "completion" as const),
       deadlinePromise,
     ]);
 
     record.syncProgress();
-    if (event === "progress") {
-      record.progressRevision = record.getProgressRevision();
-      return;
-    }
-
     if (event === "completion") {
-      record.progressRevision = record.getProgressRevision();
-      return;
-    }
-
-    const currentRevision = record.getProgressRevision();
-    if (currentRevision > lastRevision) {
-      record.progressRevision = currentRevision;
       return;
     }
   } finally {
     if (timeoutHandle !== undefined) {
       clearTimeout(timeoutHandle);
     }
-    registration.cancel();
   }
-
-  record.progressRevision = record.getProgressRevision();
 }
 
 function unknownRun(operationId: string, resultPath: string, cause: string): BackgroundRunSnapshot {
@@ -490,14 +473,15 @@ function isRunningExecutable(running: RunningExecutable | RunningBackgroundTask)
   return typeof running === "object"
     && running !== null
     && "progress" in running
-    && typeof (running as RunningExecutable).progressRevision === "number"
-    && typeof (running as RunningExecutable).waitForProgressUpdate === "function";
+    && running.progress !== undefined;
 }
 
 function createProgressSnapshot(): RunningExecutableProgress {
   return {
     stdout: "",
     stderr: "",
+    stdoutBytes: 0,
+    stderrBytes: 0,
   };
 }
 
@@ -505,17 +489,8 @@ function copyProgressSnapshot(progress: Readonly<RunningExecutableProgress>): Ru
   return {
     stdout: progress.stdout,
     stderr: progress.stderr,
-  };
-}
-
-function hasProgress(progress: RunningExecutableProgress | undefined): progress is RunningExecutableProgress {
-  return progress !== undefined && (progress.stdout.length > 0 || progress.stderr.length > 0);
-}
-
-function createResolvedProgressWaitRegistration(): ProgressWaitRegistration {
-  return {
-    promise: Promise.resolve(),
-    cancel() {},
+    stdoutBytes: progress.stdoutBytes,
+    stderrBytes: progress.stderrBytes,
   };
 }
 

@@ -27,18 +27,13 @@ export interface RunExecutableInput {
 export interface RunningExecutableProgress {
   stdout: string;
   stderr: string;
-}
-
-export interface ProgressWaitRegistration {
-  promise: Promise<void>;
-  cancel(): void;
+  stdoutBytes: number;
+  stderrBytes: number;
 }
 
 export interface RunningExecutable {
   startedAt: string;
   progress: Readonly<RunningExecutableProgress>;
-  progressRevision: number;
-  waitForProgressUpdate(lastRevision: number): ProgressWaitRegistration;
   result: Promise<RunExecutableResult>;
 }
 
@@ -108,18 +103,8 @@ interface PreparedSpawn {
   windowsVerbatimArguments?: boolean;
 }
 
-interface ManagedProgressWaitRegistration {
-  lastRevision: number;
-  settled: boolean;
-  resolve(): void;
-  cancel(): void;
-}
-
 interface RunningExecutableProgressTracker {
   snapshot: RunningExecutableProgress;
-  revision: number;
-  getActiveWaitRegistrationCount(): number;
-  waitForProgressUpdate(lastRevision: number): ProgressWaitRegistration;
   recordChunk(stream: "stdout" | "stderr", chunk: Buffer): void;
 }
 
@@ -135,29 +120,21 @@ export async function startExecutableRun(input: RunExecutableInput, options: Sta
   const startedAtIso = new Date(startedAt).toISOString();
   const progress = createProgressTracker();
   if (input.tool.trim().length === 0) {
-    return attachProgressWaitDebugHook({
+    return {
       startedAt: startedAtIso,
       get progress() {
         return progress.snapshot;
       },
-      get progressRevision() {
-        return progress.revision;
-      },
-      waitForProgressUpdate: progress.waitForProgressUpdate.bind(progress),
       result: Promise.resolve(failedBeforeSpawn(input, args, stdin, startedAt, "InvalidTool", "Tool name is required.")),
-    }, progress);
+    };
   }
 
   if (isDeniedShell(input.tool)) {
-    return attachProgressWaitDebugHook({
+    return {
       startedAt: startedAtIso,
       get progress() {
         return progress.snapshot;
       },
-      get progressRevision() {
-        return progress.revision;
-      },
-      waitForProgressUpdate: progress.waitForProgressUpdate.bind(progress),
       result: Promise.resolve(failedBeforeSpawn(
         input,
         args,
@@ -166,7 +143,7 @@ export async function startExecutableRun(input: RunExecutableInput, options: Sta
         "DeniedShell",
         `${input.tool} is denied in Atrium.`,
       )),
-    }, progress);
+    };
   }
 
   const timeoutMs = options.timeoutMs ?? input.timeoutMs ?? defaultTimeoutMs;
@@ -208,17 +185,13 @@ export async function startExecutableRun(input: RunExecutableInput, options: Sta
     }
   })();
 
-  return attachProgressWaitDebugHook({
+  return {
     startedAt: startedAtIso,
     get progress() {
       return progress.snapshot;
     },
-    get progressRevision() {
-      return progress.revision;
-    },
-    waitForProgressUpdate: progress.waitForProgressUpdate.bind(progress),
     result,
-  }, progress);
+  };
 }
 
 async function acquireExecutionPermit(executionQueue: ExecutionQueue | false | undefined): Promise<{ metrics: ExecutionQueueMetrics; release(): void } | undefined> {
@@ -308,93 +281,25 @@ function createProgressTracker(): RunningExecutableProgressTracker {
   const snapshot: RunningExecutableProgress = {
     stdout: "",
     stderr: "",
+    stdoutBytes: 0,
+    stderrBytes: 0,
   };
-  let revision = 0;
-  const waiters: ManagedProgressWaitRegistration[] = [];
-
-  function removeWaiter(waiter: ManagedProgressWaitRegistration): void {
-    const index = waiters.indexOf(waiter);
-    if (index >= 0) {
-      waiters.splice(index, 1);
-    }
-  }
 
   return {
     get snapshot() {
       return snapshot;
     },
-    get revision() {
-      return revision;
-    },
-    getActiveWaitRegistrationCount(): number {
-      return waiters.length;
-    },
-    waitForProgressUpdate(lastRevision: number): ProgressWaitRegistration {
-      if (revision > lastRevision) {
-        return createResolvedProgressWaitRegistration();
+    recordChunk(stream: "stdout" | "stderr", chunk: Buffer): void {
+      if (stream === "stdout") {
+        snapshot.stdoutBytes += chunk.byteLength;
+      } else {
+        snapshot.stderrBytes += chunk.byteLength;
       }
 
-      let resolveWaiter!: () => void;
-      const promise = new Promise<void>((resolve) => {
-        resolveWaiter = resolve;
-      });
-      const waiter: ManagedProgressWaitRegistration = {
-        lastRevision,
-        settled: false,
-        resolve: () => {
-          if (waiter.settled) {
-            return;
-          }
-
-          waiter.settled = true;
-          removeWaiter(waiter);
-          resolveWaiter();
-        },
-        cancel: () => {
-          if (waiter.settled) {
-            return;
-          }
-
-          waiter.settled = true;
-          removeWaiter(waiter);
-        },
-      };
-
-      waiters.push(waiter);
-      return {
-        promise,
-        cancel: waiter.cancel,
-      };
-    },
-    recordChunk(stream: "stdout" | "stderr", chunk: Buffer): void {
       const nextValue = `${snapshot[stream]}${chunk.toString("utf8")}`;
       snapshot[stream] = truncateUtf8Output(nextValue, defaultProgressOutputLimitBytes);
-      revision += 1;
-      for (let index = waiters.length - 1; index >= 0; index -= 1) {
-        const waiter = waiters[index];
-        if (waiter.lastRevision < revision) {
-          waiter.resolve();
-        }
-      }
     },
   };
-}
-
-function createResolvedProgressWaitRegistration(): ProgressWaitRegistration {
-  return {
-    promise: Promise.resolve(),
-    cancel() {},
-  };
-}
-
-function attachProgressWaitDebugHook(running: RunningExecutable, tracker: RunningExecutableProgressTracker): RunningExecutable {
-  Object.defineProperty(running, "__debugActiveProgressWaitRegistrationCount", {
-    configurable: true,
-    enumerable: false,
-    value: () => tracker.getActiveWaitRegistrationCount(),
-  });
-
-  return running;
 }
 
 function truncateUtf8Output(value: string, limitBytes: number): string {
