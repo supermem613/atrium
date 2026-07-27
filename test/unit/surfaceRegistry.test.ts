@@ -53,6 +53,7 @@ const GOLDEN_DEFAULT_INSTRUCTIONS = [
   "- The read tool takes a path plus optional startLine/endLine or count for line-mode reads, or startByte/countBytes with an optional snapshot for byte-mode paging. Line numbers are 1-based and positive.",
   "- A successful read returns ok, path, range, meta, content, and nextRead. nextRead is nullable: null means no continuation, otherwise it is the next request to issue.",
   "- If a line-mode selection is oversized, keep the materialized artifact in content and return nextRead targeting content.file with startByte 0, countBytes 8192, and snapshot. Callers follow the continuation in byte mode against the materialized artifact, reconstruct only from page content strings, and stop when nextRead is null.",
+  "- Issue a nextRead continuation by passing its path, startByte, countBytes, and snapshot back to this read tool. There is no separate continuation tool, and nextRead does not name one.",
   "- The top-level path/range/meta continue to describe the original source. No input fields are added, and explicit byte-mode semantics remain unchanged.",
   "- Reads stay inline when the payload fits the output contract; otherwise the tool uses Atrium's {file, bytes} value contract.",
   "- Byte paging uses snapshot as a stale-page continuation guard, and the read rejects continuation after a mutation instead of silently returning stale bytes.",

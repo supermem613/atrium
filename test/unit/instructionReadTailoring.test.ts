@@ -30,4 +30,12 @@ describe("read surface tailoring", () => {
     const text = composed(["core", "search"]);
     assert.equal(text.includes("Read safety:"), false, "read-safety present despite read disabled");
   });
+
+  it("names the read tool as the executor of a nextRead continuation", () => {
+    const text = composed();
+    assert.ok(
+      text.includes("Issue a nextRead continuation by passing its path, startByte, countBytes, and snapshot back to this read tool"),
+      "nextRead does not name the tool that executes it",
+    );
+  });
 });

@@ -23,6 +23,7 @@ const REMINDER_IDENTITY_MARKER = "Atrium guardrails remain in effect";
 const REMINDER_SHELL_MARKER = "Shells are denied";
 const REMINDER_HANDOFF_MARKER = "operation-wait";
 const REMINDER_SEARCH_MARKER = "atrium-grep-code";
+const REMINDER_READ_MARKER = "atrium-read";
 
 describe("extension surface-selection parsing", () => {
   it("treats a missing args vector as the default all-surface server", () => {
@@ -124,6 +125,7 @@ describe("extension hook injection contract", () => {
       assert.ok(additionalContext.includes(REMINDER_SHELL_MARKER));
       assert.ok(additionalContext.includes(REMINDER_HANDOFF_MARKER));
       assert.ok(additionalContext.includes(REMINDER_SEARCH_MARKER));
+      assert.ok(additionalContext.includes(REMINDER_READ_MARKER));
     }
   });
 
@@ -150,5 +152,24 @@ describe("extension hook injection contract", () => {
     assert.ok(additionalContext.includes("surfaces: core, read"));
     assert.ok(additionalContext.includes(REMINDER_SHELL_MARKER));
     assert.ok(additionalContext.length <= REMINDER_MAX_CHARS);
+  });
+
+  it("keeps the file-reading mapping in the reminder that survives compaction", async () => {
+    const hooks = extensionInstructions.createInstructionHooks(["core", "read"]);
+    const { additionalContext } = await hooks.onUserPromptSubmitted();
+
+    assert.ok(
+      additionalContext.includes("Use atrium-read instead of view or any other built-in file-reading tool."),
+      "the reminder must map file reads to atrium-read",
+    );
+    assert.ok(additionalContext.length <= REMINDER_MAX_CHARS);
+  });
+
+  it("drops the file-reading mapping from the reminder when the read surface is off", async () => {
+    const hooks = extensionInstructions.createInstructionHooks(["core", "search"]);
+    const { additionalContext } = await hooks.onUserPromptSubmitted();
+
+    assert.equal(additionalContext.includes(REMINDER_READ_MARKER), false);
+    assert.ok(additionalContext.includes(REMINDER_SEARCH_MARKER));
   });
 });

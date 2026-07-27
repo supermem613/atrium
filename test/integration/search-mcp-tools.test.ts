@@ -300,6 +300,74 @@ describe("search MCP tools", () => {
       await serverTransport.close();
     }
   });
+
+  it("names the offending element when a multi-pattern regex query cannot compile", async () => {
+    const fakeClient = new FakeXrayClient();
+    const server = createAtriumServer({ searchClient: fakeClient });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const client = new Client({ name: "test-client", version: "1.0.0" });
+
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+
+    try {
+      const parsed = await callJson(client, "grep", {
+        root: "/tmp/x",
+        query: ["function partitionGlobalArgs", "partitionGlobalArgs("],
+        regex: true,
+      });
+
+      assert.equal(parsed.ok, false);
+      const error = parsed.error as Record<string, unknown>;
+      assert.equal(error.code, "InvalidPatternElement");
+      assert.equal(error.index, 1);
+      assert.equal(error.pattern, "partitionGlobalArgs(");
+      assert.match(String(error.message), /unclosed group/i);
+      assert.equal(fakeClient.calls.length, 0, "a rejected query must never reach the search engine");
+
+      // Rust-dialect syntax that JavaScript's RegExp rejects must still route
+      // through untouched, proving the guard is structural rather than a
+      // JavaScript regex parser standing in for the native engine.
+      await callJson(client, "grep", { root: "/tmp/x", query: ["(?i)alpha", "beta[0-9]"], regex: true });
+      assert.deepEqual(fakeClient.calls.at(-1), {
+        command: "search",
+        root: "/tmp/x",
+        query: "(?i)alpha|beta[0-9]",
+        regex: true,
+        all: true,
+        timeoutMs: 59_000,
+      });
+
+      // Extended mode makes # start a comment, so parentheses inside it are not
+      // group delimiters. The guard cannot read extended mode, so it must defer
+      // to the engine rather than rejecting a pattern Rust would compile.
+      await callJson(client, "grep", { root: "/tmp/x", query: ["(?x)a #(open", "beta"], regex: true });
+      assert.deepEqual(fakeClient.calls.at(-1), {
+        command: "search",
+        root: "/tmp/x",
+        query: "(?x)a #(open|beta",
+        regex: true,
+        all: true,
+        timeoutMs: 59_000,
+      });
+
+      // Rust allows one character class to nest inside another, which makes the
+      // parenthesis here a class member rather than a group. The guard cannot
+      // model nested classes, so it must defer to the engine.
+      await callJson(client, "grep", { root: "/tmp/x", query: ["[a[b](]", "beta"], regex: true });
+      assert.deepEqual(fakeClient.calls.at(-1), {
+        command: "search",
+        root: "/tmp/x",
+        query: "[a[b](]|beta",
+        regex: true,
+        all: true,
+        timeoutMs: 59_000,
+      });
+    } finally {
+      await client.close();
+      await serverTransport.close();
+    }
+  });
 });
 
 async function waitForOperation(client: Client, operationId: unknown): Promise<Record<string, unknown>> {
