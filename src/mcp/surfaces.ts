@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { isAbsolute, join } from "node:path";
 import type { McpServer, ToolCallback } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { introspectTool } from "../core/introspect.js";
+import { introspectTool, type IntrospectToolResult } from "../core/introspect.js";
 import { adoptBackgroundRun, waitForBackgroundRun, withLongRunningDefault } from "../core/backgroundRuns.js";
 import { RunExecutableInput, RunExecutableResult, startExecutableRun } from "../core/runner.js";
 import { ExecutionQueue } from "../core/executionQueue.js";
@@ -36,6 +36,7 @@ export interface ToolRegistration {
   name: string;
   title: string;
   description: string;
+  inputSchema: z.ZodRawShape;
   register: (server: McpServer) => void;
 }
 
@@ -64,6 +65,7 @@ function defineTool<Args extends z.ZodRawShape>(
     name,
     title: config.title,
     description: config.description,
+    inputSchema: config.inputSchema,
     register: (server) => {
       server.registerTool(name, config, handler);
     },
@@ -101,6 +103,100 @@ const findFilesVerb: SearchVerbSpec = {
 // literal patterns are combined into one native-search alternation.
 function escapeRegExp(pattern: string): string {
   return pattern.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+interface PatternDefect {
+  index: number;
+  pattern: string;
+  reason: string;
+}
+
+// Reports the first array element that no regex dialect can compile. Only
+// structural defects are detected, because the native engine is Rust's regex
+// crate and a JavaScript RegExp parser would reject valid Rust syntax such as
+// the inline flags in (?i)alpha. Balanced delimiters and escapes are invalid
+// everywhere, so this stays dialect-independent and never rejects a pattern the
+// engine would have accepted.
+function findPatternDefect(patterns: readonly string[]): PatternDefect | null {
+  for (let index = 0; index < patterns.length; index += 1) {
+    const reason = describeStructuralDefect(patterns[index]);
+    if (reason !== null) {
+      return { index, pattern: patterns[index], reason };
+    }
+  }
+  return null;
+}
+
+// Extended mode makes # start a comment, so parentheses inside it are not group
+// delimiters. This scanner cannot read flags, so a pattern that may enable
+// extended mode is handed to the engine unchecked. That trades a wrong
+// rejection for a slower correct error, the only safe direction for a guard.
+const mayEnableExtendedMode = /\(\?[a-zA-Z-]*x/;
+
+function describeStructuralDefect(pattern: string): string | null {
+  if (mayEnableExtendedMode.test(pattern)) {
+    return null;
+  }
+
+  let groupDepth = 0;
+  let classOpen = false;
+  let classContentStart = 0;
+
+  for (let position = 0; position < pattern.length; position += 1) {
+    const character = pattern[position];
+
+    if (character === "\\") {
+      if (position === pattern.length - 1) {
+        return "trailing backslash escapes nothing";
+      }
+      position += 1;
+      continue;
+    }
+
+    if (classOpen) {
+      // Rust nests one class inside another, while other dialects read this [
+      // as a literal. The two readings disagree about which ] closes the outer
+      // class, so stop judging the pattern and let the engine decide.
+      if (character === "[") {
+        return null;
+      }
+      if (character === "]" && position >= classContentStart) {
+        classOpen = false;
+      }
+      continue;
+    }
+
+    if (character === "[") {
+      classOpen = true;
+      classContentStart = pattern[position + 1] === "^" ? position + 2 : position + 1;
+      // A ] in the leading position is a literal in permissive dialects, so it
+      // must not be treated as the closing bracket.
+      if (pattern[classContentStart] === "]") {
+        classContentStart += 1;
+      }
+      continue;
+    }
+
+    if (character === "(") {
+      groupDepth += 1;
+      continue;
+    }
+
+    if (character === ")") {
+      if (groupDepth === 0) {
+        return "unmatched closing parenthesis";
+      }
+      groupDepth -= 1;
+    }
+  }
+
+  if (classOpen) {
+    return "unclosed character class";
+  }
+  if (groupDepth > 0) {
+    return "unclosed group";
+  }
+  return null;
 }
 
 // Resolves the query union plus regex into one native-search query and whether
@@ -193,18 +289,135 @@ function stripPerfMetadata<T>(value: T): T {
   return rest as T;
 }
 
+export interface AtriumVerbDescription {
+  name: string;
+  title: string;
+  description: string;
+  parameters: Array<{ name: string; required: boolean; description: string }>;
+}
+
+export interface AtriumVerbIntrospection {
+  ok: true;
+  tool: string;
+  timingMs: number;
+  source: "atrium";
+  data: AtriumVerbDescription;
+  // Set when a bare name also named an executable that failed to describe
+  // itself. Callers see both readings instead of one being silently dropped.
+  executableError?: { code: string; message: string };
+}
+
+// Names that address an Atrium verb rather than an executable on PATH. Both the
+// hyphenated tool name the host advertises and the dotted server-qualified name
+// used in handoff payloads resolve to the same verb.
+const atriumVerbPrefixes = ["atrium-", "atrium."] as const;
+
+let cachedVerbCatalog: Map<string, AtriumVerbDescription> | null = null;
+
+// Built lazily from the same registry the server registers, so a verb can never
+// describe itself differently from how it is exposed. The stub dependencies are
+// never invoked because only registration metadata is read.
+function atriumVerbCatalog(): Map<string, AtriumVerbDescription> {
+  if (cachedVerbCatalog === null) {
+    cachedVerbCatalog = new Map();
+    for (const surface of createSurfaces({
+      executionOptions: {},
+      backgroundHandoffAfterMs: 0,
+      waitTimeoutMs: 0,
+      searchClient: { run: async () => ({ ok: false }) },
+    })) {
+      for (const tool of surface.tools) {
+        cachedVerbCatalog.set(tool.name, {
+          name: tool.name,
+          title: tool.title,
+          description: tool.description,
+          parameters: Object.entries(tool.inputSchema).map(([name, schema]) => ({
+            name,
+            required: !schema.isOptional(),
+            description: schema.description ?? "",
+          })),
+        });
+      }
+    }
+  }
+  return cachedVerbCatalog;
+}
+
+function lookupNamespacedVerb(tool: string): AtriumVerbDescription | undefined {
+  for (const prefix of atriumVerbPrefixes) {
+    if (tool.startsWith(prefix)) {
+      return atriumVerbCatalog().get(tool.slice(prefix.length));
+    }
+  }
+  return undefined;
+}
+
+export interface DescribeToolDeps {
+  introspect?: (tool: string, options: SurfaceDeps["executionOptions"]) => Promise<IntrospectToolResult>;
+}
+
+// Describes an Atrium verb or an external executable. A namespaced name is
+// answered from the registry without spawning anything. A bare name is spawned
+// first so a real binary is never shadowed by a verb that happens to share its
+// name. When that spawn fails and a verb shares the name, the answer carries
+// the verb and the executable's failure together. Deciding which of the two the
+// caller meant would require reimplementing the platform's own executable
+// lookup, and every approximation of it can hide a real binary, so nothing is
+// discarded and the caller sees both readings.
+export async function describeToolOrAtriumVerb(
+  tool: string,
+  executionOptions: SurfaceDeps["executionOptions"],
+  deps: DescribeToolDeps = {},
+): Promise<IntrospectToolResult | AtriumVerbIntrospection> {
+  const introspect = deps.introspect ?? introspectTool;
+  const startedAt = Date.now();
+  const namespaced = lookupNamespacedVerb(tool);
+  if (namespaced !== undefined) {
+    return { ok: true, tool, timingMs: Date.now() - startedAt, source: "atrium", data: namespaced };
+  }
+
+  const introspected = await introspect(tool, executionOptions);
+  if (introspected.ok) {
+    return introspected;
+  }
+
+  const bare = atriumVerbCatalog().get(tool);
+  if (bare !== undefined) {
+    return {
+      ok: true,
+      tool,
+      timingMs: Date.now() - startedAt,
+      source: "atrium",
+      data: bare,
+      executableError: {
+        code: introspected.error?.code ?? "IntrospectionFailed",
+        message: `${introspected.error?.message ?? "Introspection failed."} This name also matches an Atrium verb, described above. Pass atrium-${tool} to address the verb unambiguously.`,
+      },
+    };
+  }
+
+  const verbNames = [...atriumVerbCatalog().keys()].map((name) => `atrium-${name}`).join(", ");
+  return {
+    ...introspected,
+    error: {
+      code: introspected.error?.code ?? "IntrospectionFailed",
+      message: `${introspected.error?.message ?? "Introspection failed."} The tool field names an external executable on PATH or an executable path, not an Atrium verb. To describe an Atrium verb instead, pass its namespaced name: ${verbNames}.`,
+    },
+  };
+}
+
 function coreTools(deps: SurfaceDeps): ToolRegistration[] {
   return [
     defineTool(
       "schema",
       {
         title: "Describe a CLI invocation shape",
-        description: "Discover a CLI invocation shape by running `<tool> schema` and parsing JSON. Falls back to `<tool> --help`. Prefer this over scraping help through powershell.",
+        description: "Discover a CLI invocation shape by running `<tool> schema` and parsing JSON. Falls back to `<tool> --help`. Also describes Atrium's own verbs when tool names one, such as atrium-grep or atrium.read. Prefer this over scraping help through powershell.",
         inputSchema: {
-          tool: z.string().min(1).describe("Binary name or executable path to describe."),
+          tool: z.string().min(1).describe("Binary name or executable path to describe, or an Atrium verb such as atrium-grep, atrium-read, or atrium-run."),
         },
       },
-      async ({ tool }) => toolTextResult(await introspectTool(tool, deps.executionOptions)),
+      async ({ tool }) => toolTextResult(await describeToolOrAtriumVerb(tool, deps.executionOptions)),
     ),
     defineTool(
       "run",
@@ -291,6 +504,24 @@ function searchTools(deps: SurfaceDeps): ToolRegistration[] {
         },
       },
       async ({ root, query, regex, path, glob, exclude, max }) => {
+        const patterns = Array.isArray(query) ? query : [query];
+        // Elements are joined into one alternation, so the engine would report a
+        // composite pattern the caller never wrote and name no element. Reject
+        // first and say which element is at fault.
+        if ((regex ?? false) && patterns.length > 1) {
+          const defect = findPatternDefect(patterns);
+          if (defect !== null) {
+            return toolTextResult({
+              ok: false,
+              error: {
+                code: "InvalidPatternElement",
+                index: defect.index,
+                pattern: defect.pattern,
+                message: `Regex pattern at index ${defect.index} of ${patterns.length} is invalid: ${defect.reason}. Atrium joins array elements into one alternation, so the search engine would have reported a composite pattern you never wrote. Fix ${JSON.stringify(defect.pattern)}, or omit regex to match every element literally.`,
+              },
+            });
+          }
+        }
         const resolved = resolveSearchQuery(query, regex ?? false);
         const searchRoot = path === undefined ? root : (isAbsolute(path) ? path : join(root, path));
         return runContentSearch(spec, resolved.query, resolved.regex, searchRoot, glob, exclude, max);
@@ -368,6 +599,7 @@ const readInstructionFragment = [
   "- The read tool takes a path plus optional startLine/endLine or count for line-mode reads, or startByte/countBytes with an optional snapshot for byte-mode paging. Line numbers are 1-based and positive.",
   "- A successful read returns ok, path, range, meta, content, and nextRead. nextRead is nullable: null means no continuation, otherwise it is the next request to issue.",
   "- If a line-mode selection is oversized, keep the materialized artifact in content and return nextRead targeting content.file with startByte 0, countBytes 8192, and snapshot. Callers follow the continuation in byte mode against the materialized artifact, reconstruct only from page content strings, and stop when nextRead is null.",
+  "- Issue a nextRead continuation by passing its path, startByte, countBytes, and snapshot back to this read tool. There is no separate continuation tool, and nextRead does not name one.",
   "- The top-level path/range/meta continue to describe the original source. No input fields are added, and explicit byte-mode semantics remain unchanged.",
   "- Reads stay inline when the payload fits the output contract; otherwise the tool uses Atrium's {file, bytes} value contract.",
   "- Byte paging uses snapshot as a stale-page continuation guard, and the read rejects continuation after a mutation instead of silently returning stale bytes.",

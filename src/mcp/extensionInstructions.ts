@@ -79,6 +79,13 @@ export function isSearchSurfaceEnabled(selection: readonly string[] | undefined)
   return resolveSurfaceSelection(selection).surfaces.includes("search");
 }
 
+// Reports whether the read surface is in the effective selection so the reminder
+// only claims a file-reading replacement when that primitive is actually
+// registered.
+export function isReadSurfaceEnabled(selection: readonly string[] | undefined): boolean {
+  return resolveSurfaceSelection(selection).surfaces.includes("read");
+}
+
 export interface InstructionHookResult {
   additionalContext: string;
 }
@@ -93,6 +100,12 @@ export function composeReminderForSelection(selection: readonly string[] | undef
     "Shells are denied: call the target binary directly with an args vector, never a shell command string.",
     "A run or search that returns status running with an operationId is not a result: reissue operation-wait until terminal.",
   ];
+
+  if (isReadSurfaceEnabled(selection)) {
+    reminderParts.push(
+      "Use atrium-read instead of view or any other built-in file-reading tool.",
+    );
+  }
 
   if (isSearchSurfaceEnabled(selection)) {
     reminderParts.push(
