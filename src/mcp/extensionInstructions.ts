@@ -109,7 +109,7 @@ export function composeReminderForSelection(selection: readonly string[] | undef
 
   if (isSearchSurfaceEnabled(selection)) {
     reminderParts.push(
-      "Use atrium-find-files, atrium-grep, and atrium-grep-code instead of rg, grep, find, findstr, or Select-String.",
+      "Use atrium-find-files, atrium-grep, and atrium-grep-code instead of glob, rg, grep, find, findstr, or Select-String.",
     );
   }
 

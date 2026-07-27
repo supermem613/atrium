@@ -24,6 +24,7 @@ const REMINDER_SHELL_MARKER = "Shells are denied";
 const REMINDER_HANDOFF_MARKER = "operation-wait";
 const REMINDER_SEARCH_MARKER = "atrium-grep-code";
 const REMINDER_READ_MARKER = "atrium-read";
+const REMINDER_SEARCH_GLOB_MARKER = "instead of glob,";
 
 describe("extension surface-selection parsing", () => {
   it("treats a missing args vector as the default all-surface server", () => {
@@ -161,6 +162,17 @@ describe("extension hook injection contract", () => {
     assert.ok(
       additionalContext.includes("Use atrium-read instead of view or any other built-in file-reading tool."),
       "the reminder must map file reads to atrium-read",
+    );
+    assert.ok(additionalContext.length <= REMINDER_MAX_CHARS);
+  });
+
+  it("keeps the path-discovery mapping in the reminder that survives compaction", async () => {
+    const hooks = extensionInstructions.createInstructionHooks(["core", "search"]);
+    const { additionalContext } = await hooks.onUserPromptSubmitted();
+
+    assert.ok(
+      additionalContext.includes(REMINDER_SEARCH_GLOB_MARKER),
+      "the reminder must name the built-in glob tool that find-files replaces",
     );
     assert.ok(additionalContext.length <= REMINDER_MAX_CHARS);
   });
