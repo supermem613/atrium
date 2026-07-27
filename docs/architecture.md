@@ -183,12 +183,15 @@ server-side execution deadlines instead of caller-tuned operation timeouts.
 durable operation handed off by any Atrium tool. If the operation is still
 running after that budget, it returns `status: "continue"`,
 `mustReissueWait: true`, and the same prescriptive `nextCheck` handle. Running
-and continue payloads may include bounded cumulative
-stdout, stderr, and a progress snapshot, while the terminal completed response
-still preserves the final complete result. Each progress update carries a
-monotonic revision, so a later `operation-wait` waits for completion, a newer
-progress revision, or the fixed request-safe window rather than spinning on the
-same snapshot. Once terminal it returns the snapshot with `status:
+and continue payloads carry only `stdoutBytes` and `stderrBytes`,
+cumulative byte counters that act as a liveness signal; they never
+carry the child stdout, the child stderr, or a progress snapshot.
+The child output is delivered exactly once, in the terminal payload,
+under its own inline output cap and `{file, bytes}` spill. A later
+`operation-wait` waits for completion or the fixed request-safe
+window; there is no progress-driven early return, so a chatty child
+no longer shortens the budget. Once terminal it returns the snapshot
+with `status:
 "completed"` or `status: "failed"`, `completedAt`, and the `result` or `error`.
 It recovers from the persisted snapshot at `resultPath` when the handle is no
 longer in server memory. The request-safe response budget does not change the
