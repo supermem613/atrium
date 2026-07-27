@@ -486,12 +486,7 @@ function createProgressSnapshot(): RunningExecutableProgress {
 }
 
 function copyProgressSnapshot(progress: Readonly<RunningExecutableProgress>): RunningExecutableProgress {
-  return {
-    stdout: progress.stdout,
-    stderr: progress.stderr,
-    stdoutBytes: progress.stdoutBytes,
-    stderrBytes: progress.stderrBytes,
-  };
+  return { ...progress };
 }
 
 function createOperationId(): string {
