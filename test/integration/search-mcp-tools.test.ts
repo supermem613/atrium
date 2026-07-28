@@ -368,6 +368,34 @@ describe("search MCP tools", () => {
       await serverTransport.close();
     }
   });
+
+  it("names the offending pattern when a single regex query cannot compile", async () => {
+    const fakeClient = new FakeXrayClient();
+    const server = createAtriumServer({ searchClient: fakeClient });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const client = new Client({ name: "test-client", version: "1.0.0" });
+
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+
+    try {
+      const parsed = await callJson(client, "grep", { root: "/tmp/x", query: "partitionGlobalArgs(", regex: true });
+
+      assert.equal(parsed.ok, false);
+      const error = parsed.error as Record<string, unknown>;
+      assert.equal(error.code, "InvalidPatternElement");
+      assert.equal(error.index, 0);
+      assert.equal(error.pattern, "partitionGlobalArgs(");
+      assert.match(String(error.message), /unclosed group/i);
+      assert.equal(fakeClient.calls.length, 0, "a rejected single pattern must never reach the search engine");
+
+      await callJson(client, "grep", { root: "/tmp/x", query: "(?i)alpha", regex: true });
+      assert.deepEqual(fakeClient.calls.at(-1), { command: "search", root: "/tmp/x", query: "(?i)alpha", regex: true, all: true, timeoutMs: 59_000 });
+    } finally {
+      await client.close();
+      await serverTransport.close();
+    }
+  });
 });
 
 async function waitForOperation(client: Client, operationId: unknown): Promise<Record<string, unknown>> {

@@ -505,10 +505,10 @@ function searchTools(deps: SurfaceDeps): ToolRegistration[] {
       },
       async ({ root, query, regex, path, glob, exclude, max }) => {
         const patterns = Array.isArray(query) ? query : [query];
-        // Elements are joined into one alternation, so the engine would report a
-        // composite pattern the caller never wrote and name no element. Reject
+        // Atrium wraps even a single pattern into a composite before handing it to
+        // the engine, so one pattern needs the same pre-check as an array. Reject
         // first and say which element is at fault.
-        if ((regex ?? false) && patterns.length > 1) {
+        if (regex ?? false) {
           const defect = findPatternDefect(patterns);
           if (defect !== null) {
             return toolTextResult({
@@ -517,7 +517,9 @@ function searchTools(deps: SurfaceDeps): ToolRegistration[] {
                 code: "InvalidPatternElement",
                 index: defect.index,
                 pattern: defect.pattern,
-                message: `Regex pattern at index ${defect.index} of ${patterns.length} is invalid: ${defect.reason}. Atrium joins array elements into one alternation, so the search engine would have reported a composite pattern you never wrote. Fix ${JSON.stringify(defect.pattern)}, or omit regex to match every element literally.`,
+                message: patterns.length === 1
+                  ? `Regex pattern is invalid: ${defect.reason}. Fix ${JSON.stringify(defect.pattern)}, or omit regex to match it literally.`
+                  : `Regex pattern at index ${defect.index} of ${patterns.length} is invalid: ${defect.reason}. Atrium joins array elements into one alternation, so the search engine would have reported a composite pattern you never wrote. Fix ${JSON.stringify(defect.pattern)}, or omit regex to match every element literally.`,
               },
             });
           }
