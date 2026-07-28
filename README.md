@@ -62,7 +62,7 @@ atrium mcp-schema reflux # debug MCP schema through a local MCP client
 atrium mcp-run node -- --version
 atrium mcp-run node -- -e "setTimeout(() => console.log('done'), 90000)"
 atrium mcp-operation-wait <operationId>
-atrium update          # git pull, install dependencies, and rebuild
+atrium update          # pull with sd or git, install dependencies, and rebuild
 ```
 
 ## Connect to Copilot CLI

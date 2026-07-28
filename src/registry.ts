@@ -344,7 +344,7 @@ export const commandSpecs: CommandSpec[] = [
   },
   {
     path: ["update"],
-    summary: "Self-update this atrium checkout with git pull, npm install, and rebuild.",
+    summary: "Self-update this atrium checkout with auto-detected sd or git pull, npm install, and rebuild.",
     effect: "write",
     input: {
       positionals: [],

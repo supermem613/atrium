@@ -11,6 +11,17 @@ type CommandResult = {
   stderr: string;
 };
 
+type SodaEnvelope<TData> = {
+  ok?: boolean;
+  data?: TData;
+  error?: string;
+};
+
+type SodaPullOutcome = {
+  status?: string;
+  worktreeUpdated?: boolean;
+};
+
 export type UpdateDeps = {
   repoRoot?: string;
   isGitRepo?: (dir: string) => boolean;
@@ -40,11 +51,13 @@ function repoRootFromModule(): string {
 }
 
 async function defaultExecCommand(command: string, args: string[], cwd: string): Promise<CommandResult> {
+  // npm and sd are Windows .cmd shims. execFile cannot launch those without a shell after CVE-2024-27980.
+  const needsWindowsShell = process.platform === "win32" && (command === "npm" || command === "sd");
   const result = await execFileAsync(command, args, {
     cwd,
     encoding: "utf8",
     maxBuffer: 64 * 1024 * 1024,
-    shell: command === "npm" && process.platform === "win32",
+    shell: needsWindowsShell,
   });
   return { stdout: String(result.stdout), stderr: String(result.stderr) };
 }
@@ -58,6 +71,55 @@ export function gitPullMadeNoChanges(output: string): boolean {
   return /already up[- ]to[- ]date\.?/i.test(output);
 }
 
+async function isSodaManagedRepo(execCommand: NonNullable<UpdateDeps["execCommand"]>, repoRoot: string): Promise<boolean> {
+  try {
+    const result = await execCommand("sd", ["status"], repoRoot);
+    const envelope = JSON.parse(result.stdout) as SodaEnvelope<{ summary?: { initialized?: boolean } }>;
+    return envelope.ok === true && envelope.data?.summary?.initialized === true;
+  } catch {
+    return false;
+  }
+}
+
+function stdoutFromError(err: unknown): string | undefined {
+  if (typeof err === "object" && err !== null && "stdout" in err) {
+    const stdout = (err as { stdout?: unknown }).stdout;
+    return typeof stdout === "string" ? stdout : undefined;
+  }
+  return undefined;
+}
+
+function parseSodaPull(stdout: string): boolean {
+  const envelope = JSON.parse(stdout) as SodaEnvelope<SodaPullOutcome[]>;
+  if (envelope.ok !== true) {
+    throw new Error(`sd pull failed: ${envelope.error ?? "unknown error"}`);
+  }
+  if (!Array.isArray(envelope.data)) {
+    throw new Error("sd pull failed: missing pull outcomes");
+  }
+  return envelope.data.some((outcome) => outcome.worktreeUpdated === true);
+}
+
+async function pullWithSoda(execCommand: NonNullable<UpdateDeps["execCommand"]>, repoRoot: string): Promise<boolean> {
+  try {
+    const result = await execCommand("sd", ["pull"], repoRoot);
+    return parseSodaPull(result.stdout);
+  } catch (err: unknown) {
+    const stdout = stdoutFromError(err);
+    if (stdout) {
+      try {
+        return parseSodaPull(stdout);
+      } catch (parseErr: unknown) {
+        if (parseErr instanceof Error && parseErr.message.startsWith("sd pull failed:")) {
+          throw parseErr;
+        }
+      }
+    }
+    const detail = err instanceof Error ? err.message : String(err);
+    throw new Error(`sd pull failed: ${detail}`);
+  }
+}
+
 export async function runSelfUpdate(deps: UpdateDeps = {}): Promise<UpdateResult> {
   const repoRoot = deps.repoRoot ?? repoRootFromModule();
   const isGitRepo = deps.isGitRepo ?? defaultIsGitRepo;
@@ -68,9 +130,15 @@ export async function runSelfUpdate(deps: UpdateDeps = {}): Promise<UpdateResult
   }
 
   const beforeRevision = await currentRevision(execCommand, repoRoot);
-  await execCommand("git", ["pull", "--ff-only"], repoRoot);
+  const sodaManaged = await isSodaManagedRepo(execCommand, repoRoot);
+  let pulled = false;
+  if (sodaManaged) {
+    pulled = await pullWithSoda(execCommand, repoRoot);
+  } else {
+    await execCommand("git", ["pull", "--ff-only"], repoRoot);
+  }
   const afterRevision = await currentRevision(execCommand, repoRoot);
-  const alreadyUpToDate = beforeRevision === afterRevision;
+  const alreadyUpToDate = sodaManaged ? !pulled : beforeRevision === afterRevision;
 
   if (alreadyUpToDate) {
     return {

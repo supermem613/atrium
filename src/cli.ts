@@ -150,7 +150,7 @@ program
 
 program
   .command("update")
-  .description("Self-update: git pull, npm install, and rebuild atrium")
+  .description("Self-update: pull with sd or git, npm install, and rebuild atrium")
   .option("--json", "Emit machine-readable JSON instead of human output")
   .action(updateCommand);
 
