@@ -279,29 +279,45 @@ For the CLI-driven workflow for investigating a single MCP verb's performance, s
 ## Development
 
 ```bash
-npm run build               # build native addon if missing, then tsc -> dist/
+npm run build               # build the project and compile the native addon if it is missing, then emit dist/
 npm run build:native        # force-rebuild the native search addon (cargo)
-npm run lint                # type-check (src + test)
-npm test                    # all tests
-npm run test:unit           # unit only
-npm run test:integration    # integration only
+npm run lint                # run the ESLint, src type-check, and test type-check suites
+npm run lint:eslint         # lint src/ and test/
+npm run lint:src            # type-check src/
+npm run lint:test           # type-check test/
+npm run test                # run all tests
+npm run test:unit           # run the unit tests
+npm run test:integration    # run the integration tests
 npm run benchmark           # compare direct, PowerShell-wrapped, and Atrium MCP calls
 npm run clean               # remove dist/
 ```
 
 CI runs on Ubuntu + Windows via GitHub Actions (`.github/workflows/ci.yml`),
-caching the Rust build with `Swatinem/rust-cache` and pinning `actions/checkout`
-and `actions/setup-node` at v5.
+with an addon cache for the native addon. The cache key covers the platform,
+the Rust toolchain version, and the native addon crate inputs; only an exact
+key match restores it, and on a hit `npm run build` can skip the native
+compile.
 
-The test runner (`test/run.mjs`) runs each test file in its own child process,
-one file at a time. Serial execution keeps the timing-sensitive perf and
-background-run tests stable on the 4-core Windows CI runners, where running
-files in parallel oversubscribed the CPU and made them flake. Each child gets a
-sandboxed `HOME` so tests cannot read your real `~/.atrium/` state; set
-`ATRIUM_TEST_REAL_HOME=1` to opt out. Per-test time budgets live in
-[`test/perf-budgets.json`](test/perf-budgets.json) (`defaultTestMs`,
-`slowThresholdMs`, and per-test `maxMs` overrides matched by `file` and
-`nameIncludes`); a test that exceeds its budget fails the run. Every run writes a
+The test runner (`test/run.mjs`) still runs each test file in its own child
+process, one file at a time on purpose. Serial execution keeps the
+timing-sensitive perf and background-run tests stable on the 4-core Windows CI
+runners, where running files in parallel oversubscribed the CPU and made them
+flake. Each child gets a sandboxed `HOME` so tests cannot read your real
+`~/.atrium/` state; set `ATRIUM_TEST_REAL_HOME=1` to opt out. The
+machine-readable report written to `test-results/atrium-tests.json` includes
+`wallClockMs`, `durationMs`, `concurrency`, `slowestFiles`, and
+`slowestTests`. The mcpDebugAllVerbsPerf contract now covers the in-process
+payload-shape assertions for every verb plus two serialized `dist/cli.js`
+smoke tests, and it is gated by the launch-count test backed by
+`test/helpers/cliLaunchBudget.ts`. The full local suite most recently measured
+`summary.wallClockMs = 80078ms`; on this shared machine that wall-clock is
+highly variable (roughly 3s to 27s for this suite), so the gate counts process
+launches instead of wall-clock. Per-test time budgets still live in
+[`test/perf-budgets.json`](test/perf-budgets.json): the mcpDebugAllVerbsPerf
+suite no longer carries a bespoke entry there and now falls under
+`defaultTestMs`, the branch that was taken. The runner also enforces
+`slowThresholdMs` and per-test `maxMs` overrides matched by `file` and
+`nameIncludes`; a test that exceeds its budget fails the run. Every run writes a
 machine-readable report to `test-results/atrium-tests.json`; CI uploads
 `test-results/` on failure and emits inline `::error` annotations for failing
 tests.
