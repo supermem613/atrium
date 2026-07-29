@@ -25,8 +25,10 @@ jobs:
         with:
           workspaces: crates/atrium-search
       - run: npm ci
-      - run: npm run lint
-      - run: npm run build
+      - run: npm run lint:eslint
+      - run: npm run lint:src
+      - run: npm run lint:test
+      - run: node scripts/build.mjs
       - run: npm test
       - name: Upload test results
         if: failure()
