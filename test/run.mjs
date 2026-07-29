@@ -20,9 +20,38 @@ import { spawn } from "node:child_process";
 // Collect every pattern argument. A shell that expands `test/**/*.test.ts` before
 // node sees it (sh and bash do, cmd.exe does not) hands over one argument per
 // matched file, so reading a single argument silently ran one file on Linux CI.
+function parseCliArgs(argv) {
+  const patterns = [];
+  let slowestCount = 5;
+
+  for (let index = 2; index < argv.length; index += 1) {
+    const arg = argv[index];
+    if (arg === "--slowest-count") {
+      const rawValue = argv[index + 1];
+      if (rawValue == null || rawValue.startsWith("-")) {
+        throw new Error("Expected a positive integer after --slowest-count");
+      }
+      const parsedValue = Number.parseInt(rawValue, 10);
+      if (!Number.isInteger(parsedValue) || parsedValue < 1) {
+        throw new Error(`Expected a positive integer after --slowest-count, got ${rawValue}`);
+      }
+      slowestCount = parsedValue;
+      index += 1;
+      continue;
+    }
+    if (arg.length > 0) {
+      patterns.push(arg);
+    }
+  }
+
+  return {
+    patterns: patterns.length ? patterns : ["test/**/*.test.ts"],
+    slowestCount,
+  };
+}
+
 export function resolveTestPatterns(argv) {
-  const patterns = argv.slice(2).filter((arg) => arg.length > 0);
-  return patterns.length ? patterns : ["test/**/*.test.ts"];
+  return parseCliArgs(argv).patterns;
 }
 
 // Expand one or more glob patterns into a de-duplicated, ordered file list.
@@ -93,9 +122,19 @@ export function parseTestTimings(tapText, file) {
 }
 
 // Build a machine-readable report object from per-file results.
-export function buildReport(fileResults) {
-  const summary = { files: fileResults.length, tests: 0, pass: 0, fail: 0, durationMs: 0 };
+export function buildReport(fileResults, runMetadata = {}) {
+  const summary = {
+    files: fileResults.length,
+    tests: 0,
+    pass: 0,
+    fail: 0,
+    durationMs: 0,
+    wallClockMs: 0,
+    concurrency: 1,
+  };
   const files = [];
+  const slowestFiles = [];
+  const slowestTests = [];
   for (const result of fileResults) {
     const tests = result.tests ?? 0;
     const pass = result.pass ?? 0;
@@ -106,8 +145,31 @@ export function buildReport(fileResults) {
     summary.fail += fail;
     summary.durationMs += durationMs;
     files.push({ file: result.file, tests, pass, fail, durationMs });
+    slowestFiles.push({ file: result.file, durationMs });
+    for (const timing of Array.isArray(result.timings) ? result.timings : []) {
+      slowestTests.push({ file: timing.file ?? result.file, name: timing.name, ms: timing.ms ?? 0 });
+    }
   }
-  return { schemaVersion: 1, generatedAt: new Date().toISOString(), summary, files };
+
+  const slowestCount = Number.isInteger(runMetadata?.slowestCount) && runMetadata.slowestCount > 0
+    ? runMetadata.slowestCount
+    : 5;
+  const wallClockMs = Number.isFinite(runMetadata?.wallClockMs) ? Number(runMetadata.wallClockMs) : 0;
+  const concurrency = Number.isInteger(runMetadata?.concurrency) && runMetadata.concurrency > 0
+    ? runMetadata.concurrency
+    : 1;
+
+  summary.wallClockMs = wallClockMs;
+  summary.concurrency = concurrency;
+
+  return {
+    schemaVersion: 2,
+    generatedAt: new Date().toISOString(),
+    summary,
+    files,
+    slowestFiles: slowestFiles.sort((left, right) => right.durationMs - left.durationMs).slice(0, slowestCount),
+    slowestTests: slowestTests.sort((left, right) => right.ms - left.ms).slice(0, slowestCount),
+  };
 }
 
 // Extract GitHub Actions error annotations from a failing file's TAP output.
@@ -181,10 +243,12 @@ function runOneFile(file, baseEnv, sandboxRoot) {
     };
     child.on("close", (code) => {
       cleanup();
-      resolve({ file, stdout, stderr, counts: parseTapCounts(stdout), durationMs: Date.now() - startedAt, failed: code !== 0 });
+      const timings = parseTestTimings(stdout, file);
+      resolve({ file, stdout, stderr, counts: parseTapCounts(stdout), durationMs: Date.now() - startedAt, failed: code !== 0, timings });
     });
     child.on("error", (err) => {
       cleanup();
+      const timings = parseTestTimings(stdout, file);
       resolve({
         file,
         stdout,
@@ -192,13 +256,15 @@ function runOneFile(file, baseEnv, sandboxRoot) {
         counts: { tests: 0, pass: 0, fail: 0 },
         durationMs: Date.now() - startedAt,
         failed: true,
+        timings,
       });
     });
   });
 }
 
 async function main() {
-  const patterns = resolveTestPatterns(process.argv);
+  const startedAt = Date.now();
+  const { patterns, slowestCount } = parseCliArgs(process.argv);
   const files = discoverTestFiles(patterns);
 
   if (files.length === 0) {
@@ -229,7 +295,7 @@ async function main() {
     totalTests += result.counts.tests;
     totalPass += result.counts.pass;
     totalFail += result.counts.fail;
-    timings.push(...parseTestTimings(result.stdout, result.file));
+    timings.push(...(result.timings ?? []));
     if (result.failed) {
       failedFiles.push(result.file);
       for (const annotation of extractGitHubAnnotations(result.stdout, result.file)) {
@@ -242,6 +308,28 @@ async function main() {
   }
 
   console.log(`\n# AGGREGATE: tests ${totalTests} | pass ${totalPass} | fail ${totalFail}`);
+  const report = buildReport(results.map((result) => ({
+    file: result.file,
+    tests: result.counts.tests,
+    pass: result.counts.pass,
+    fail: result.counts.fail,
+    durationMs: result.durationMs,
+    timings: result.timings,
+  })), { wallClockMs: Date.now() - startedAt, concurrency: 1, slowestCount });
+
+  if (report.slowestFiles.length) {
+    console.log(`# Slowest files (${report.slowestFiles.length}):`);
+    for (const entry of report.slowestFiles) {
+      console.log(`#   ${entry.durationMs.toFixed(1)}ms  ${entry.file}`);
+    }
+  }
+  if (report.slowestTests.length) {
+    console.log(`# Slowest tests (${report.slowestTests.length}):`);
+    for (const entry of report.slowestTests) {
+      console.log(`#   ${entry.ms.toFixed(1)}ms  ${entry.file}  ${entry.name}`);
+    }
+  }
+
   let exitCode = 0;
   if (failedFiles.length) {
     console.log(`# Failed files:\n${failedFiles.map((f) => `#   ${f}`).join("\n")}`);
@@ -258,13 +346,6 @@ async function main() {
     exitCode = 1;
   }
 
-  const report = buildReport(results.map((result) => ({
-    file: result.file,
-    tests: result.counts.tests,
-    pass: result.counts.pass,
-    fail: result.counts.fail,
-    durationMs: result.durationMs,
-  })));
   const reportDir = fileURLToPath(new URL("../test-results", import.meta.url));
   mkdirSync(reportDir, { recursive: true });
   writeFileSync(join(reportDir, "atrium-tests.json"), JSON.stringify(report, null, 2));

@@ -25,3 +25,49 @@ test("buildReport aggregates per-file results into a summary and files array", (
   assert.equal(report?.summary?.tests, 1);
   assert.ok(Array.isArray(report?.files));
 });
+
+test("buildReport records wall-clock elapsed, concurrency, and slowest file and test views", () => {
+  const startedAt = Date.now();
+  const report = buildReport([
+    {
+      file: "a",
+      tests: 2,
+      pass: 2,
+      fail: 0,
+      durationMs: 5,
+      timings: [
+        { name: "alpha", ms: 3 },
+        { name: "beta", ms: 2 },
+      ],
+    },
+    {
+      file: "b",
+      tests: 1,
+      pass: 1,
+      fail: 0,
+      durationMs: 7,
+      timings: [{ name: "gamma", ms: 7 }],
+    },
+  ]);
+
+  const elapsedMs = Date.now() - startedAt;
+  assert.equal(typeof report?.summary?.wallClockMs, "number");
+  assert.ok(Number.isFinite(report?.summary?.wallClockMs));
+  assert.ok((report?.summary?.wallClockMs ?? 0) >= 0);
+  assert.ok((report?.summary?.wallClockMs ?? 0) <= elapsedMs + 1000);
+  assert.equal(typeof report?.summary?.concurrency, "number");
+  assert.ok(Number.isInteger(report?.summary?.concurrency));
+  assert.ok((report?.summary?.concurrency ?? 0) > 0);
+  assert.ok(Array.isArray(report?.slowestFiles));
+  assert.ok(report?.slowestFiles?.length > 0);
+  assert.deepEqual(
+    report?.slowestFiles?.map((entry) => entry.durationMs),
+    [...(report?.slowestFiles ?? [])].sort((left, right) => right.durationMs - left.durationMs).map((entry) => entry.durationMs),
+  );
+  assert.ok(Array.isArray(report?.slowestTests));
+  assert.ok(report?.slowestTests?.length > 0);
+  assert.deepEqual(
+    report?.slowestTests?.map(({ file, name, ms }) => ({ file, name, ms })),
+    [...(report?.slowestTests ?? [])].sort((left, right) => right.ms - left.ms).map(({ file, name, ms }) => ({ file, name, ms })),
+  );
+});
