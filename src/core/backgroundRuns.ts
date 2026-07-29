@@ -13,6 +13,13 @@ export const defaultLongRunningTimeoutMs = 14_400_000;
 export const defaultRequestSafeResponseBudgetMs = 10_000;
 export const defaultWaitTimeoutMs = defaultRequestSafeResponseBudgetMs;
 
+// Single resolution point for the handoff and wait budgets. Tests assert the
+// resolved default here instead of waiting one out, so this must stay the only
+// place server.ts substitutes a missing budget.
+export function resolveRequestSafeBudgetMs(override?: number): number {
+  return override ?? defaultRequestSafeResponseBudgetMs;
+}
+
 export interface OperationNextCheck {
   tool: "atrium.operation-wait";
   arguments: {

@@ -5,7 +5,7 @@ import { describe, it } from "node:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { createAtriumServer } from "../../src/server.js";
-import { adoptBackgroundRun } from "../../src/core/backgroundRuns.js";
+import { adoptBackgroundRun, defaultRequestSafeResponseBudgetMs, resolveRequestSafeBudgetMs } from "../../src/core/backgroundRuns.js";
 import type { NativeSearchEnvelope, NativeSearchRunOptions, XrayEnvelope, XrayRunOptions, XraySearchClientLike } from "../../src/core/search/types.js";
 
 class FakeXrayClient implements XraySearchClientLike {
@@ -47,6 +47,12 @@ class FakeNativeSearchClient {
 }
 
 describe("search MCP tools", () => {
+  // The MCP host abandons a request after this long, so a handoff budget has to
+  // return well before it. The original single test proved this by sleeping out
+  // the whole production budget; it is asserted directly instead.
+  const hostRequestDeadlineMs = 15_000;
+  const requiredHandoffMarginMs = 5_000;
+
   it("exposes the three search verbs with stable schemas and routes calls through the injected search client", async () => {
     const fakeClient = new FakeXrayClient();
     const server = createAtriumServer({ searchClient: fakeClient });
@@ -173,12 +179,17 @@ describe("search MCP tools", () => {
     }
   });
 
-  it("returns handoff and continue responses with margin before the host request deadline", { timeout: 55_000 }, async () => {
+  it("returns handoff and continue responses concurrently, well inside the configured budget", async () => {
+    const handoffBudgetMs = 1_000;
     const never = new Promise<XrayEnvelope>(() => {});
     const fakeClient: XraySearchClientLike = {
       run: async () => never,
     };
-    const server = createAtriumServer({ searchClient: fakeClient });
+    const server = createAtriumServer({
+      searchClient: fakeClient,
+      backgroundHandoffAfterMs: handoffBudgetMs,
+      waitTimeoutMs: handoffBudgetMs,
+    });
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     const client = new Client({ name: "test-client", version: "1.0.0" });
     const existing = await adoptBackgroundRun({
@@ -199,14 +210,26 @@ describe("search MCP tools", () => {
 
       assert.equal(handoff.status, "running");
       assert.equal(continued.status, "continue");
+      // Under one budget, not two. Serializing the pair would cost 2 x handoffBudgetMs
+      // and fail this bound, which is the guarantee that keeps a real host request
+      // safe when both calls are in flight at once.
       assert.ok(
-        elapsedMs < 15_000,
-        `handoff and operation-wait must return inside the request-safe 15-second window; elapsed ${elapsedMs} ms`,
+        elapsedMs < handoffBudgetMs * 2 - 100,
+        `handoff and operation-wait must overlap within one ${handoffBudgetMs} ms budget; elapsed ${elapsedMs} ms`,
       );
     } finally {
       await client.close();
       await serverTransport.close();
     }
+  });
+
+  it("defaults the handoff and wait budgets to a value with margin before the host request deadline", () => {
+    assert.equal(resolveRequestSafeBudgetMs(undefined), defaultRequestSafeResponseBudgetMs);
+    assert.equal(resolveRequestSafeBudgetMs(250), 250);
+    assert.ok(
+      defaultRequestSafeResponseBudgetMs <= hostRequestDeadlineMs - requiredHandoffMarginMs,
+      `the default ${defaultRequestSafeResponseBudgetMs} ms budget must leave at least ${requiredHandoffMarginMs} ms before the ${hostRequestDeadlineMs} ms host request deadline`,
+    );
   });
 
   it("does not expose injected native metrics in normal MCP responses", async () => {
