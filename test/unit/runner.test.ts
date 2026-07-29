@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { setTimeout as waitForPollInterval } from "node:timers/promises";
 import { ExecutionQueue } from "../../src/core/executionQueue.js";
 import { atriumTempPath } from "../../src/core/tempPaths.js";
-import type { RunExecutableInput, StartExecutableRunOptions } from "../../src/core/runner.js";
+import type { RunExecutableInput, RunExecutableResult, StartExecutableRunOptions } from "../../src/core/runner.js";
 
 async function loadRunnerModule() {
   return import("../../src/core/runner.js");
@@ -179,22 +179,39 @@ describe("runner", () => {
   it("limits concurrent executable starts and records queue metrics", async () => {
     const dir = await createTestTempDir("execution-queue-");
     const queue = new ExecutionQueue(2);
-    const starts = [0, 1, 2, 3].map((index) => join(dir, `started-${index}`));
-    const releases = [0, 1, 2, 3].map((index) => join(dir, `release-${index}`));
+    const starts = [0, 1, 2, 3].map((index) => join(dir, `started-${String(index)}`));
+    const releases = [0, 1, 2, 3].map((index) => join(dir, `release-${String(index)}`));
 
-    const running = starts.map(async (startFile, index) => startExecutableRun({
-      tool: process.execPath,
-      args: ["-e", waitForReleaseScript(startFile, releases[index], 0)],
-    }, { executionQueue: queue }));
-    const results = (await Promise.all(running)).map((run) => run.result);
+    // A run takes its queue slot as it starts, so admission follows start order, not
+    // array order. Starting the runs concurrently left that order to the event loop and
+    // deadlocked whenever runs 0 and 1 were not the pair that won the two slots. Start
+    // them one at a time and key every wait off that order instead.
+    const startOrder = [2, 0, 3, 1];
+    const results: Promise<RunExecutableResult>[] = [];
+    for (const index of startOrder) {
+      const run = await startExecutableRun({
+        tool: process.execPath,
+        args: ["-e", waitForReleaseScript(starts[index], releases[index], 0)],
+      }, { executionQueue: queue });
+      results[index] = run.result;
+    }
 
-    await Promise.all([waitForFile(starts[0]), waitForFile(starts[1])]);
-    await Promise.all([writeFile(releases[0], ""), writeFile(releases[1], "")]);
-    await Promise.all([results[0], results[1]]);
+    const admitted = startOrder.slice(0, 2);
+    const queued = startOrder.slice(2);
 
-    await Promise.all([waitForFile(starts[2]), waitForFile(starts[3])]);
-    await Promise.all([writeFile(releases[2], ""), writeFile(releases[3], "")]);
-    const queuedResults = await Promise.all([results[2], results[3]]);
+    await Promise.all(admitted.map((index) => waitForStartedRun(starts[index], results[index])));
+    await Promise.all(admitted.map((index) => writeFile(releases[index], "")));
+    const admittedResults = await Promise.all(admitted.map((index) => results[index]));
+
+    for (const result of admittedResults) {
+      assert.equal(result.ok, true);
+      assert.equal(result.metrics.queueLimit, 2);
+      assert.equal(result.metrics.queueDepthAtEnqueue, 0);
+    }
+
+    await Promise.all(queued.map((index) => waitForStartedRun(starts[index], results[index])));
+    await Promise.all(queued.map((index) => writeFile(releases[index], "")));
+    const queuedResults = await Promise.all(queued.map((index) => results[index]));
 
     for (const result of queuedResults) {
       assert.equal(result.ok, true);
@@ -456,6 +473,18 @@ async function waitForFile(path: string, timeoutMs = 5_000): Promise<void> {
     }
   }
   assert.fail(`Timed out waiting for ${path}`);
+}
+
+// A child that dies before writing its start marker otherwise surfaces only as an opaque
+// marker timeout, so report the run's own failure as soon as it settles first.
+async function waitForStartedRun(startFile: string, result: Promise<RunExecutableResult>): Promise<void> {
+  const exited = await Promise.race([
+    waitForFile(startFile).then(() => undefined),
+    result,
+  ]);
+  if (exited !== undefined) {
+    assert.fail(`Run exited before writing ${startFile}: ${JSON.stringify(exited.error ?? exited.metrics)}`);
+  }
 }
 
 function waitForReleaseScript(startFile: string, releaseFile: string, exitCode: number): string {
