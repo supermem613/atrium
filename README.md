@@ -306,13 +306,19 @@ flake. Each child gets a sandboxed `HOME` so tests cannot read your real
 `~/.atrium/` state; set `ATRIUM_TEST_REAL_HOME=1` to opt out. The
 machine-readable report written to `test-results/atrium-tests.json` includes
 `wallClockMs`, `durationMs`, `concurrency`, `slowestFiles`, and
-`slowestTests`. The mcpDebugAllVerbsPerf contract now covers the in-process
+`slowestTests`. On the console a passing run prints one summary line,
+`# PASS tests=<n> files=<n> pass=<n> fail=<n> durationMs=<ms>`, followed by the
+slowest files and slowest tests; pass `--slowest-count <n>` to change how many
+of each are listed. Per-file TAP is captured for every file but replayed only
+for files that fail, so a failure stays fully diagnosable without making a green
+run scroll. Pass `--verbose` to replay the TAP for passing files too. Failed
+files, budget violations, and the GitHub `::error` annotations always print.
+The mcpDebugAllVerbsPerf contract now covers the in-process
 payload-shape assertions for every verb plus two serialized `dist/cli.js`
 smoke tests, and it is gated by the launch-count test backed by
-`test/helpers/cliLaunchBudget.ts`. The full local suite most recently measured
-`summary.wallClockMs = 80078ms`; on this shared machine that wall-clock is
-highly variable (roughly 3s to 27s for this suite), so the gate counts process
-launches instead of wall-clock. Per-test time budgets still live in
+`test/helpers/cliLaunchBudget.ts`. Suite wall-clock on a shared machine is
+highly variable, with identical code measuring anywhere from roughly 50s to
+roughly 100s, so that gate counts process launches instead of wall-clock time. Per-test time budgets still live in
 [`test/perf-budgets.json`](test/perf-budgets.json): the mcpDebugAllVerbsPerf
 suite no longer carries a bespoke entry there and now falls under
 `defaultTestMs`, the branch that was taken. The runner also enforces

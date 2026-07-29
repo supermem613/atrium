@@ -23,6 +23,7 @@ import { spawn } from "node:child_process";
 function parseCliArgs(argv) {
   const patterns = [];
   let slowestCount = 5;
+  let verbose = false;
 
   for (let index = 2; index < argv.length; index += 1) {
     const arg = argv[index];
@@ -39,6 +40,10 @@ function parseCliArgs(argv) {
       index += 1;
       continue;
     }
+    if (arg === "--verbose") {
+      verbose = true;
+      continue;
+    }
     if (arg.length > 0) {
       patterns.push(arg);
     }
@@ -47,6 +52,7 @@ function parseCliArgs(argv) {
   return {
     patterns: patterns.length ? patterns : ["test/**/*.test.ts"],
     slowestCount,
+    verbose,
   };
 }
 
@@ -264,7 +270,7 @@ function runOneFile(file, baseEnv, sandboxRoot) {
 
 async function main() {
   const startedAt = Date.now();
-  const { patterns, slowestCount } = parseCliArgs(process.argv);
+  const { patterns, slowestCount, verbose } = parseCliArgs(process.argv);
   const files = discoverTestFiles(patterns);
 
   if (files.length === 0) {
@@ -288,8 +294,13 @@ async function main() {
   const failedFiles = [];
   const timings = [];
   for (const result of results) {
-    process.stdout.write(result.stdout);
-    if (result.stderr) {
+    // A green run stays quiet. Per-file TAP is captured either way and replayed
+    // only when the file fails, so a failure is still fully diagnosable without
+    // making every passing run scroll past thousands of ok lines.
+    if (result.failed || verbose) {
+      process.stdout.write(result.stdout);
+    }
+    if (result.stderr && (result.failed || verbose)) {
       process.stderr.write(result.stderr);
     }
     totalTests += result.counts.tests;
@@ -307,7 +318,7 @@ async function main() {
     }
   }
 
-  console.log(`\n# AGGREGATE: tests ${totalTests} | pass ${totalPass} | fail ${totalFail}`);
+  const wallClockMs = Date.now() - startedAt;
   const report = buildReport(results.map((result) => ({
     file: result.file,
     tests: result.counts.tests,
@@ -315,8 +326,16 @@ async function main() {
     fail: result.counts.fail,
     durationMs: result.durationMs,
     timings: result.timings,
-  })), { wallClockMs: Date.now() - startedAt, concurrency: 1, slowestCount });
+  })), { wallClockMs, concurrency: 1, slowestCount });
 
+  const label = failedFiles.length || totalFail ? "FAIL" : "PASS";
+  console.log(
+    `# ${label} tests=${totalTests} files=${results.length} pass=${totalPass} fail=${totalFail} durationMs=${Math.max(0, Math.round(wallClockMs))}`,
+  );
+
+  // The slowest lists are the whole point of the accounting, so they print on
+  // every run. Only the per-file TAP is noise, and that stays behind a failure
+  // or --verbose.
   if (report.slowestFiles.length) {
     console.log(`# Slowest files (${report.slowestFiles.length}):`);
     for (const entry of report.slowestFiles) {
