@@ -15,13 +15,14 @@ describe("package lock", () => {
     assert.ok(isRecord(lock.packages));
 
     // Guards CI run 29293976143, where npm ci failed because these resolved packages were omitted.
-    for (const [name, version] of [
-      ["@emnapi/core", "1.11.2"],
-      ["@emnapi/runtime", "1.11.2"],
-    ]) {
+    // The invariant is that each peer resolves to an installable lock entry, not that it sits at
+    // one specific version, so a legitimate upstream bump must not turn this guard red.
+    for (const name of ["@emnapi/core", "@emnapi/runtime"]) {
       const packageEntry: unknown = lock.packages[`node_modules/${name}`];
       assert.ok(isRecord(packageEntry), `missing lock entry for ${name}`);
-      assert.equal(packageEntry.version, version);
+      assert.match(String(packageEntry.version), /^\d+\.\d+\.\d+/, `${name} needs a resolved version`);
+      assert.match(String(packageEntry.resolved), /^https?:\/\//, `${name} needs a resolved tarball URL`);
+      assert.match(String(packageEntry.integrity), /^sha\d+-/, `${name} needs an integrity hash`);
     }
   });
 });

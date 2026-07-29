@@ -17,6 +17,14 @@ import { pathToFileURL, fileURLToPath } from "node:url";
 import { minimatch } from "minimatch";
 import { spawn } from "node:child_process";
 
+// Collect every pattern argument. A shell that expands `test/**/*.test.ts` before
+// node sees it (sh and bash do, cmd.exe does not) hands over one argument per
+// matched file, so reading a single argument silently ran one file on Linux CI.
+export function resolveTestPatterns(argv) {
+  const patterns = argv.slice(2).filter((arg) => arg.length > 0);
+  return patterns.length ? patterns : ["test/**/*.test.ts"];
+}
+
 // Expand one or more glob patterns into a de-duplicated, ordered file list.
 export function discoverTestFiles(patterns) {
   const found = new Set();
@@ -190,11 +198,11 @@ function runOneFile(file, baseEnv, sandboxRoot) {
 }
 
 async function main() {
-  const pattern = process.argv[2] || "test/**/*.test.ts";
-  const files = discoverTestFiles([pattern]);
+  const patterns = resolveTestPatterns(process.argv);
+  const files = discoverTestFiles(patterns);
 
   if (files.length === 0) {
-    console.error(`No test files found matching: ${pattern}`);
+    console.error(`No test files found matching: ${patterns.join(" ")}`);
     process.exit(1);
   }
 

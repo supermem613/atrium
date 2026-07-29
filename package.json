@@ -1,6 +1,6 @@
 {
   "name": "atrium",
-  "version": "2.13.3",
+  "version": "2.13.4",
   "description": "Copilot CLI extension that supersedes built-in tool primitives with faster, more powerful versions out of the box.",
   "type": "module",
   "bin": {
@@ -11,9 +11,9 @@
     "prebuild": "eslint src/ test/ && tsc --noEmit -p test/tsconfig.json",
     "build": "node scripts/build.mjs",
     "build:native": "napi build --release --platform --js-package-name atrium-search --manifest-path crates/atrium-search/Cargo.toml --output-dir crates/atrium-search",
-    "test": "node test/run.mjs test/**/*.test.ts",
-    "test:unit": "node test/run.mjs test/unit/**/*.test.ts",
-    "test:integration": "node test/run.mjs test/integration/**/*.test.ts",
+    "test": "node test/run.mjs \"test/**/*.test.ts\"",
+    "test:unit": "node test/run.mjs \"test/unit/**/*.test.ts\"",
+    "test:integration": "node test/run.mjs \"test/integration/**/*.test.ts\"",
     "lint": "eslint src/ test/ && tsc --noEmit && tsc --noEmit -p test/tsconfig.json",
     "benchmark": "node scripts/benchmark-atrium.mjs",
     "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
