@@ -61,13 +61,13 @@ test("buildReport records wall-clock elapsed, concurrency, and slowest file and 
   assert.ok(Array.isArray(report?.slowestFiles));
   assert.ok(report?.slowestFiles?.length > 0);
   assert.deepEqual(
-    report?.slowestFiles?.map((entry) => entry.durationMs),
+    report?.slowestFiles?.map((entry: { durationMs: number }) => entry.durationMs),
     [...(report?.slowestFiles ?? [])].sort((left, right) => right.durationMs - left.durationMs).map((entry) => entry.durationMs),
   );
   assert.ok(Array.isArray(report?.slowestTests));
   assert.ok(report?.slowestTests?.length > 0);
   assert.deepEqual(
-    report?.slowestTests?.map(({ file, name, ms }) => ({ file, name, ms })),
+    report?.slowestTests?.map(({ file, name, ms }: { file: string; name: string; ms: number }) => ({ file, name, ms })),
     [...(report?.slowestTests ?? [])].sort((left, right) => right.ms - left.ms).map(({ file, name, ms }) => ({ file, name, ms })),
   );
 });
