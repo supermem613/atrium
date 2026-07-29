@@ -8,13 +8,16 @@
     "atrium-mcp": "./dist/server.js"
   },
   "scripts": {
-    "prebuild": "eslint src/ test/ && tsc --noEmit -p test/tsconfig.json",
+    "prebuild": "npm run lint:eslint && npm run lint:test",
     "build": "node scripts/build.mjs",
     "build:native": "napi build --release --platform --js-package-name atrium-search --manifest-path crates/atrium-search/Cargo.toml --output-dir crates/atrium-search",
     "test": "node test/run.mjs \"test/**/*.test.ts\"",
     "test:unit": "node test/run.mjs \"test/unit/**/*.test.ts\"",
     "test:integration": "node test/run.mjs \"test/integration/**/*.test.ts\"",
-    "lint": "eslint src/ test/ && tsc --noEmit && tsc --noEmit -p test/tsconfig.json",
+    "lint": "npm run lint:eslint && npm run lint:src && npm run lint:test",
+    "lint:eslint": "eslint src/ test/",
+    "lint:src": "tsc --noEmit",
+    "lint:test": "tsc --noEmit -p test/tsconfig.json",
     "benchmark": "node scripts/benchmark-atrium.mjs",
     "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
     "prepublishOnly": "npm run build"

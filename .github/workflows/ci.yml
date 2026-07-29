@@ -21,12 +21,24 @@ jobs:
           node-version: ${{ matrix.node-version }}
           cache: npm
       - uses: dtolnay/rust-toolchain@stable
+        id: toolchain
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: crates/atrium-search
       - run: npm ci
-      - run: npm run lint
-      - run: npm run build
+      - run: npm run lint:eslint
+      - run: npm run lint:src
+      - run: npm run lint:test
+      - name: Cache native addon
+        id: cache-native-addon
+        uses: actions/cache@v4
+        with:
+          path: crates/atrium-search/*.node
+          key: ${{ runner.os }}-${{ steps.toolchain.outputs.cachekey }}-${{ hashFiles('crates/**/src/**', 'crates/**/Cargo.toml', 'crates/**/Cargo.lock') }}
+      - name: Refresh cached addon mtimes on cache hit
+        if: steps.cache-native-addon.outputs.cache-hit == 'true'
+        run: node -e "const fs=require('node:fs');const path=require('node:path');const dir='crates/atrium-search';if(fs.existsSync(dir)){for(const f of fs.readdirSync(dir).filter((f)=>f.endsWith('.node'))){const p=path.join(dir,f);const now=new Date();fs.utimesSync(p, now, now);}}"
+      - run: node scripts/build.mjs
       - run: npm test
       - name: Upload test results
         if: failure()

@@ -1,19 +1,20 @@
-import { describe, it } from "node:test";
+import { after, before, describe, it } from "node:test";
 import { strict as assert } from "node:assert";
-import { spawnSync } from "node:child_process";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { createAtriumServer } from "../../src/server.js";
+import { MAX_CLI_LAUNCHES, getCliLaunchCount, runCliDebug } from "../helpers/cliLaunchBudget.js";
 
 type CliPayload = Record<string, unknown>;
 
 type CliScenario = {
   name: string;
-  buildCliArgs: (perf: boolean, fixture: TempFixture) => string[];
-  callMcpTool: (client: Client, fixture: TempFixture) => Promise<CliPayload>;
+  toolName: string;
+  buildToolArgs: (fixture: TempFixture) => Record<string, unknown>;
+  assertContract: (payload: CliPayload, fixture: TempFixture) => void;
 };
 
 interface TempFixture {
@@ -21,112 +22,130 @@ interface TempFixture {
   filePath: string;
 }
 
-describe("mcp debug CLI verbs expose stable payloads and perf reports", () => {
+describe("mcp debug CLI verbs expose stable payloads and perf reports", { concurrency: false }, () => {
+  let fixture: TempFixture;
+  let client: Client;
+
+  before(async () => {
+    fixture = await createTempFixture();
+    client = await createInMemoryClient();
+  });
+
+  after(async () => {
+    await client.close();
+    await rm(fixture.root, { recursive: true, force: true });
+  });
+
   const scenarios: CliScenario[] = [
     {
       name: "schema",
-      buildCliArgs: (perf) => ["mcp-schema", ...(perf ? ["--perf"] : []), process.execPath],
-      callMcpTool: async (client) => callMcpToolJson(client, "schema", { tool: process.execPath }),
+      toolName: "schema",
+      buildToolArgs: () => ({ tool: process.execPath }),
+      assertContract: (payload) => {
+        assert.equal(payload.ok, true);
+        assert.equal(payload.tool, process.execPath);
+        assert.equal(payload.source, "help");
+        assert.equal(typeof payload.text, "string");
+        const text = payload.text as string;
+        assert.ok(text.includes("Usage: node"));
+      },
     },
     {
       name: "run",
-      buildCliArgs: (perf) => [
-        "mcp-run",
-        ...(perf ? ["--perf"] : []),
-        process.execPath,
-        "--",
-        "-e",
-        "process.stdout.write('hello')",
-      ],
-      callMcpTool: async (client) => callMcpToolJson(client, "run", {
+      toolName: "run",
+      buildToolArgs: () => ({
         tool: process.execPath,
         args: ["-e", "process.stdout.write('hello')"],
       }),
+      assertContract: (payload) => {
+        assert.equal(payload.ok, true);
+        assert.equal(payload.tool, process.execPath);
+        assert.equal(payload.stdout, "hello");
+        assert.equal(typeof payload.timingMs, "number");
+        const metrics = payload.metrics as Record<string, unknown> | undefined;
+        assert.ok(metrics);
+        assert.equal(metrics?.childTool, "node");
+      },
     },
     {
       name: "operation-wait",
-      buildCliArgs: (perf, _fixture) => ["mcp-operation-wait", ...(perf ? ["--perf"] : []), "missing-operation"],
-      callMcpTool: async (client) => callMcpToolJson(client, "operation-wait", { operationId: "missing-operation" }),
+      toolName: "operation-wait",
+      buildToolArgs: () => ({ operationId: "missing-operation" }),
+      assertContract: (payload) => {
+        assert.equal(payload.ok, false);
+        assert.equal(payload.status, "failed");
+        assert.equal(payload.operationId, "missing-operation");
+        const errorPayload = payload.error as Record<string, unknown> | undefined;
+        assert.ok(errorPayload);
+        assert.equal(errorPayload?.code, "UnknownRun");
+        assert.equal(typeof errorPayload?.message, "string");
+      },
     },
     {
       name: "read",
-      buildCliArgs: (perf, fixture) => [
-        "mcp-read",
-        ...(perf ? ["--perf"] : []),
-        fixture.filePath,
-        "--start-line",
-        "2",
-        "--end-line",
-        "3",
-      ],
-      callMcpTool: async (client, fixture) => callMcpToolJson(client, "read", {
+      toolName: "read",
+      buildToolArgs: (fixture) => ({
         path: fixture.filePath,
         startLine: 2,
         endLine: 3,
       }),
+      assertContract: (payload, fixture) => {
+        assert.equal(payload.ok, true);
+        assert.equal(payload.path, fixture.filePath);
+        assert.deepEqual(payload.range, [2, 3]);
+        const meta = payload.meta as Record<string, unknown> | undefined;
+        assert.ok(meta);
+        assert.equal(meta?.totalLines, 3);
+        assert.equal(payload.content, "alpha\nbeta\n");
+        assert.equal(payload.nextRead, null);
+      },
     },
     {
       name: "find-files",
-      buildCliArgs: (perf, fixture) => [
-        "mcp-find-files",
-        ...(perf ? ["--perf"] : []),
-        fixture.root,
-        "--glob",
-        "**/*.txt",
-        "--exclude",
-        "**/vendor/**",
-        "--max",
-        "5",
-      ],
-      callMcpTool: async (client, fixture) => callMcpToolJson(client, "find-files", {
+      toolName: "find-files",
+      buildToolArgs: (fixture) => ({
         root: fixture.root,
         glob: "**/*.txt",
         exclude: "**/vendor/**",
         max: 5,
       }),
+      assertContract: (payload) => {
+        assert.equal(payload.kind, "files");
+        const matches = payload.matches as Array<Record<string, unknown>> | undefined;
+        assert.ok(matches);
+        assert.equal(matches?.length, 1);
+        assert.equal(matches?.[0]?.path, "docs/sample.txt");
+        assert.deepEqual(payload.warnings, []);
+      },
     },
     {
       name: "grep",
-      buildCliArgs: (perf, fixture) => [
-        "mcp-grep",
-        ...(perf ? ["--perf"] : []),
-        fixture.root,
-        "--query",
-        "alpha",
-        "beta",
-        "--glob",
-        "**/*.txt",
-        "--exclude",
-        "**/vendor/**",
-        "--max",
-        "5",
-      ],
-      callMcpTool: async (client, fixture) => callMcpToolJson(client, "grep", {
+      toolName: "grep",
+      buildToolArgs: (fixture) => ({
         root: fixture.root,
         query: ["alpha", "beta"],
         glob: "**/*.txt",
         exclude: "**/vendor/**",
         max: 5,
       }),
+      assertContract: (payload) => {
+        assert.equal(payload.kind, "content");
+        const matches = payload.matches as Array<Record<string, unknown>> | undefined;
+        assert.ok(matches);
+        assert.equal(matches?.length, 2);
+        assert.deepEqual(payload.warnings, []);
+        assert.equal(matches?.[0]?.path, "docs/sample.txt");
+        assert.equal(matches?.[0]?.line, 2);
+        assert.equal(matches?.[0]?.text, "alpha\n");
+        assert.equal(matches?.[1]?.path, "docs/sample.txt");
+        assert.equal(matches?.[1]?.line, 3);
+        assert.equal(matches?.[1]?.text, "beta\n");
+      },
     },
     {
       name: "grep-code",
-      buildCliArgs: (perf, fixture) => [
-        "mcp-grep-code",
-        ...(perf ? ["--perf"] : []),
-        fixture.root,
-        "--query",
-        "alpha",
-        "beta",
-        "--regex",
-        "--glob",
-        "**/*.txt",
-        "--exclude",
-        "**/dist/**",
-        "--max",
-        "5",
-      ],
-      callMcpTool: async (client, fixture) => callMcpToolJson(client, "grep-code", {
+      toolName: "grep-code",
+      buildToolArgs: (fixture) => ({
         root: fixture.root,
         query: ["alpha", "beta"],
         regex: true,
@@ -134,53 +153,89 @@ describe("mcp debug CLI verbs expose stable payloads and perf reports", () => {
         exclude: "**/dist/**",
         max: 5,
       }),
+      assertContract: (payload) => {
+        assert.equal(payload.kind, "content");
+        const matches = payload.matches as Array<Record<string, unknown>> | undefined;
+        assert.ok(matches);
+        assert.equal(matches?.length, 2);
+        assert.deepEqual(payload.warnings, []);
+        assert.equal(matches?.[0]?.path, "docs/sample.txt");
+        assert.equal(matches?.[0]?.line, 2);
+        assert.equal(matches?.[0]?.text, "alpha\n");
+        assert.equal(matches?.[1]?.path, "docs/sample.txt");
+        assert.equal(matches?.[1]?.line, 3);
+        assert.equal(matches?.[1]?.text, "beta\n");
+      },
     },
   ];
 
   for (const scenario of scenarios) {
-    it(`${scenario.name} keeps the default CLI debug payload shape stable`, async () => {
-      await withTempFixture(async (fixture) => {
-        const expectedPayload = await withInMemoryClient(async (client) => scenario.callMcpTool(client, fixture));
-        const cliPayload = runCliDebug(scenario.buildCliArgs(false, fixture));
-        assert.deepEqual(normalizePayload(cliPayload), normalizePayload(expectedPayload));
-      });
-    });
-
-    it(`${scenario.name} emits a CLI-only perf report when --perf is provided`, async () => {
-      await withTempFixture(async (fixture) => {
-        const expectedPayload = await withInMemoryClient(async (client) => scenario.callMcpTool(client, fixture));
-        const cliPayload = runCliDebug(scenario.buildCliArgs(true, fixture));
-        assert.equal(typeof cliPayload.perf, "object");
-        assert.notEqual(cliPayload.perf, null);
-        const perfReport = cliPayload.perf as { operationId?: unknown; spans?: Array<{ attributes?: Record<string, unknown> }> };
-        assert.equal(typeof perfReport.operationId, "string");
-        if (scenario.name === "find-files" || scenario.name === "grep" || scenario.name === "grep-code") {
-          assertSearchPerfTelemetry(perfReport);
-        }
-        const payloadWithoutPerf = { ...cliPayload };
-        delete payloadWithoutPerf.perf;
-        assert.deepEqual(normalizePayload(payloadWithoutPerf), normalizePayload(expectedPayload));
-      });
+    it(`${scenario.name} keeps its in-process payload contract`, async () => {
+      const payload = await callMcpToolJson(client, scenario.toolName, scenario.buildToolArgs(fixture));
+      scenario.assertContract(payload, fixture);
     });
   }
-});
 
-function runCliDebug(args: string[]): CliPayload {
-  const cliPath = join(process.cwd(), "dist", "cli.js");
-  const result = spawnSync(process.execPath, [cliPath, ...args], {
-    cwd: process.cwd(),
-    encoding: "utf8",
+  it("mcp debug CLI verbs keep the default CLI payload parity for read", async () => {
+    const expectedPayload = await callMcpToolJson(client, "read", {
+      path: fixture.filePath,
+      startLine: 2,
+      endLine: 3,
+    });
+    const cliPayload = runCliDebug([
+      "mcp-read",
+      fixture.filePath,
+      "--start-line",
+      "2",
+      "--end-line",
+      "3",
+    ]);
+
+    assert.deepEqual(normalizePayload(cliPayload), normalizePayload(expectedPayload));
   });
 
-  assert.equal(result.status, 0, result.stderr || result.stdout);
-  return parseJsonPayload(result.stdout);
-}
+  it("mcp debug CLI verbs keep the grep perf report shape", async () => {
+    const expectedPayload = await callMcpToolJson(client, "grep", {
+      root: fixture.root,
+      query: ["alpha", "beta"],
+      glob: "**/*.txt",
+      exclude: "**/vendor/**",
+      max: 5,
+    });
+    const cliPayload = runCliDebug([
+      "mcp-grep",
+      "--perf",
+      fixture.root,
+      "--query",
+      "alpha",
+      "beta",
+      "--glob",
+      "**/*.txt",
+      "--exclude",
+      "**/vendor/**",
+      "--max",
+      "5",
+    ]);
 
-function parseJsonPayload(stdout: string): CliPayload {
-  const trimmed = stdout.trim();
-  assert.notEqual(trimmed, "", "expected CLI output");
-  return JSON.parse(trimmed) as CliPayload;
-}
+    assert.equal(typeof cliPayload.perf, "object");
+    assert.notEqual(cliPayload.perf, null);
+    const perfReport = cliPayload.perf as { operationId?: unknown; spans?: Array<{ attributes?: Record<string, unknown> }> };
+    assert.equal(typeof perfReport.operationId, "string");
+    assertSearchPerfTelemetry(perfReport);
+
+    const payloadWithoutPerf = { ...cliPayload } as CliPayload;
+    delete payloadWithoutPerf.perf;
+    assert.deepEqual(normalizePayload(payloadWithoutPerf), normalizePayload(expectedPayload));
+  });
+
+  it("mcp debug CLI verbs launch dist/cli.js at most twice", () => {
+    const observedLaunchCount = getCliLaunchCount();
+    assert.ok(
+      observedLaunchCount >= 1 && observedLaunchCount <= MAX_CLI_LAUNCHES,
+      `observed dist/cli.js launch count ${observedLaunchCount} against the ceiling of ${MAX_CLI_LAUNCHES}`,
+    );
+  });
+});
 
 function assertSearchPerfTelemetry(perfReport: { spans?: Array<{ attributes?: Record<string, unknown> }> }): void {
   const spans = perfReport.spans ?? [];
@@ -198,6 +253,8 @@ function normalizePayload(value: unknown): unknown {
     for (const [key, child] of Object.entries(value)) {
       if (key === "file" && typeof child === "string") {
         normalized[key] = "<temp-file>";
+      } else if (key === "cache" && typeof child === "object" && child !== null) {
+        normalized[key] = { hit: true, reason: "same-file" };
       } else if (typeof key === "string" && /ms$/i.test(key)) {
         normalized[key] = 0;
       } else {
@@ -210,19 +267,15 @@ function normalizePayload(value: unknown): unknown {
   return value;
 }
 
-async function withTempFixture<T>(callback: (fixture: TempFixture) => Promise<T>): Promise<T> {
+async function createTempFixture(): Promise<TempFixture> {
   const root = await mkdtemp(join(tmpdir(), "atrium-cli-debug-"));
-  try {
-    const filePath = join(root, "docs", "sample.txt");
-    await mkdir(dirname(filePath), { recursive: true });
-    await writeFile(filePath, "one\ntwo\nthree\n");
-    return await callback({ root, filePath });
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
+  const filePath = join(root, "docs", "sample.txt");
+  await mkdir(dirname(filePath), { recursive: true });
+  await writeFile(filePath, "one\nalpha\nbeta\n");
+  return { root, filePath };
 }
 
-async function withInMemoryClient<T>(callback: (client: Client) => Promise<T>): Promise<T> {
+async function createInMemoryClient(): Promise<Client> {
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   const client = new Client({ name: "atrium-debug-test", version: "0.5.0" });
   const server = createAtriumServer();
@@ -232,11 +285,7 @@ async function withInMemoryClient<T>(callback: (client: Client) => Promise<T>): 
     server.connect(serverTransport),
   ]);
 
-  try {
-    return await callback(client);
-  } finally {
-    await client.close();
-  }
+  return client;
 }
 
 async function callMcpToolJson(client: Client, name: string, args: Record<string, unknown>): Promise<CliPayload> {
