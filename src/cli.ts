@@ -15,7 +15,14 @@ import type {
 } from "./commands/mcpDebug.js";
 import { mcpConfigCommand } from "./commands/mcpConfig.js";
 import { schemaCommand } from "./commands/schema.js";
-import { contentMaxOptionDescription, fileMaxOptionDescription, parseSurfaceArg, surfaceOptionDescription } from "./mcp/surfaces.js";
+import {
+  contentMaxOptionDescription,
+  fileMaxOptionDescription,
+  parseSearchRepositoryExcludeArg,
+  parseSurfaceArg,
+  searchRepositoryExcludeOptionDescription,
+  surfaceOptionDescription,
+} from "./mcp/surfaces.js";
 import { updateCommand } from "./commands/update.js";
 
 // The MCP SDK costs roughly 400ms to import. ./commands/mcpDebug.js and
@@ -52,15 +59,21 @@ program
   .command("mcp-config")
   .description("Emit MCP config JSON for registering Atrium with Copilot CLI")
   .option("--surface <names>", surfaceOptionDescription, parseSurfaceArg)
-  .action((options: { surface?: string[] }) => mcpConfigCommand(options.surface));
+  .option("--search-repository-exclude <pattern>", searchRepositoryExcludeOptionDescription, parseSearchRepositoryExcludeArg)
+  .action((options: { surface?: string[]; searchRepositoryExclude?: string[] }) =>
+    mcpConfigCommand(options.surface, options.searchRepositoryExclude));
 
 program
   .command("mcp-server")
   .description("Start the Atrium stdio MCP server")
   .option("--surface <names>", surfaceOptionDescription, parseSurfaceArg)
-  .action(async (options: { surface?: string[] }) => {
+  .option("--search-repository-exclude <pattern>", searchRepositoryExcludeOptionDescription, parseSearchRepositoryExcludeArg)
+  .action(async (options: { surface?: string[]; searchRepositoryExclude?: string[] }) => {
     const { startAtriumServer } = await import("./server.js");
-    return startAtriumServer({ surfaces: options.surface });
+    return startAtriumServer({
+      surfaces: options.surface,
+      searchRepositoryExcludes: options.searchRepositoryExclude,
+    });
   });
 
 program

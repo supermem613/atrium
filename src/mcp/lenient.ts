@@ -19,6 +19,14 @@ export function scalarOrArray<Item extends z.ZodTypeAny>(
   ) as z.ZodEffects<z.ZodUnion<[Item, z.ZodArray<Item>]>, z.infer<Item>[], unknown>;
 }
 
+export function scalarOrArrayInput<Item extends z.ZodTypeAny>(
+  item: Item,
+  options: { nonEmpty?: boolean } = {},
+): z.ZodUnion<[Item, z.ZodArray<Item>]> {
+  const array = options.nonEmpty ? z.array(item).min(1) : z.array(item);
+  return z.union([item, array]) as z.ZodUnion<[Item, z.ZodArray<Item>]>;
+}
+
 export interface LenientIntOptions {
   positive?: boolean;
   nonnegative?: boolean;

@@ -1,9 +1,14 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { runContentSearch, parseNativeContentArgs, DEFAULT_CONTENT_SEARCH_EXCLUDES } from "../../src/core/search/contentSearch.js";
+import {
+  configureContentSearchExcludes,
+  DEFAULT_CONTENT_SEARCH_EXCLUDES,
+  parseNativeContentArgs,
+  runContentSearch,
+} from "../../src/core/search/contentSearch.js";
 import type { ContentSearchRunner } from "../../src/core/search/types.js";
 
 test("content search uses fixed-string defaults and exact default exclusions", async () => {
@@ -19,6 +24,71 @@ test("content search uses fixed-string defaults and exact default exclusions", a
   assert.ok(seen[0].includes("-F"));
   assert.deepEqual(seen[0].filter((arg) => arg.startsWith("!")), [...DEFAULT_CONTENT_SEARCH_EXCLUDES]);
   assert.deepEqual(result.warnings, []);
+});
+
+test("content search pairs .git and .sd defaults and extends configured defaults", async () => {
+  assert.deepEqual(
+    DEFAULT_CONTENT_SEARCH_EXCLUDES.slice(0, 2),
+    ["!**/.git/**", "!**/.sd/**"],
+  );
+
+  const seen: string[][] = [];
+  const runner: ContentSearchRunner = async (args) => {
+    seen.push(args);
+    return { args, matches: [], warnings: [], timedOut: false, truncated: false };
+  };
+
+  await runContentSearch({
+    query: "needle",
+    root: "/tmp",
+    defaultExcludes: ["**/.git/**", "**/.sd/**"],
+    excludes: ["**/generated/**"],
+    runner,
+  });
+
+  assert.deepEqual(
+    seen[0].filter((arg) => arg.startsWith("!")),
+    ["!**/.git/**", "!**/.sd/**", "!**/generated/**"],
+  );
+});
+
+test("repository exclusion configuration preserves generated-file defaults", () => {
+  const excludes = configureContentSearchExcludes(["**/.sd/**"]);
+
+  assert.deepEqual(
+    excludes.slice(0, 3),
+    ["**/.sd/**", "!**/node_modules/**", "!**/.copilot/**"],
+  );
+});
+
+test("native content search excludes .git and .sd together", async () => {
+  const root = await mkdtemp(join(tmpdir(), "atrium-content-repository-excludes-"));
+  try {
+    for (const directory of [".git", ".sd", "visible"]) {
+      await mkdir(join(root, directory), { recursive: true });
+      await writeFile(join(root, directory, "match.txt"), "paired-exclusion\n", "utf8");
+    }
+
+    const excluded = await runContentSearch({
+      query: "paired-exclusion",
+      root,
+      all: true,
+      excludes: ["**/.git/**", "**/.sd/**"],
+    });
+    assert.deepEqual(excluded.matches.map((match) => match.path), ["visible/match.txt"]);
+
+    const unrestricted = await runContentSearch({
+      query: "paired-exclusion",
+      root,
+      all: true,
+    });
+    assert.deepEqual(
+      unrestricted.matches.map((match) => match.path).sort(),
+      [".git/match.txt", ".sd/match.txt", "visible/match.txt"],
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test("content search forwards explicit globs and excludes through ripgrep --glob args", async () => {

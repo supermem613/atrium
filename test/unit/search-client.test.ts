@@ -4,6 +4,30 @@ import { createNativeSearchClient } from "../../src/core/search/searchClient.js"
 import type { ContentSearchOptions, ContentSearchResult, NativeFileSearchResult } from "../../src/core/search/types.js";
 
 describe("createNativeSearchClient", () => {
+  it("combines configured defaults with every call-specific exclude", async () => {
+    const seen: ContentSearchOptions[] = [];
+    const client = createNativeSearchClient({
+      repositoryExcludes: ["**/.git/**", "**/.sd/**"],
+      runContentSearch: async (options) => {
+        seen.push(options);
+        return { kind: "content", matches: [], warnings: [] };
+      },
+    });
+
+    await client.run({
+      command: "search",
+      root: "/repo",
+      query: "needle",
+      exclude: ["**/generated/**", "**/cache/**"],
+    });
+
+    assert.deepEqual(
+      seen[0].defaultExcludes?.slice(0, 3),
+      ["**/.git/**", "**/.sd/**", "!**/node_modules/**"],
+    );
+    assert.deepEqual(seen[0].excludes, ["**/generated/**", "**/cache/**"]);
+  });
+
   it("emits search metrics only for explicit perf requests", async () => {
     const seen: ContentSearchOptions[] = [];
     const client = createNativeSearchClient({

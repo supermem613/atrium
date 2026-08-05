@@ -177,7 +177,7 @@ describe("CLI perf spans and search metrics", { concurrency: false }, () => {
     const invocations: Array<{
       command: string;
       all?: boolean;
-      exclude?: string;
+      exclude?: string | readonly string[];
       glob?: string;
       query?: string;
       regex?: boolean;

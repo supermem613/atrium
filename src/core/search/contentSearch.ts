@@ -6,8 +6,12 @@ import { loadNativeSearchAddon } from "./nativeAddon.js";
 import type { NativeContentTypeDef, NativeSearchAddon } from "./nativeAddon.js";
 import type { ContentSearchOptions, ContentSearchResult, ContentSearchInvocation, ContentSearchRunner, SearchContentMatch, ContentSearchRunMetrics } from "./types.js";
 
-export const DEFAULT_CONTENT_SEARCH_EXCLUDES = [
+export const DEFAULT_REPOSITORY_SEARCH_EXCLUDES = [
   "!**/.git/**",
+  "!**/.sd/**",
+] as const;
+
+const DEFAULT_GENERATED_SEARCH_EXCLUDES = [
   "!**/node_modules/**",
   "!**/.copilot/**",
   "!**/dist/**",
@@ -17,6 +21,18 @@ export const DEFAULT_CONTENT_SEARCH_EXCLUDES = [
   "!**/.cache/**",
   "!AppData/**",
 ] as const;
+
+export const DEFAULT_CONTENT_SEARCH_EXCLUDES = [
+  ...DEFAULT_REPOSITORY_SEARCH_EXCLUDES,
+  ...DEFAULT_GENERATED_SEARCH_EXCLUDES,
+] as const;
+
+export function configureContentSearchExcludes(repositoryExcludes?: readonly string[]): string[] {
+  return [
+    ...(repositoryExcludes ?? DEFAULT_REPOSITORY_SEARCH_EXCLUDES),
+    ...DEFAULT_GENERATED_SEARCH_EXCLUDES,
+  ];
+}
 
 const DEFAULT_TIMEOUT_MS = 59_000;
 const DEFAULT_MAX_FILE_SIZE = "2M";
@@ -28,9 +44,11 @@ export async function runContentSearch(options: ContentSearchOptions): Promise<C
   const max = options.max ?? Number.POSITIVE_INFINITY;
   const all = options.all ?? false;
   const globs = options.globs ?? [];
-  const excludes = options.excludes === undefined
-    ? (all ? [] : [...DEFAULT_CONTENT_SEARCH_EXCLUDES])
-    : options.excludes;
+  const defaultExcludes = options.defaultExcludes ?? DEFAULT_CONTENT_SEARCH_EXCLUDES;
+  const excludes = [...new Set([
+    ...(all ? [] : defaultExcludes),
+    ...(options.excludes ?? []),
+  ].map(normalizeExcludePattern))];
   const runner = options.runner ?? defaultContentSearchRunner;
 
   // A file root must run from its parent directory with the file name as the search path.
@@ -206,12 +224,16 @@ function buildSearchArgs(options: { query: string; regex: boolean; all: boolean;
     args.push("--glob", glob);
   }
   for (const exclude of options.excludes) {
-    args.push("--glob", exclude.startsWith("!") ? exclude : `!${exclude}`);
+    args.push("--glob", exclude);
   }
   args.push(...options.laneArgs);
   args.push("--");
   args.push(options.rootIsFile ? (options.rootName ?? ".") : ".");
   return args;
+}
+
+function normalizeExcludePattern(pattern: string): string {
+  return pattern.startsWith("!") ? pattern : `!${pattern}`;
 }
 
 export interface ContentSearchRunnerDeps {

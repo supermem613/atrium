@@ -9,16 +9,28 @@ import { toolTextResult } from "./format.js";
 import { SEARCH_POLICY_CONTEXT } from "./searchPolicy.js";
 import { normalizeSearchResult } from "../core/search/normalize.js";
 import { readTextFileSlice } from "../core/readFile.js";
-import { lenientBool, lenientInt, scalarOrArray } from "./lenient.js";
+import { lenientBool, lenientInt, scalarOrArray, scalarOrArrayInput } from "./lenient.js";
 import type { SearchClientLike } from "../core/search/types.js";
 
 const defaultSearchTimeoutMs = 59_000;
+const searchExclude = scalarOrArrayInput(z.string().min(1), { nonEmpty: true });
 
 export const fileMaxOptionDescription =
   "Native produced-result cap: maximum number of file paths to return. Truncation is reported.";
 
 export const contentMaxOptionDescription =
   "Native produced-result cap: maximum number of matches to return. Truncation is reported.";
+
+export const searchRepositoryExcludeOptionDescription =
+  "Replace the default repository metadata exclusions. Repeat the flag for multiple patterns.";
+
+export function parseSearchRepositoryExcludeArg(value: string, previous: string[] = []): string[] {
+  const pattern = value.trim();
+  if (pattern.length === 0) {
+    throw new Error("--search-repository-exclude requires a non-empty pattern");
+  }
+  return [...previous, pattern];
+}
 
 // Dependencies the surface tool handlers close over. Kept as an explicit object
 // so the registry stays a pure function of its inputs with no environment reads.
@@ -470,7 +482,7 @@ function readTools(): ToolRegistration[] {
 }
 
 function searchTools(deps: SurfaceDeps): ToolRegistration[] {
-  const runContentSearch = async (spec: SearchVerbSpec, query: string, regex: boolean, root: string, glob?: string, exclude?: string, max?: number) =>
+  const runContentSearch = async (spec: SearchVerbSpec, query: string, regex: boolean, root: string, glob?: string, exclude?: string | string[], max?: number) =>
     toolTextResult(await runSearchWithHandoff(
       () => deps.searchClient.run({
         command: spec.command,
@@ -499,7 +511,7 @@ function searchTools(deps: SurfaceDeps): ToolRegistration[] {
           regex: lenientBool.optional().describe("Treat the patterns as regular expressions. Accepts a boolean or the strings \"true\"/\"false\". Defaults to false, which matches patterns literally."),
           path: z.string().min(1).optional().describe("Optional single file to restrict the search to. When set, only this file is searched instead of walking root."),
           glob: z.string().min(1).optional().describe("Optional glob to constrain the search by path or name."),
-          exclude: z.string().min(1).optional().describe("Optional exclude pattern applied as a negated glob."),
+          exclude: searchExclude.optional().describe("Optional exclude pattern or patterns applied as negated globs."),
           max: lenientInt({ positive: true }).optional().describe(`${contentMaxOptionDescription} Accepts an integer or a numeric string. Example: 5 or "5".`),
         },
       },
@@ -539,7 +551,7 @@ function searchTools(deps: SurfaceDeps): ToolRegistration[] {
       inputSchema: {
         root: z.string().min(1).describe("Root path to list files from."),
         glob: z.string().min(1).optional().describe("Optional glob to constrain the listing by path or name."),
-        exclude: z.string().min(1).optional().describe("Optional exclude pattern applied as a negated glob."),
+        exclude: searchExclude.optional().describe("Optional exclude pattern or patterns applied as negated globs."),
         max: lenientInt({ positive: true }).optional().describe(`${fileMaxOptionDescription} Accepts an integer or a numeric string. Example: 5 or "5".`),
       },
     },
