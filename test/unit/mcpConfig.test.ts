@@ -16,6 +16,17 @@ describe("buildMcpConfig surface derivation", () => {
     assert.equal(atrium.tools.includes("grep"), false);
   });
 
+  it("emits configured search defaults as a server launch argument", () => {
+    const atrium = buildMcpConfig(undefined, ["**/.git/**", "**/.sd/**"]).mcpServers.atrium;
+    assert.deepEqual(atrium.args, [
+      "mcp-server",
+      "--search-repository-exclude",
+      "**/.git/**",
+      "--search-repository-exclude",
+      "**/.sd/**",
+    ]);
+  });
+
   it("rejects a restricted selection that drops the required core surface", () => {
     assert.throws(() => buildMcpConfig(["read"]), /core/i);
   });

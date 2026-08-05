@@ -1,4 +1,4 @@
-import { runContentSearch } from "./contentSearch.js";
+import { configureContentSearchExcludes, runContentSearch } from "./contentSearch.js";
 import { runNativeFileSearch } from "./fileSearch.js";
 import type {
   ContentSearchOptions,
@@ -10,6 +10,7 @@ import type {
 } from "./types.js";
 
 export interface NativeSearchClientDependencies {
+  repositoryExcludes?: readonly string[];
   runContentSearch?: (options: ContentSearchOptions) => Promise<ContentSearchResult>;
   runFileSearch?: (options: { root: string; max?: number; timeoutMs?: number; globs?: string[]; excludes?: string[]; all?: boolean; perf?: boolean }) => Promise<NativeFileSearchResult>;
 }
@@ -21,6 +22,9 @@ export interface NativeSearchClientLike {
 export function createNativeSearchClient(dependencies: NativeSearchClientDependencies = {}): NativeSearchClientLike {
   const contentSearch = dependencies.runContentSearch ?? runContentSearch;
   const fileSearch = dependencies.runFileSearch ?? runNativeFileSearch;
+  const contentDefaultExcludes = dependencies.repositoryExcludes === undefined
+    ? undefined
+    : configureContentSearchExcludes(dependencies.repositoryExcludes);
 
   return {
     async run(options: NativeSearchRunOptions): Promise<NativeSearchEnvelope> {
@@ -30,7 +34,7 @@ export function createNativeSearchClient(dependencies: NativeSearchClientDepende
           ...(options.max !== undefined ? { max: options.max } : {}),
           ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
           ...(options.glob === undefined ? {} : { globs: [options.glob] }),
-          ...(options.exclude === undefined ? {} : { excludes: [options.exclude] }),
+          ...(options.exclude === undefined ? {} : { excludes: asArray(options.exclude) }),
           ...(options.all === true ? { all: true } : {}),
           ...(options.perf === true ? { perf: true } : {}),
         });
@@ -55,12 +59,13 @@ export function createNativeSearchClient(dependencies: NativeSearchClientDepende
       const result = await contentSearch({
         query: options.query ?? "",
         root: options.root,
+        ...(contentDefaultExcludes === undefined ? {} : { defaultExcludes: contentDefaultExcludes }),
         ...(options.regex === true ? { regex: true } : {}),
         ...(options.max !== undefined ? { max: options.max } : {}),
         ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
         ...(options.all === true ? { all: true } : {}),
         ...(options.glob === undefined ? {} : { globs: [options.glob] }),
-        ...(options.exclude === undefined ? {} : { excludes: [options.exclude] }),
+        ...(options.exclude === undefined ? {} : { excludes: asArray(options.exclude) }),
         ...(options.perf === true ? { perf: true } : {}),
       });
 
@@ -81,6 +86,10 @@ export function createNativeSearchClient(dependencies: NativeSearchClientDepende
       };
     },
   };
+}
+
+function asArray(value: string | readonly string[]): string[] {
+  return typeof value === "string" ? [value] : [...value];
 }
 
 function buildSearchMetrics(result: ContentSearchResult | NativeFileSearchResult): NativeSearchPerfMetrics | undefined {

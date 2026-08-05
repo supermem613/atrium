@@ -122,7 +122,7 @@ export interface XrayRunOptions {
   query?: string;
   regex?: boolean;
   glob?: string;
-  exclude?: string;
+  exclude?: string | readonly string[];
   all?: boolean;
   max?: number;
   timeoutMs?: number;
@@ -142,7 +142,7 @@ export interface NativeSearchRunOptions {
   query?: string;
   regex?: boolean;
   glob?: string;
-  exclude?: string;
+  exclude?: string | readonly string[];
   all?: boolean;
   max?: number;
   timeoutMs?: number;
@@ -218,6 +218,7 @@ export interface NativeFileSearchResult {
 export interface ContentSearchOptions {
   query: string;
   root: string;
+  defaultExcludes?: readonly string[];
   regex?: boolean;
   max?: number;
   timeoutMs?: number;

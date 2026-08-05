@@ -14,6 +14,8 @@ import {
   composeInstructions,
   createSurfaces,
   parseSurfaceArg,
+  parseSearchRepositoryExcludeArg,
+  searchRepositoryExcludeOptionDescription,
   selectEnabledSurfaces,
   surfaceOptionDescription,
 } from "./mcp/surfaces.js";
@@ -32,18 +34,24 @@ export interface AtriumServerOptions {
   waitTimeoutMs?: number;
   executionQueue?: ExecutionQueue | false;
   searchClient?: SearchClientLike;
+  searchRepositoryExcludes?: string[];
   surfaces?: string[];
   transport?: Transport;
   sink?: DiagnosticSink;
 }
 
 export function createAtriumServer(options: AtriumServerOptions = {}): McpServer {
+  if (options.searchClient !== undefined && options.searchRepositoryExcludes !== undefined) {
+    throw new Error("searchRepositoryExcludes cannot be combined with an injected search client");
+  }
   const backgroundHandoffAfterMs = resolveRequestSafeBudgetMs(options.backgroundHandoffAfterMs);
   const waitTimeoutMs = resolveRequestSafeBudgetMs(options.waitTimeoutMs);
   const executionOptions = {
     executionQueue: options.executionQueue,
   };
-  const searchClient = options.searchClient ?? createNativeSearchClient();
+  const searchClient = options.searchClient ?? createNativeSearchClient({
+    repositoryExcludes: options.searchRepositoryExcludes,
+  });
 
   const surfaces = selectEnabledSurfaces(createSurfaces({
     executionOptions,
@@ -95,9 +103,15 @@ export function parseServerArgv(argv: string[]): AtriumServerOptions {
   program
     .allowExcessArguments(false)
     .option("--surface <names>", surfaceOptionDescription, parseSurfaceArg)
+    .option("--search-repository-exclude <pattern>", searchRepositoryExcludeOptionDescription, parseSearchRepositoryExcludeArg)
     .parse(argv);
-  const options = program.opts<{ surface?: string[] }>();
-  return { surfaces: options.surface };
+  const options = program.opts<{ surface?: string[]; searchRepositoryExclude?: string[] }>();
+  return {
+    surfaces: options.surface,
+    ...(options.searchRepositoryExclude === undefined ? {} : {
+      searchRepositoryExcludes: options.searchRepositoryExclude,
+    }),
+  };
 }
 
 if (process.argv[1] !== undefined && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

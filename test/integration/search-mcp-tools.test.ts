@@ -92,6 +92,21 @@ describe("search MCP tools", () => {
 
       const expectedContentResult = { kind: "content", matches: [{ path: "src/one.ts", line: 7, text: "matched text" }], warnings: [] };
 
+      const configuredExcludes = ["**/.git/**", "**/.sd/**"];
+      const excludedContent = await callJson(client, "grep-code", {
+        root: "/tmp/x",
+        query: "needle",
+        exclude: configuredExcludes,
+      });
+      assert.deepEqual(excludedContent, expectedContentResult);
+      assert.deepEqual(fakeClient.calls.at(-1), {
+        command: "search",
+        root: "/tmp/x",
+        query: "needle",
+        exclude: configuredExcludes,
+        timeoutMs: 59_000,
+      });
+
       // A single query stays a literal native search, so grep and grep-code behavior is unchanged.
       const singleLiteralRouting = [
         { name: "grep", args: { root: "/tmp/x", query: "needle", glob: "**/*.ts", exclude: "**/dist/**", max: 5 }, expected: { command: "search", root: "/tmp/x", query: "needle", all: true, glob: "**/*.ts", exclude: "**/dist/**", max: 5, timeoutMs: 59_000 } },
@@ -134,6 +149,19 @@ describe("search MCP tools", () => {
       const parsedFiles = await callJson(client, "find-files", { root: "/tmp/f", glob: "**/*.ts", exclude: "**/dist/**", max: 50 });
       assert.deepEqual(parsedFiles, { kind: "files", matches: [{ path: "src/one.ts" }, { path: "src/two.ts" }], warnings: [] });
       assert.deepEqual(fakeClient.calls.at(-1), { command: "files", root: "/tmp/f", all: true, glob: "**/*.ts", exclude: "**/dist/**", max: 50, timeoutMs: 59_000 });
+
+      const excludedFiles = await callJson(client, "find-files", {
+        root: "/tmp/f",
+        exclude: configuredExcludes,
+      });
+      assert.deepEqual(excludedFiles, { kind: "files", matches: [{ path: "src/one.ts" }, { path: "src/two.ts" }], warnings: [] });
+      assert.deepEqual(fakeClient.calls.at(-1), {
+        command: "files",
+        root: "/tmp/f",
+        all: true,
+        exclude: configuredExcludes,
+        timeoutMs: 59_000,
+      });
     } finally {
       await client.close();
       await serverTransport.close();

@@ -1,4 +1,9 @@
-import { contentMaxOptionDescription, fileMaxOptionDescription, surfaceOptionDescription } from "./mcp/surfaces.js";
+import {
+  contentMaxOptionDescription,
+  fileMaxOptionDescription,
+  searchRepositoryExcludeOptionDescription,
+  surfaceOptionDescription,
+} from "./mcp/surfaces.js";
 
 export type CommandEffect = "read" | "write" | "network" | "local";
 
@@ -79,6 +84,11 @@ export const commandSpecs: CommandSpec[] = [
           type: "string",
           summary: surfaceOptionDescription,
         },
+        {
+          name: "--search-repository-exclude",
+          type: "string",
+          summary: searchRepositoryExcludeOptionDescription,
+        },
       ],
     },
     output: {
@@ -98,6 +108,11 @@ export const commandSpecs: CommandSpec[] = [
           name: "--surface",
           type: "string",
           summary: surfaceOptionDescription,
+        },
+        {
+          name: "--search-repository-exclude",
+          type: "string",
+          summary: searchRepositoryExcludeOptionDescription,
         },
       ],
     },

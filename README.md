@@ -106,8 +106,15 @@ selection it emits the `--surface` launch argument and a `tools` allowlist
 limited to the enabled surfaces' tools, so the client-side allowlist is always a
 subset of what the server registers.
 
+Ignore-aware searches exclude `.git` and `.sd` by default. Replace those
+repository metadata exclusions with repeated
+`--search-repository-exclude <pattern>`
+arguments on `atrium mcp-server`, `atrium-mcp`, or `atrium mcp-config`.
+Call-specific `exclude` patterns extend the configured defaults.
+
 ```bash
 atrium mcp-config --surface core,read
+atrium mcp-config --search-repository-exclude "**/.git/**" --search-repository-exclude "**/.sd/**"
 ```
 
 ## Always-on instructions extension
