@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -25,6 +25,7 @@ type SodaPullOutcome = {
 export type UpdateDeps = {
   repoRoot?: string;
   isGitRepo?: (dir: string) => boolean;
+  hasSodaWorkspace?: (dir: string) => boolean;
   execCommand?: (command: string, args: string[], cwd: string) => Promise<CommandResult>;
 };
 
@@ -50,14 +51,36 @@ function repoRootFromModule(): string {
   return dirname(dirname(dirname(fileURLToPath(import.meta.url))));
 }
 
+/**
+ * soda stores one workspace at `<repo>/.sd`. meta.json plus a non-empty repo-id
+ * is the same initialized gate soda itself uses, and it does not require `sd`
+ * to be on PATH. Worktree installs that share the main `.sd` still rely on the
+ * `sd status` probe or the interlock retry below.
+ */
+export function hasSodaWorkspaceMarkers(dir: string): boolean {
+  const workspaceDir = join(dir, ".sd");
+  const metaPath = join(workspaceDir, "meta.json");
+  const repoIdPath = join(workspaceDir, "repo-id");
+  if (!existsSync(metaPath) || !existsSync(repoIdPath)) {
+    return false;
+  }
+  try {
+    return readFileSync(repoIdPath, "utf8").trim().length > 0;
+  } catch {
+    return false;
+  }
+}
+
 async function defaultExecCommand(command: string, args: string[], cwd: string): Promise<CommandResult> {
   // npm and sd are Windows .cmd shims. execFile cannot launch those without a shell after CVE-2024-27980.
-  const needsWindowsShell = process.platform === "win32" && (command === "npm" || command === "sd");
-  const result = await execFileAsync(command, args, {
+  // Prefer an explicit cmd.exe argv over shell:true so args are not concatenated under DEP0190.
+  const invocation = process.platform === "win32" && (command === "npm" || command === "sd")
+    ? { command: "cmd.exe", args: ["/d", "/s", "/c", command, ...args] }
+    : { command, args };
+  const result = await execFileAsync(invocation.command, invocation.args, {
     cwd,
     encoding: "utf8",
     maxBuffer: 64 * 1024 * 1024,
-    shell: needsWindowsShell,
   });
   return { stdout: String(result.stdout), stderr: String(result.stderr) };
 }
@@ -71,12 +94,32 @@ export function gitPullMadeNoChanges(output: string): boolean {
   return /already up[- ]to[- ]date\.?/i.test(output);
 }
 
-async function isSodaManagedRepo(execCommand: NonNullable<UpdateDeps["execCommand"]>, repoRoot: string): Promise<boolean> {
+export function isSodaGitInterlockError(message: string): boolean {
+  return /sd-powered repo/i.test(message) || /raw git .* blocked/i.test(message);
+}
+
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+function parseSodaStatus(stdout: string): boolean {
+  const envelope = JSON.parse(stdout) as SodaEnvelope<{ summary?: { initialized?: boolean } }>;
+  return envelope.ok === true && envelope.data?.summary?.initialized === true;
+}
+
+async function probeSodaStatus(execCommand: NonNullable<UpdateDeps["execCommand"]>, repoRoot: string): Promise<boolean> {
   try {
     const result = await execCommand("sd", ["status"], repoRoot);
-    const envelope = JSON.parse(result.stdout) as SodaEnvelope<{ summary?: { initialized?: boolean } }>;
-    return envelope.ok === true && envelope.data?.summary?.initialized === true;
-  } catch {
+    return parseSodaStatus(result.stdout);
+  } catch (err: unknown) {
+    const stdout = stdoutFromError(err);
+    if (stdout) {
+      try {
+        return parseSodaStatus(stdout);
+      } catch {
+        return false;
+      }
+    }
     return false;
   }
 }
@@ -115,14 +158,21 @@ async function pullWithSoda(execCommand: NonNullable<UpdateDeps["execCommand"]>,
         }
       }
     }
-    const detail = err instanceof Error ? err.message : String(err);
+    const detail = errorMessage(err);
     throw new Error(`sd pull failed: ${detail}`);
   }
 }
 
+/**
+ * Prefer sd when the install repo is soda-managed. Detection uses sd status when
+ * available, plus local .sd workspace markers so a missing sd binary cannot be
+ * mistaken for a plain checkout. If a non-soda probe still hits soda interlock
+ * hooks on pull, retry once with sd pull instead of failing on the blocked write.
+ */
 export async function runSelfUpdate(deps: UpdateDeps = {}): Promise<UpdateResult> {
   const repoRoot = deps.repoRoot ?? repoRootFromModule();
   const isGitRepo = deps.isGitRepo ?? defaultIsGitRepo;
+  const hasSodaWorkspace = deps.hasSodaWorkspace ?? hasSodaWorkspaceMarkers;
   const execCommand = deps.execCommand ?? defaultExecCommand;
 
   if (!isGitRepo(repoRoot)) {
@@ -130,15 +180,45 @@ export async function runSelfUpdate(deps: UpdateDeps = {}): Promise<UpdateResult
   }
 
   const beforeRevision = await currentRevision(execCommand, repoRoot);
-  const sodaManaged = await isSodaManagedRepo(execCommand, repoRoot);
-  let pulled = false;
+  const sodaByStatus = await probeSodaStatus(execCommand, repoRoot);
+  const sodaByMarkers = hasSodaWorkspace(repoRoot);
+  const sodaManaged = sodaByStatus || sodaByMarkers;
+
+  let pulledBySoda = false;
   if (sodaManaged) {
-    pulled = await pullWithSoda(execCommand, repoRoot);
+    try {
+      pulledBySoda = await pullWithSoda(execCommand, repoRoot);
+    } catch (err: unknown) {
+      const detail = errorMessage(err);
+      if (sodaByMarkers && !sodaByStatus) {
+        throw new Error(
+          `This atrium install is soda-managed, but sd pull failed. Put sd on PATH and rerun atrium update. ${detail}`,
+        );
+      }
+      throw err instanceof Error ? err : new Error(detail);
+    }
   } else {
-    await execCommand("git", ["pull", "--ff-only"], repoRoot);
+    try {
+      await execCommand("git", ["pull", "--ff-only"], repoRoot);
+    } catch (err: unknown) {
+      const detail = errorMessage(err);
+      if (!isSodaGitInterlockError(detail)) {
+        throw err instanceof Error ? err : new Error(detail);
+      }
+      try {
+        pulledBySoda = await pullWithSoda(execCommand, repoRoot);
+      } catch (sodaErr: unknown) {
+        throw new Error(
+          `Pull was blocked by soda interlock hooks, and sd pull failed. Put sd on PATH and rerun atrium update. ${errorMessage(sodaErr)}`,
+        );
+      }
+    }
   }
+
   const afterRevision = await currentRevision(execCommand, repoRoot);
-  const alreadyUpToDate = sodaManaged ? !pulled : beforeRevision === afterRevision;
+  const alreadyUpToDate = sodaManaged || pulledBySoda
+    ? !pulledBySoda
+    : beforeRevision === afterRevision;
 
   if (alreadyUpToDate) {
     return {
