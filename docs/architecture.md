@@ -22,7 +22,7 @@ PowerShell remains the right tool for ad-hoc scripting, variables, loops, pipeli
 Copilot CLI starts Atrium from the user MCP configuration:
 
 ```powershell
-npm link
+bun link
 copilot mcp add atrium -- atrium mcp-server
 ```
 
@@ -284,7 +284,7 @@ The execution queue adds no child-process work when fewer than 4 commands are ac
 Run the benchmark with:
 
 ```powershell
-npm run benchmark -- --command node-version --iterations 15 --warmup 3
+bun run benchmark -- --command node-version --iterations 15 --warmup 3
 ```
 
 ## Surface registry and advertised instructions

@@ -55,8 +55,8 @@ describe("update", () => {
       "sd status",
       "git pull --ff-only",
       "git rev-parse HEAD",
-      "npm install --no-audit --no-fund",
-      "npm run build",
+      "bun install --frozen-lockfile",
+      "bun run build",
     ]);
     assert.equal(result.installed, true);
     assert.equal(result.built, true);
@@ -92,8 +92,8 @@ describe("update", () => {
       "sd status",
       "sd pull",
       "git rev-parse HEAD",
-      "npm install --no-audit --no-fund",
-      "npm run build",
+      "bun install --frozen-lockfile",
+      "bun run build",
     ]);
     assert.equal(calls.includes("git pull --ff-only"), false);
     assert.equal(result.pulled, true);
@@ -259,8 +259,8 @@ describe("update", () => {
       "git pull --ff-only",
       "sd pull",
       "git rev-parse HEAD",
-      "npm install --no-audit --no-fund",
-      "npm run build",
+      "bun install --frozen-lockfile",
+      "bun run build",
     ]);
     assert.equal(result.pulled, true);
     assert.equal(result.installed, true);

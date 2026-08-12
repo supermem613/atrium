@@ -47,7 +47,7 @@ const addonIsStale = hasAddon && newestInputMtimeMs > oldestAddonMtimeMs;
 
 if (hasAddon && !addonIsStale) {
   console.log(
-    "[build] native addon present and up to date, skipping native build. Run `npm run build:native` to force a rebuild.",
+    "[build] native addon present and up to date, skipping native build. Run `bun run build:native` to force a rebuild.",
   );
 } else {
   console.log(
@@ -55,14 +55,14 @@ if (hasAddon && !addonIsStale) {
       ? "[build] native addon is older than the Rust crate, rebuilding it."
       : "[build] native addon missing, building it.",
   );
-  // Bootstrap Rust when cargo is missing so `npm install; npm run build` needs
+      // Bootstrap Rust when cargo is missing so `bun install; bun run build` needs
   // no separate toolchain step. When cargo had to be installed this run, put it
   // on the child PATH so napi can find it without a new shell.
   const cargoBinDir = ensureCargo();
-  execSync("npm run build:native", {
+      execSync("bun run build:native", {
     stdio: "inherit",
     env: cargoBinDir ? { ...process.env, PATH: pathWithCargo(cargoBinDir) } : process.env,
   });
 }
 
-execSync("npx tsc", { stdio: "inherit" });
+    execSync("bunx tsc", { stdio: "inherit" });

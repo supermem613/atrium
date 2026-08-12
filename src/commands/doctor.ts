@@ -40,7 +40,7 @@ export function checkNativeSearchAddon(load: () => NativeSearchAddon | null = lo
     name: "native-search-addon",
     ok: false,
     detail: "native search addon not present; grep/grep-code/find-files are unavailable",
-    hint: "Run `npm run build:native`, or install the platform prebuilt, to build the in-process search engine.",
+    hint: "Run `bun run build:native`, or install the platform prebuilt, to build the in-process search engine.",
   };
 }
 

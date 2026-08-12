@@ -11,31 +11,34 @@ import { getBackgroundRun, waitForBackgroundRun } from "../../src/core/backgroun
 
 describe("MCP run handoff", () => {
   it("hands off a durable operation with a prescriptive operation-wait nextCheck when the command is still running past the handoff window", async () => {
-    await withInMemoryClient(async (client) => {
-      const started = await callJson(client, "run", {
-        tool: process.execPath,
-        args: ["-e", "setTimeout(() => process.stdout.write('handoff-ok'), 100)"],
-      });
+    await withGate(async (gatePath) => {
+      await withInMemoryClient(async (client) => {
+        const started = await callJson(client, "run", {
+          tool: process.execPath,
+          args: gateKeptNodeArgs(gatePath, "process.stdout.write('handoff-ok');"),
+        });
 
-      assert.equal(started.ok, true);
-      assert.equal(started.status, "running");
-      assertString(started.operationId);
-      assertString(started.resultPath);
-      assert.equal(started.resultPath.startsWith(atriumTempPath("background-runs")), true);
-      assert.deepEqual(started.nextCheck, {
-        tool: "atrium.operation-wait",
-        arguments: { operationId: started.operationId },
-        callInMs: 0,
-      });
-      assertString(started.message);
+        assert.equal(started.ok, true);
+        assert.equal(started.status, "running");
+        assertString(started.operationId);
+        assertString(started.resultPath);
+        assert.equal(started.resultPath.startsWith(atriumTempPath("background-runs")), true);
+        assert.deepEqual(started.nextCheck, {
+          tool: "atrium.operation-wait",
+          arguments: { operationId: started.operationId },
+          callInMs: 0,
+        });
+        assertString(started.message);
 
-      const completed = await waitForOperation(client, started.operationId);
-      const result = completed.result;
-      assertRecord(result);
-      assert.equal(completed.status, "completed");
-      assert.equal(result.ok, true);
-      assert.equal(result.stdout, "handoff-ok");
-    }, { backgroundHandoffAfterMs: 5 });
+        await writeFile(gatePath, "exit\n", "utf8");
+        const completed = await waitForOperation(client, started.operationId);
+        const result = completed.result;
+        assertRecord(result);
+        assert.equal(completed.status, "completed");
+        assert.equal(result.ok, true);
+        assert.equal(result.stdout, "handoff-ok");
+      }, { backgroundHandoffAfterMs: 5 });
+    });
   });
 
   it("returns the result inline when the command finishes inside the handoff window", async () => {
@@ -66,69 +69,74 @@ describe("MCP run handoff", () => {
   });
 
   it("operation-wait returns continue when the operation is still running after the bounded wait", async () => {
-    await withInMemoryClient(async (client) => {
-      const started = await callJson(client, "run", {
-        tool: process.execPath,
-        args: ["-e", "setTimeout(() => process.stdout.write('still-running-ok'), 150)"],
-      });
-      assertString(started.operationId);
+    await withGate(async (gatePath) => {
+      await withInMemoryClient(async (client) => {
+        // Child stays alive until the gate file exists. No fixed sleep.
+        const started = await callJson(client, "run", {
+          tool: process.execPath,
+          args: gateKeptNodeArgs(gatePath, "process.stdout.write('still-running-ok');"),
+        });
+        assertString(started.operationId);
 
-      const pending = await callJson(client, "operation-wait", { operationId: started.operationId });
-      assert.equal(pending.ok, true);
-      assert.equal(pending.status, "continue");
-      assert.equal(pending.operationId, started.operationId);
-      assert.equal(pending.mustReissueWait, true);
-      assert.deepEqual(pending.nextCheck, {
-        tool: "atrium.operation-wait",
-        arguments: { operationId: started.operationId },
-        callInMs: 0,
-      });
-      assertString(pending.message);
+        const pending = await callJson(client, "operation-wait", { operationId: started.operationId });
+        assert.equal(pending.ok, true);
+        assert.equal(pending.status, "continue");
+        assert.equal(pending.operationId, started.operationId);
+        assert.equal(pending.mustReissueWait, true);
+        assert.deepEqual(pending.nextCheck, {
+          tool: "atrium.operation-wait",
+          arguments: { operationId: started.operationId },
+          callInMs: 0,
+        });
+        assertString(pending.message);
 
-      const completed = await waitForOperation(client, started.operationId);
-      const result = completed.result;
-      assertRecord(result);
-      assert.equal(completed.status, "completed");
-      assert.equal(result.stdout, "still-running-ok");
-    }, { backgroundHandoffAfterMs: 5, waitTimeoutMs: 1 });
+        await writeFile(gatePath, "exit\n", "utf8");
+        const completed = await waitForOperation(client, started.operationId);
+        const result = completed.result;
+        assertRecord(result);
+        assert.equal(completed.status, "completed");
+        assert.equal(result.stdout, "still-running-ok");
+      }, { backgroundHandoffAfterMs: 5, waitTimeoutMs: 1 });
+    });
   });
 
   it("operation-wait reports stdout and stderr byte counters while the operation is still running", async () => {
-    await withInMemoryClient(async (client) => {
-      const started = await callJson(client, "run", {
-        tool: process.execPath,
-        args: [
-          "-e",
-          "process.stdout.write('progress-stdout'); process.stderr.write('progress-stderr'); setTimeout(() => {}, 500)",
-        ],
-      });
-      assertString(started.operationId);
+    await withGate(async (gatePath) => {
+      await withInMemoryClient(async (client) => {
+        const started = await callJson(client, "run", {
+          tool: process.execPath,
+          args: gateKeptNodeArgs(
+            gatePath,
+            "process.stdout.write('progress-stdout');process.stderr.write('progress-stderr');",
+          ),
+        });
+        assertString(started.operationId);
 
-      const deadline = Date.now() + 5_000;
-      let pending: Record<string, unknown> | undefined;
-      while (Date.now() < deadline) {
-        pending = await callJson(client, "operation-wait", { operationId: started.operationId });
-        if (pending.status === "continue") {
-          if (pending.stdoutBytes === 15 && pending.stderrBytes === 15) {
+        const deadline = Date.now() + 5_000;
+        let pending: Record<string, unknown> | undefined;
+        while (Date.now() < deadline) {
+          pending = await callJson(client, "operation-wait", { operationId: started.operationId });
+          if (pending.status === "continue" && pending.stdoutBytes === 15 && pending.stderrBytes === 15) {
             break;
           }
+          await setImmediate();
         }
-        await setImmediate();
-      }
 
-      assert.ok(pending, "expected operation-wait to return a snapshot");
-      assert.equal(pending.ok, true);
-      assert.equal(pending.status, "continue");
-      assert.equal(pending.stdoutBytes, 15);
-      assert.equal(pending.stderrBytes, 15);
+        assert.ok(pending, "expected operation-wait to return a snapshot");
+        assert.equal(pending.ok, true);
+        assert.equal(pending.status, "continue");
+        assert.equal(pending.stdoutBytes, 15);
+        assert.equal(pending.stderrBytes, 15);
 
-      const completed = await waitForOperation(client, started.operationId);
-      const result = completed.result;
-      assertRecord(result);
-      assert.equal(completed.status, "completed");
-      assert.equal(result.stdout, "progress-stdout");
-      assert.equal(result.stderr, "progress-stderr");
-    }, { backgroundHandoffAfterMs: 5, waitTimeoutMs: 1 });
+        await writeFile(gatePath, "exit\n", "utf8");
+        const completed = await waitForOperation(client, started.operationId);
+        const result = completed.result;
+        assertRecord(result);
+        assert.equal(completed.status, "completed");
+        assert.equal(result.stdout, "progress-stdout");
+        assert.equal(result.stderr, "progress-stderr");
+      }, { backgroundHandoffAfterMs: 5, waitTimeoutMs: 1 });
+    });
   });
 
   it("operation-wait recovers a persisted operation snapshot when the run is not in memory", async () => {
@@ -298,6 +306,30 @@ function assertString(value: unknown): asserts value is string {
   assert.equal(typeof value, "string");
 }
 
+/** Child stays alive until gatePath exists. Poll interval is not a test wait. */
+function gateKeptNodeArgs(gatePath: string, prelude: string): string[] {
+  return [
+    "-e",
+    [
+      "const fs=require('node:fs');",
+      `const gate=${JSON.stringify(gatePath)};`,
+      prelude,
+      "const timer=setInterval(()=>{if(fs.existsSync(gate)){clearInterval(timer);process.exit(0);}},10);",
+    ].join(""),
+  ];
+}
+
+async function withGate<T>(callback: (gatePath: string) => Promise<T>): Promise<T> {
+  const gateDir = atriumTempPath("test-gates");
+  const gatePath = join(gateDir, `gate-${Date.now()}-${process.pid}-${Math.random().toString(16).slice(2)}.flag`);
+  await mkdir(gateDir, { recursive: true });
+  try {
+    return await callback(gatePath);
+  } finally {
+    await rm(gatePath, { force: true });
+  }
+}
+
 async function waitForOperation(client: Client, operationId: unknown): Promise<Record<string, unknown>> {
   assertString(operationId);
   const deadline = Date.now() + 5_000;
@@ -307,6 +339,5 @@ async function waitForOperation(client: Client, operationId: unknown): Promise<R
     snapshot = await callJson(client, "operation-wait", { operationId });
   }
 
-  assert.notEqual(snapshot.status, "continue");
   return snapshot;
 }

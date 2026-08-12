@@ -339,7 +339,7 @@ export function createNativeContentSearchRunner(deps: ContentSearchRunnerDeps = 
   return async (args, options) => {
     const addon = loadAddon();
     if (addon === null) {
-      throw new Error("native search addon not available; run `npm run build:native` to build the in-process search engine");
+      throw new Error("native search addon not available; run `bun run build:native` to build the in-process search engine");
     }
 
     const parsed = parseNativeContentArgs(args);

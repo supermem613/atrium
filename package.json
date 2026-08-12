@@ -8,25 +8,27 @@
     "atrium-mcp": "./dist/server.js"
   },
   "scripts": {
-    "prebuild": "npm run lint:eslint && npm run lint:test",
-    "build": "node scripts/build.mjs",
+    "prebuild": "bun run lint:eslint && bun run lint:test",
+    "build": "bun scripts/build.mjs",
     "build:native": "napi build --release --platform --js-package-name atrium-search --manifest-path crates/atrium-search/Cargo.toml --output-dir crates/atrium-search",
     "test": "node test/run.mjs \"test/**/*.test.ts\"",
     "test:unit": "node test/run.mjs \"test/unit/**/*.test.ts\"",
     "test:integration": "node test/run.mjs \"test/integration/**/*.test.ts\"",
-    "lint": "npm run lint:eslint && npm run lint:src && npm run lint:test",
+    "lint": "bun run lint:eslint && bun run lint:src && bun run lint:test",
     "lint:eslint": "eslint src/ test/",
     "lint:src": "tsc --noEmit",
     "lint:test": "tsc --noEmit -p test/tsconfig.json",
-    "benchmark": "node scripts/benchmark-atrium.mjs",
-    "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
-    "prepublishOnly": "npm run build"
+    "benchmark": "bun scripts/benchmark-atrium.mjs",
+    "clean": "bun -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
+    "prepublishOnly": "bun run build"
   },
   "keywords": [],
   "author": "Marcus Markiewicz",
   "license": "MIT",
+  "packageManager": "bun@1.3.14",
   "engines": {
-    "node": ">=22.0.0"
+    "node": ">=22.0.0",
+    "bun": ">=1.3.0"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",

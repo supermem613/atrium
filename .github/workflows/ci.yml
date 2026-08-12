@@ -13,22 +13,24 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
-        node-version: [22]
+        bun-version: ["1.3.14"]
     steps:
       - uses: actions/checkout@v5
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ matrix.bun-version }}
       - uses: actions/setup-node@v5
         with:
-          node-version: ${{ matrix.node-version }}
-          cache: npm
+          node-version: 22
       - uses: dtolnay/rust-toolchain@stable
         id: toolchain
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: crates/atrium-search
-      - run: npm ci
-      - run: npm run lint:eslint
-      - run: npm run lint:src
-      - run: npm run lint:test
+      - run: bun install --frozen-lockfile
+      - run: bun run lint:eslint
+      - run: bun run lint:src
+      - run: bun run lint:test
       - name: Cache native addon
         id: cache-native-addon
         uses: actions/cache@v4
@@ -38,12 +40,12 @@ jobs:
       - name: Refresh cached addon mtimes on cache hit
         if: steps.cache-native-addon.outputs.cache-hit == 'true'
         run: node -e "const fs=require('node:fs');const path=require('node:path');const dir='crates/atrium-search';if(fs.existsSync(dir)){for(const f of fs.readdirSync(dir).filter((f)=>f.endsWith('.node'))){const p=path.join(dir,f);const now=new Date();fs.utimesSync(p, now, now);}}"
-      - run: node scripts/build.mjs
-      - run: npm test
+      - run: bun scripts/build.mjs
+      - run: bun run test
       - name: Upload test results
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: test-results-${{ matrix.os }}-node${{ matrix.node-version }}
+          name: test-results-${{ matrix.os }}-bun${{ matrix.bun-version }}
           path: test-results/
           if-no-files-found: warn

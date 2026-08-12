@@ -41,12 +41,12 @@ Interpretation: persistent Atrium MCP calls are effectively direct-spawn speed a
 ```bash
 git clone https://github.com/<you>/atrium.git ~/repos/atrium
 cd ~/repos/atrium
-npm install
-npm run build
-npm link    # makes `atrium` available globally
+bun install
+bun run build
+bun link    # makes `atrium` available globally
 ```
 
-Requires Node.js 22 or newer and a Rust toolchain (`cargo`) to compile the native search addon. Atrium's search tools run in-process through a native search engine, a napi-rs addon embedding ripgrep's crates. The addon is the only search engine, so search fails hard when no prebuilt addon is available. `npm run build` compiles the addon automatically on the first build (when it is missing) and then runs `tsc`. Run `atrium doctor` to confirm the in-process addon is active; it fails when the addon is absent.
+Requires Bun 1.3+ (package manager and script runner), Node.js 22+ for the published CLI runtime and node:test runner, and a Rust toolchain (`cargo`) to compile the native search addon. Atrium's search tools run in-process through a native search engine, a napi-rs addon embedding ripgrep's crates. The addon is the only search engine, so search fails hard when no prebuilt addon is available. `bun run build` compiles the addon automatically on the first build (when it is missing) and then runs `tsc`. Run `atrium doctor` to confirm the in-process addon is active; it fails when the addon is absent.
 
 ## Commands
 
@@ -70,13 +70,13 @@ atrium update          # pull with sd or git, install dependencies, and rebuild
 Build first:
 
 ```bash
-npm run build
+bun run build
 ```
 
 Register globally:
 
 ```powershell
-npm link
+bun link
 copilot mcp add atrium -- atrium mcp-server
 ```
 
@@ -251,7 +251,7 @@ The local `atrium mcp-run` debug command reissues `operation-wait` within the sa
 For performance checks:
 
 ```bash
-npm run benchmark -- --command node-version --iterations 15 --warmup 3
+bun run benchmark -- --command node-version --iterations 15 --warmup 3
 ```
 
 For the CLI-driven workflow for investigating a single MCP verb's performance, see [docs/perf.md](docs/perf.md).
@@ -286,23 +286,26 @@ For the CLI-driven workflow for investigating a single MCP verb's performance, s
 ## Development
 
 ```bash
-npm run build               # build the project and compile the native addon if it is missing, then emit dist/
-npm run build:native        # force-rebuild the native search addon (cargo)
-npm run lint                # run the ESLint, src type-check, and test type-check suites
-npm run lint:eslint         # lint src/ and test/
-npm run lint:src            # type-check src/
-npm run lint:test           # type-check test/
-npm run test                # run all tests
-npm run test:unit           # run the unit tests
-npm run test:integration    # run the integration tests
-npm run benchmark           # compare direct, PowerShell-wrapped, and Atrium MCP calls
-npm run clean               # remove dist/
+bun run build               # build the project and compile the native addon if it is missing, then emit dist/
+bun run build:native        # force-rebuild the native search addon (cargo)
+bun run lint                # run the ESLint, src type-check, and test type-check suites
+bun run lint:eslint         # lint src/ and test/
+bun run lint:src            # type-check src/
+bun run lint:test           # type-check test/
+bun test                    # full suite (bunfig harness → node test/run.mjs)
+bun run test                # full suite via node test/run.mjs
+bun run test:unit           # unit tests only
+bun run test:integration    # integration tests only
+# Filtered paths: bun run test -- "test/unit/foo.test.ts"
+# Do not pass suite paths to bare `bun test`; Bun treats them as its own filters.
+bun run benchmark           # compare direct, PowerShell-wrapped, and Atrium MCP calls
+bun run clean               # remove dist/
 ```
 
 CI runs on Ubuntu + Windows via GitHub Actions (`.github/workflows/ci.yml`),
 with an addon cache for the native addon. The cache key covers the platform,
 the Rust toolchain version, and the native addon crate inputs; only an exact
-key match restores it, and on a hit `npm run build` can skip the native
+key match restores it, and on a hit `bun run build` can skip the native
 compile.
 
 The test runner (`test/run.mjs`) still runs each test file in its own child

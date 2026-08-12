@@ -7,7 +7,7 @@ describe("native search addon loader", () => {
     const addon = loadNativeSearchAddon();
 
     if (addon === null) {
-      throw new Error("Expected the native search addon to load (build it with `npm run build:native`)");
+      throw new Error("Expected the native search addon to load (build it with `bun run build:native`)");
     }
 
     assert.equal(typeof addon.searchContent, "function");

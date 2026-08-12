@@ -4,7 +4,7 @@ import { join, delimiter } from "node:path";
 import { homedir, tmpdir } from "node:os";
 
 // The native search addon is compiled from a Rust crate, so a fresh clone needs
-// a working `cargo`. To let `npm run build` succeed without a separate manual
+// a working `cargo`. To let `bun run build` succeed without a separate manual
 // toolchain step, this bootstraps the stable Rust toolchain through rustup when
 // cargo is absent. It returns the directory that contains cargo so the caller
 // can put it on the child process PATH.
@@ -71,7 +71,7 @@ export function ensureCargo() {
   const installed = cargoHomeBin();
   if (!installed) {
     throw new Error(
-      "Rust installation completed but cargo was not found under ~/.cargo/bin. Install Rust from https://rustup.rs and re-run `npm run build`.",
+      "Rust installation completed but cargo was not found under ~/.cargo/bin. Install Rust from https://rustup.rs and re-run `bun run build`.",
     );
   }
   return installed;

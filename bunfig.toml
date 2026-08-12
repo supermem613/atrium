@@ -1,0 +1,8 @@
+[install]
+registry = "https://packagefeedproxy.microsoft.io/npm/"
+
+# Bun's runner cannot host this repo's node:test suite (describe nesting +
+# short default timeouts). Root is a thin harness that runs node test/run.mjs.
+[test]
+root = "scripts/bun-test"
+timeout = 900000

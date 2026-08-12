@@ -36,7 +36,7 @@ The benchmark harness owns the aggregate report used for benchmark suites. That 
 Use the benchmark entrypoint when you want a suite-level comparison:
 
 ```bash
-npm run benchmark -- --command node-version --iterations 15 --warmup 3
+bun run benchmark -- --command node-version --iterations 15 --warmup 3
 ```
 
 Interpret the benchmark output as a benchmark-owned aggregate report. Interpret the CLI `--perf` output as a CLI-owned per-operation report.
@@ -46,7 +46,7 @@ Interpret the benchmark output as a benchmark-owned aggregate report. Interpret 
 Use this exact command for the aggregate eval suite:
 
 ```bash
-npm run benchmark -- --suite all-verbs
+bun run benchmark -- --suite all-verbs
 ```
 
 It runs serially against realistic temporary fixtures for all seven MCP verbs (`schema`, `run`, `operation-wait`, `read`, `find-files`, `grep`, and `grep-code`). The search cases exercise Atrium's in-process native search engine for `find-files`, `grep`, and `grep-code`, which embeds ripgrep's crates and avoids a per-call child-process spawn. Use `atrium doctor` to confirm the in-process addon is present; search fails hard when the addon is missing. Treat the resulting aggregate report as the measurement baseline for comparable before/after Speedify runs. Keep CLI `--perf` as the single-operation diagnostic path when you need a trace for one verb instead of the suite-level eval report.

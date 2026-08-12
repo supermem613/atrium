@@ -72,9 +72,9 @@ export function hasSodaWorkspaceMarkers(dir: string): boolean {
 }
 
 async function defaultExecCommand(command: string, args: string[], cwd: string): Promise<CommandResult> {
-  // npm and sd are Windows .cmd shims. execFile cannot launch those without a shell after CVE-2024-27980.
+  // bun, npm, and sd can be Windows .cmd shims. execFile cannot launch those without a shell after CVE-2024-27980.
   // Prefer an explicit cmd.exe argv over shell:true so args are not concatenated under DEP0190.
-  const invocation = process.platform === "win32" && (command === "npm" || command === "sd")
+  const invocation = process.platform === "win32" && (command === "bun" || command === "npm" || command === "sd")
     ? { command: "cmd.exe", args: ["/d", "/s", "/c", command, ...args] }
     : { command, args };
   const result = await execFileAsync(invocation.command, invocation.args, {
@@ -176,7 +176,7 @@ export async function runSelfUpdate(deps: UpdateDeps = {}): Promise<UpdateResult
   const execCommand = deps.execCommand ?? defaultExecCommand;
 
   if (!isGitRepo(repoRoot)) {
-    throw new Error("Atrium install directory is not a git repo. Reinstall by cloning the repository, then run npm install and npm link.");
+    throw new Error("Atrium install directory is not a git repo. Reinstall by cloning the repository, then run bun install and bun link.");
   }
 
   const beforeRevision = await currentRevision(execCommand, repoRoot);
@@ -232,8 +232,8 @@ export async function runSelfUpdate(deps: UpdateDeps = {}): Promise<UpdateResult
     };
   }
 
-  await execCommand("npm", ["install", "--no-audit", "--no-fund"], repoRoot);
-  await execCommand("npm", ["run", "build"], repoRoot);
+  await execCommand("bun", ["install", "--frozen-lockfile"], repoRoot);
+  await execCommand("bun", ["run", "build"], repoRoot);
   return {
     repoRoot,
     beforeRevision,
