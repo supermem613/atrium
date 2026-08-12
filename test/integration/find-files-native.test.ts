@@ -116,13 +116,15 @@ test("finds a narrow glob before unrelated vendor files exhaust the deadline", a
     await mkdir(join(root, "test", "unit"), { recursive: true });
     await writeFile(join(root, "test", "unit", "undo.test.ts"), "target\n", "utf8");
 
+    // Keep ~5000 vendor files for walk/timeout stress, but only 50 package dirs.
+    // Windows pays heavily per mkdir; files in fewer dirs are much cheaper to build.
+    await mkdir(join(root, "node_modules"), { recursive: true });
     for (let batch = 0; batch < 50; batch += 1) {
-      await Promise.all(Array.from({ length: 100 }, async (_, index) => {
-        const packageName = `package-${String(batch * 100 + index).padStart(4, "0")}`;
-        const packageRoot = join(root, "node_modules", packageName);
-        await mkdir(packageRoot, { recursive: true });
-        await writeFile(join(packageRoot, "index.js"), "vendor\n", "utf8");
-      }));
+      const packageRoot = join(root, "node_modules", `package-${String(batch).padStart(2, "0")}`);
+      await mkdir(packageRoot, { recursive: true });
+      await Promise.all(Array.from({ length: 100 }, (_, index) =>
+        writeFile(join(packageRoot, `file-${String(index).padStart(3, "0")}.js`), "vendor\n", "utf8"),
+      ));
     }
 
     const result = await runNativeFileSearch({
