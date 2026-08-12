@@ -116,10 +116,11 @@ test("finds a narrow glob before unrelated vendor files exhaust the deadline", a
     await mkdir(join(root, "test", "unit"), { recursive: true });
     await writeFile(join(root, "test", "unit", "undo.test.ts"), "target\n", "utf8");
 
-    // Keep ~5000 vendor files for walk/timeout stress, but only 50 package dirs.
-    // Windows pays heavily per mkdir; files in fewer dirs are much cheaper to build.
+    // Measured floor (Windows host, 2026-08-12): full walk of ~2000 vendor files is
+    // ~30ms (> timeoutMs 25), while the same tree with this glob stays ~1-2ms. 5000
+    // files did not change search time; it only inflated setup/cleanup.
     await mkdir(join(root, "node_modules"), { recursive: true });
-    for (let batch = 0; batch < 50; batch += 1) {
+    for (let batch = 0; batch < 20; batch += 1) {
       const packageRoot = join(root, "node_modules", `package-${String(batch).padStart(2, "0")}`);
       await mkdir(packageRoot, { recursive: true });
       await Promise.all(Array.from({ length: 100 }, (_, index) =>
