@@ -3,13 +3,12 @@
 // real ~/.atrium/ state, mirroring CI exactly. Set ATRIUM_TEST_REAL_HOME=1 to opt out.
 //
 // Avoids `node --test` worker subprocesses (their IPC pipe intermittently
-// fails on Windows runners with deserialize errors). Spawns one child process
-// per file with a TAP reporter and aggregates the per-file summaries.
+// fails on Windows runners with deserialize errors).
 //
-// Files run one at a time on purpose. Running several files in parallel
-// oversubscribes the 4-core Windows CI runners because each perf and
-// background-run file spawns its own child processes. That contention made
-// timing-sensitive tests flake, so the runner stays serial.
+// Most files share one in-process batch (`--test-isolation=none --test-concurrency=1`)
+// so tsx/node startup is paid once. That stays serial inside the batch and does
+// not oversubscribe CI cores the way multi-file parallel workers would.
+// Files that mock process globals stay in their own child processes.
 import { mkdirSync, readdirSync, mkdtempSync, rmSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -107,24 +106,182 @@ export function evaluateBudgets(timings, budgets) {
   return violations;
 }
 
-// Extract per-test durations from one file's TAP output. node:test emits a
-// `duration_ms:` line inside each test's YAML diagnostic block.
+// Extract per-test durations from TAP. node:test emits a YAML diagnostic block
+// after each ok/not ok line. Collect the whole block (through `...`) before
+// recording so location/type can appear after duration_ms. Skip type: suite
+// rows so nested suites are not double-counted as tests.
 export function parseTestTimings(tapText, file) {
   const timings = [];
-  let currentName = null;
+  let pending = null;
+
+  const flush = () => {
+    if (!pending) {
+      return;
+    }
+    if (pending.type === "suite" || pending.ms == null || !pending.name) {
+      pending = null;
+      return;
+    }
+    timings.push({
+      file: pending.file,
+      name: pending.name,
+      ms: pending.ms,
+      failed: pending.failed,
+    });
+    pending = null;
+  };
+
   for (const line of tapText.split(/\r?\n/)) {
-    const result = line.match(/^\s*(?:ok|not ok) \d+ - (.+?)(?:\s+#.*)?$/);
+    const result = line.match(/^\s*(ok|not ok) \d+ - (.+?)(?:\s+#.*)?$/);
     if (result) {
-      currentName = result[1].trim();
+      flush();
+      pending = {
+        failed: result[1] === "not ok",
+        name: result[2].trim(),
+        file,
+        ms: null,
+        type: null,
+      };
+      continue;
+    }
+    if (!pending) {
+      continue;
+    }
+    if (/^\s*\.\.\.\s*$/.test(line)) {
+      flush();
+      continue;
+    }
+    const location = line.match(/^\s*location:\s*'([^']+)'/);
+    if (location) {
+      const located = repoRelativeTestPath(location[1]);
+      if (located) {
+        pending.file = located;
+      }
       continue;
     }
     const duration = line.match(/^\s*duration_ms:\s*([\d.]+)/);
-    if (duration && currentName !== null) {
-      timings.push({ file, name: currentName, ms: Number(duration[1]) });
-      currentName = null;
+    if (duration) {
+      pending.ms = Number(duration[1]);
+      continue;
+    }
+    const type = line.match(/^\s*type:\s*'([^']+)'/);
+    if (type) {
+      pending.type = type[1];
     }
   }
+  flush();
   return timings;
+}
+
+// Normalize node:test location paths (often absolute, sometimes with :line:col)
+// back to the repo-relative test/*.test.ts form used elsewhere in the runner.
+export function repoRelativeTestPath(location) {
+  const withoutPos = location.replace(/:(\d+):(\d+)$/, "");
+  const normalized = withoutPos.split("\\").join("/");
+  const marker = "/test/";
+  const index = normalized.toLowerCase().lastIndexOf(marker);
+  if (index >= 0) {
+    return normalized.slice(index + 1);
+  }
+  if (normalized.startsWith("test/")) {
+    return normalized;
+  }
+  return null;
+}
+
+// Files that must keep process isolation under shared-batch isolation=none:
+// - process.on / process.stdout mocks leak across files
+// - runner/queue spawn races tighten under a long shared event-loop load
+const ISOLATED_TEST_FILES = new Set([
+  "test/unit/transportDiagnostics.test.ts",
+  "test/unit/transportDiagnosticsCause.test.ts",
+  "test/unit/runner.test.ts",
+  "test/unit/backgroundRunLeanEnvelope.test.ts",
+]);
+
+export function partitionTestFiles(files) {
+  const shared = [];
+  const isolated = [];
+  for (const file of files) {
+    const normalized = file.split("\\").join("/");
+    if (ISOLATED_TEST_FILES.has(normalized)) {
+      isolated.push(file);
+    } else {
+      shared.push(file);
+    }
+  }
+  return { shared, isolated };
+}
+
+function buildSandboxEnv(baseEnv, sandboxRoot) {
+  if (process.env.ATRIUM_TEST_REAL_HOME) {
+    return { env: { ...baseEnv }, home: null };
+  }
+  const home = mkdtempSync(join(sandboxRoot, "home-"));
+  return {
+    home,
+    env: {
+      ...baseEnv,
+      HOME: home,
+      USERPROFILE: home,
+      LOCALAPPDATA: join(home, "AppData", "Local"),
+    },
+  };
+}
+
+function spawnTap(args, env) {
+  return new Promise((resolve) => {
+    const child = spawn("node", args, { env });
+    const startedAt = Date.now();
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk;
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk;
+    });
+    child.on("close", (code) => {
+      resolve({
+        stdout,
+        stderr,
+        durationMs: Date.now() - startedAt,
+        failed: code !== 0,
+      });
+    });
+    child.on("error", (err) => {
+      resolve({
+        stdout,
+        stderr: `${stderr}${err}`,
+        durationMs: Date.now() - startedAt,
+        failed: true,
+      });
+    });
+  });
+}
+
+// Shared-batch TAP (isolation=none) does not emit file paths on passing tests.
+// Keep one batch row for wall accounting and attach leaf-test timings for budgets
+// and slowest-test ranking. Isolated files still get true per-file rows.
+function expandSharedBatchResult(files, stdout, stderr, durationMs, failed) {
+  const batchLabel = `shared-batch (${files.length} files)`;
+  const counts = parseTapCounts(stdout);
+  const timings = parseTestTimings(stdout, batchLabel).map((timing) => ({
+    ...timing,
+    // Prefer a real location when present (failures); otherwise keep the batch label.
+    file: timing.file && timing.file !== batchLabel && !timing.file.startsWith("shared-batch")
+      ? timing.file
+      : batchLabel,
+  }));
+  return [{
+    file: batchLabel,
+    stdout: failed ? stdout : "",
+    stderr: failed ? stderr : "",
+    counts,
+    durationMs,
+    failed: failed || counts.fail > 0,
+    timings,
+  }];
 }
 
 // Build a machine-readable report object from per-file results.
@@ -218,54 +375,54 @@ function loadBudgets(path) {
   }
 }
 
-// Run one test file in its own child process with a private sandbox HOME so
-// parallel files cannot collide on ~/.atrium state. Resolves rather than
-// rejects so one crashed file cannot abort the pool.
-function runOneFile(file, baseEnv, sandboxRoot) {
-  return new Promise((resolve) => {
-    const home = process.env.ATRIUM_TEST_REAL_HOME
-      ? null
-      : mkdtempSync(join(sandboxRoot, "home-"));
-    const env = { ...baseEnv };
-    if (home) {
-      env.HOME = home;
-      env.USERPROFILE = home;
-      env.LOCALAPPDATA = join(home, "AppData", "Local");
-    }
-    const child = spawn("node", ["--import", "tsx", "--test-reporter=tap", file], { env });
-    const startedAt = Date.now();
-    let stdout = "";
-    let stderr = "";
-    child.stdout.on("data", (chunk) => {
-      stdout += chunk; 
-    });
-    child.stderr.on("data", (chunk) => {
-      stderr += chunk; 
-    });
-    const cleanup = () => {
-      if (home) {
-        rmSync(home, { recursive: true, force: true });
-      }
+// Run one test file in its own child process with a private sandbox HOME.
+async function runOneFile(file, baseEnv, sandboxRoot) {
+  const { env, home } = buildSandboxEnv(baseEnv, sandboxRoot);
+  try {
+    const result = await spawnTap(["--import", "tsx", "--test-reporter=tap", file], env);
+    const timings = parseTestTimings(result.stdout, file);
+    return {
+      file,
+      stdout: result.stdout,
+      stderr: result.stderr,
+      counts: parseTapCounts(result.stdout),
+      durationMs: result.durationMs,
+      failed: result.failed,
+      timings,
     };
-    child.on("close", (code) => {
-      cleanup();
-      const timings = parseTestTimings(stdout, file);
-      resolve({ file, stdout, stderr, counts: parseTapCounts(stdout), durationMs: Date.now() - startedAt, failed: code !== 0, timings });
-    });
-    child.on("error", (err) => {
-      cleanup();
-      const timings = parseTestTimings(stdout, file);
-      resolve({
-        file,
-        stdout,
-        stderr: `${stderr}${err}`,
-        counts: { tests: 0, pass: 0, fail: 0 },
-        durationMs: Date.now() - startedAt,
-        failed: true,
-        timings,
-      });
-    });
-  });
+  } finally {
+    if (home) {
+      rmSync(home, { recursive: true, force: true });
+    }
+  }
+}
+
+// One serial in-process batch for files that do not need process isolation.
+async function runSharedBatch(files, baseEnv, sandboxRoot) {
+  if (files.length === 0) {
+    return [];
+  }
+  if (files.length === 1) {
+    return [await runOneFile(files[0], baseEnv, sandboxRoot)];
+  }
+
+  const { env, home } = buildSandboxEnv(baseEnv, sandboxRoot);
+  try {
+    const result = await spawnTap([
+      "--import",
+      "tsx",
+      "--test",
+      "--test-reporter=tap",
+      "--test-isolation=none",
+      "--test-concurrency=1",
+      ...files,
+    ], env);
+    return expandSharedBatchResult(files, result.stdout, result.stderr, result.durationMs, result.failed);
+  } finally {
+    if (home) {
+      rmSync(home, { recursive: true, force: true });
+    }
+  }
 }
 
 async function main() {
@@ -282,10 +439,12 @@ async function main() {
   mkdirSync(testTempRoot, { recursive: true });
 
   const baseEnv = { ...process.env };
+  const { shared, isolated } = partitionTestFiles(files);
 
-  const results = new Array(files.length);
-  for (let index = 0; index < files.length; index++) {
-    results[index] = await runOneFile(files[index], baseEnv, testTempRoot);
+  const results = [];
+  results.push(...await runSharedBatch(shared, baseEnv, testTempRoot));
+  for (const file of isolated) {
+    results.push(await runOneFile(file, baseEnv, testTempRoot));
   }
 
   let totalTests = 0;
@@ -330,7 +489,7 @@ async function main() {
 
   const label = failedFiles.length || totalFail ? "FAIL" : "PASS";
   console.log(
-    `# ${label} tests=${totalTests} files=${results.length} pass=${totalPass} fail=${totalFail} durationMs=${Math.max(0, Math.round(wallClockMs))}`,
+    `# ${label} tests=${totalTests} files=${files.length} pass=${totalPass} fail=${totalFail} durationMs=${Math.max(0, Math.round(wallClockMs))}`,
   );
 
   // The slowest lists are the whole point of the accounting, so they print on
