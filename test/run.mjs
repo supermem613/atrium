@@ -191,11 +191,11 @@ export function repoRelativeTestPath(location) {
 
 // Files that must keep process isolation under shared-batch isolation=none:
 // - process.on / process.stdout mocks leak across files
-// - runner/queue spawn races tighten under a long shared event-loop load
+// - lean-envelope spawn/handoff races tighten under a long shared event-loop load
+// runner.test.ts stays in the shared batch: timeoutMs 500 covers start-marker write under load.
 const ISOLATED_TEST_FILES = new Set([
   "test/unit/transportDiagnostics.test.ts",
   "test/unit/transportDiagnosticsCause.test.ts",
-  "test/unit/runner.test.ts",
   "test/unit/backgroundRunLeanEnvelope.test.ts",
 ]);
 
