@@ -232,7 +232,9 @@ describe("runner", () => {
     const firstRun = await startExecutableRun({
       tool: process.execPath,
       args: ["-e", waitForReleaseScript(firstStart, join(dir, "release-first"), 0)],
-      timeoutMs: 1_000,
+      // Measured: child must write the start marker before timeout; 50ms raced
+      // and failed waitForFile. 200ms still beats the old 1000ms floor.
+      timeoutMs: 200,
     }, { executionQueue: queue });
     await waitForFile(firstStart);
 
