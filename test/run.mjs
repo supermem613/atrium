@@ -5,10 +5,11 @@
 // Avoids `node --test` worker subprocesses (their IPC pipe intermittently
 // fails on Windows runners with deserialize errors).
 //
-// Most files share one in-process batch (`--test-isolation=none --test-concurrency=1`)
-// so tsx/node startup is paid once. That stays serial inside the batch and does
+// Most files share one in-process batch (isolation=none + concurrency=1) so
+// tsx/node startup is paid once. That stays serial inside the batch and does
 // not oversubscribe CI cores the way multi-file parallel workers would.
 // Files that mock process globals stay in their own child processes.
+// Isolation flag name is version-gated via resolveTestIsolationFlag().
 import { mkdirSync, readdirSync, mkdtempSync, rmSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -213,6 +214,18 @@ export function partitionTestFiles(files) {
   return { shared, isolated };
 }
 
+// Node 22 only accepts --experimental-test-isolation. The stable
+// --test-isolation alias exists on Node 24+ (both names work there).
+// CI pins node-version: 22; engines allow >=22. Without this gate the
+// shared batch dies with "bad option: --test-isolation=none".
+export function resolveTestIsolationFlag(nodeVersion = process.versions.node) {
+  const major = Number.parseInt(String(nodeVersion).split(".")[0] ?? "", 10);
+  if (Number.isInteger(major) && major >= 24) {
+    return "--test-isolation=none";
+  }
+  return "--experimental-test-isolation=none";
+}
+
 function buildSandboxEnv(baseEnv, sandboxRoot) {
   if (process.env.ATRIUM_TEST_REAL_HOME) {
     return { env: { ...baseEnv }, home: null };
@@ -413,7 +426,7 @@ async function runSharedBatch(files, baseEnv, sandboxRoot) {
       "tsx",
       "--test",
       "--test-reporter=tap",
-      "--test-isolation=none",
+      resolveTestIsolationFlag(),
       "--test-concurrency=1",
       ...files,
     ], env);

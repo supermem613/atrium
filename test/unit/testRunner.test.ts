@@ -1,7 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 // @ts-expect-error — run.mjs is plain JS with no type declarations.
-import { discoverTestFiles, parseTapCounts, resolveTestPatterns } from "../run.mjs";
+import { discoverTestFiles, parseTapCounts, resolveTestIsolationFlag, resolveTestPatterns } from "../run.mjs";
 
 test("discoverTestFiles returns the exact file for a concrete path pattern", () => {
   assert.deepEqual(discoverTestFiles(["test/unit/testRunner.test.ts"]), [
@@ -45,4 +46,27 @@ test("parseTapCounts extracts tests, pass, and fail counts", () => {
     pass: 3,
     fail: 0,
   });
+});
+
+// Guards the historic CI failure on Node 22 (setup-node node-version: 22)
+// where shared-batch used --test-isolation=none and Node exited with
+// "bad option: --test-isolation=none". Node 22 only documents the
+// experimental name; the stable alias is Node 24+.
+test("resolveTestIsolationFlag uses the experimental name on Node 22", () => {
+  assert.equal(resolveTestIsolationFlag("22.23.2"), "--experimental-test-isolation=none");
+});
+
+test("resolveTestIsolationFlag uses the stable name on Node 24+", () => {
+  assert.equal(resolveTestIsolationFlag("24.19.0"), "--test-isolation=none");
+});
+
+test("current node accepts the resolved shared-batch isolation flag", () => {
+  const flag = resolveTestIsolationFlag();
+  // Probe the flag alone (no --test) so a bad option is the only failure mode.
+  const probe = spawnSync(process.execPath, [flag, "-e", "process.exit(0)"], {
+    encoding: "utf8",
+  });
+  const combined = `${probe.stdout ?? ""}${probe.stderr ?? ""}`;
+  assert.equal(combined.includes(`bad option: ${flag}`), false, combined);
+  assert.equal(probe.status, 0, combined);
 });
