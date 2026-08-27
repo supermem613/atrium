@@ -4,6 +4,7 @@ dist/
 *.tgz
 *.log
 test-results/
+package-lock.json
 
 # Native addon (atrium-search) build artifacts
 crates/atrium-search/target/
