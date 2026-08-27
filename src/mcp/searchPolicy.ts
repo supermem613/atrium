@@ -11,7 +11,7 @@ export const SEARCH_POLICY_CONTEXT = [
   "These primitives also replace the harness built-in glob and grep tools: map glob to atrium-find-files and grep to atrium-grep or atrium-grep-code. When such a built-in is disabled or unavailable, call the Atrium primitive instead of retrying the built-in.",
   "Use the Atrium MCP search primitives instead: atrium-find-files for path or name discovery, atrium-grep for content search, and atrium-grep-code for git-aware code search. Pass query as one pattern or an array of patterns to match any of.",
   "These Atrium primitives are deferred MCP tools. If atrium-find-files, atrium-grep, or atrium-grep-code is not in your immediately callable tool list, call the tool search tool first (for example with the pattern find-files|grep) to surface them, then call them. Do not abandon the search or read files blindly because a primitive looks unavailable.",
-  "Always pass root and a query; narrow with glob, exclude, and max.",
+  "Always pass query and an explicit location: root, or an absolute path; narrow with glob, exclude, and max.",
   "If a search times out, retry with a narrower glob, a more specific query, or a lower max.",
   "Do not fall back to raw search commands.",
 ].join(" ");

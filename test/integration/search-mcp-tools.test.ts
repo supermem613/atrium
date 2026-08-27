@@ -80,7 +80,7 @@ describe("search MCP tools", () => {
         assert.equal(properties?.queries, undefined, `${toolName} should not expose a separate queries field`);
         assert.equal((properties?.regex as Record<string, unknown>).type, "boolean", `${toolName} regex should be a boolean`);
         const required = inputSchema.required as string[] | undefined;
-        assert.deepEqual(required, ["root", "query"], `${toolName} should require root and query`);
+        assert.deepEqual(required, ["query"], `${toolName} should require query; root is optional when path is absolute`);
       }
 
       const findFiles = listedTools.tools.find((candidate) => candidate.name === "find-files");
@@ -322,6 +322,48 @@ describe("search MCP tools", () => {
       assert.deepEqual(parsed, { kind: "content", matches: [{ path: "src/one.ts", line: 7, text: "matched text" }], warnings: [] });
       // path narrows the search to the one file, so the search client runs against that file as its root.
       assert.deepEqual(fakeClient.calls.at(-1), { command: "search", root: "/tmp/x/only.ts", query: "needle", all: true, timeoutMs: 59_000 });
+    } finally {
+      await client.close();
+      await serverTransport.close();
+    }
+  });
+
+  it("searches an absolute path without requiring root", async () => {
+    const fakeClient = new FakeXrayClient();
+    const server = createAtriumServer({ searchClient: fakeClient });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const client = new Client({ name: "test-client", version: "1.0.0" });
+
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+
+    try {
+      const expectedContentResult = { kind: "content", matches: [{ path: "src/one.ts", line: 7, text: "matched text" }], warnings: [] };
+      const cases = [
+        { name: "grep", expectedCall: { command: "search", root: "/tmp/x/only.ts", query: "needle", all: true, timeoutMs: 59_000 } },
+        { name: "grep-code", expectedCall: { command: "search", root: "/tmp/x/only.ts", query: "needle", timeoutMs: 59_000 } },
+      ] as const;
+      for (const tool of cases) {
+        const response = await client.callTool({
+          name: tool.name,
+          arguments: { query: "needle", path: "/tmp/x/only.ts" },
+        });
+        assert.ok(Array.isArray(response.content));
+        const firstContent = response.content[0];
+        assert.equal(typeof firstContent, "object");
+        assert.notEqual(firstContent, null);
+        assert.equal("text" in firstContent, true);
+        assert.equal(typeof firstContent.text, "string");
+        assert.equal(
+          firstContent.text.startsWith("{"),
+          true,
+          `${tool.name} should return a JSON search result when path is absolute and root is omitted; got: ${firstContent.text}`,
+        );
+        const parsed = JSON.parse(firstContent.text) as Record<string, unknown>;
+        delete parsed.timingMs;
+        assert.deepEqual(parsed, expectedContentResult);
+        assert.deepEqual(fakeClient.calls.at(-1), tool.expectedCall);
+      }
     } finally {
       await client.close();
       await serverTransport.close();
