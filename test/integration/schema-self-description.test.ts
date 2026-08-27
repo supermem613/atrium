@@ -46,7 +46,7 @@ describe("schema self-description", () => {
 
       const parameters = data.parameters as Array<Record<string, unknown>>;
       const byName = new Map(parameters.map((parameter) => [parameter.name, parameter]));
-      assert.equal(byName.get("root")?.required, true);
+      assert.equal(byName.get("root")?.required, false);
       assert.equal(byName.get("query")?.required, true);
       assert.equal(byName.get("regex")?.required, false);
       assert.match(String(byName.get("query")?.description), /array of patterns/i);

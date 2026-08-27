@@ -498,6 +498,21 @@ function searchTools(deps: SurfaceDeps): ToolRegistration[] {
       deps.backgroundHandoffAfterMs,
     ));
 
+  // Object-level Zod refine is forbidden here: ListTools would advertise an empty schema.
+  // Absolute path is a complete location, so root stays optional on the raw shape.
+  function resolveGrepSearchRoot(root: string | undefined, path: string | undefined): string | null {
+    if (path !== undefined && isAbsolute(path)) {
+      return path;
+    }
+    if (root === undefined) {
+      return null;
+    }
+    if (path === undefined) {
+      return root;
+    }
+    return join(root, path);
+  }
+
   const tools: ToolRegistration[] = [];
   for (const [toolName, spec] of Object.entries(contentVerbs)) {
     tools.push(defineTool(
@@ -506,10 +521,10 @@ function searchTools(deps: SurfaceDeps): ToolRegistration[] {
         title: spec.title,
         description: spec.description,
         inputSchema: {
-          root: z.string().min(1).describe("Root path to search from."),
+          root: z.string().min(1).optional().describe("Directory to search from. Required unless path is an absolute file."),
           query: scalarOrArray(z.string().min(1), { nonEmpty: true }).describe("A search pattern, or an array of patterns to match any of. Accepts a single string or a non-empty array. A string matches literally; an array is combined into one alternation. Set regex true to treat patterns as regular expressions. Example: \"needle\" or [\"alpha\", \"beta\"]."),
           regex: lenientBool.optional().describe("Treat the patterns as regular expressions. Accepts a boolean or the strings \"true\"/\"false\". Defaults to false, which matches patterns literally."),
-          path: z.string().min(1).optional().describe("Optional single file to restrict the search to. When set, only this file is searched instead of walking root."),
+          path: z.string().min(1).optional().describe("Optional single file to restrict the search to. An absolute path may be used without root. A relative path is joined to root."),
           glob: z.string().min(1).optional().describe("Optional glob to constrain the search by path or name."),
           exclude: searchExclude.optional().describe("Optional exclude pattern or patterns applied as negated globs."),
           max: lenientInt({ positive: true }).optional().describe(`${contentMaxOptionDescription} Accepts an integer or a numeric string. Example: 5 or "5".`),
@@ -537,7 +552,16 @@ function searchTools(deps: SurfaceDeps): ToolRegistration[] {
           }
         }
         const resolved = resolveSearchQuery(query, regex ?? false);
-        const searchRoot = path === undefined ? root : (isAbsolute(path) ? path : join(root, path));
+        const searchRoot = resolveGrepSearchRoot(root, path);
+        if (searchRoot === null) {
+          return toolTextResult({
+            ok: false,
+            error: {
+              code: "MissingSearchLocation",
+              message: "provide root, or an absolute path",
+            },
+          });
+        }
         return runContentSearch(spec, resolved.query, resolved.regex, searchRoot, glob, exclude, max);
       },
     ));
