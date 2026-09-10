@@ -21,6 +21,19 @@ describe("package lock", () => {
     const pkg = JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8"));
     assert.match(String(pkg.packageManager ?? ""), /^bun@\d+\.\d+\.\d+$/, "package.json must pin packageManager to bun");
 
+    // Guards the Ubuntu CI failure in run 34519463750 where Bun launched the
+    // native build CLI and it wrote Windows-style transaction backup paths.
+    assert.match(
+      String(pkg.devDependencies?.["@napi-rs/cli"] ?? ""),
+      /^\^3\.9\.\d+$/,
+      "@napi-rs/cli must use the maintained 3.9.x line",
+    );
+    assert.match(
+      String(pkg.scripts?.["build:native"] ?? ""),
+      /^node node_modules\/@napi-rs\/cli\/dist\/cli\.js build\b/,
+      "build:native must launch @napi-rs/cli with Node on POSIX runners",
+    );
+
     const bunfig = readFileSync(new URL("../../bunfig.toml", import.meta.url), "utf8");
     assert.match(bunfig, /\[test\]/, "bunfig must configure [test] so bare bun test does not use Bun's runner");
     assert.match(bunfig, /root\s*=\s*"scripts\/bun-test"/, "bun test root must be the node-runner harness");
