@@ -11,3 +11,5 @@ crates/atrium-search/target/
 crates/atrium-search/*.node
 crates/atrium-search/index.js
 crates/atrium-search/index.d.ts
+crates/atrium-search/.napi-rs-filesystem-transaction.swp/
+crates/atrium-search/.*.tmp
