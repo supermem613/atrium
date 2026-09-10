@@ -20,6 +20,8 @@ describe("core guardrail instructions", () => {
     "Never invent a tool or verb name",
     "must point at a file that already exists on disk",
     "Do not post-process a file-backed tool result through a separate shell",
+    "Repository inspection default:",
+    "If the needed Atrium tool is deferred, use the host tool-search mechanism to surface that exact tool",
   ];
   for (const phrase of required) {
     it(`advertises the core guardrail: ${phrase}`, () => {

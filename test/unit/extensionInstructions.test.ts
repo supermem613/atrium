@@ -25,6 +25,7 @@ const REMINDER_HANDOFF_MARKER = "operation-wait";
 const REMINDER_SEARCH_MARKER = "atrium-grep-code";
 const REMINDER_READ_MARKER = "atrium-read";
 const REMINDER_SEARCH_GLOB_MARKER = "instead of glob,";
+const REMINDER_SURFACING_MARKER = "If an Atrium primitive is deferred, use tool search to surface it";
 
 describe("extension surface-selection parsing", () => {
   it("treats a missing args vector as the default all-surface server", () => {
@@ -127,6 +128,7 @@ describe("extension hook injection contract", () => {
       assert.ok(additionalContext.includes(REMINDER_HANDOFF_MARKER));
       assert.ok(additionalContext.includes(REMINDER_SEARCH_MARKER));
       assert.ok(additionalContext.includes(REMINDER_READ_MARKER));
+      assert.ok(additionalContext.includes(REMINDER_SURFACING_MARKER));
     }
   });
 
@@ -152,6 +154,7 @@ describe("extension hook injection contract", () => {
 
     assert.ok(additionalContext.includes("surfaces: core, read"));
     assert.ok(additionalContext.includes(REMINDER_SHELL_MARKER));
+    assert.ok(additionalContext.includes(REMINDER_SURFACING_MARKER));
     assert.ok(additionalContext.length <= REMINDER_MAX_CHARS);
   });
 
