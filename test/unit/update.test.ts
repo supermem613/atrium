@@ -79,7 +79,7 @@ describe("update", () => {
         }
         if (command === "sd" && args.join(" ") === "pull") {
           return {
-            stdout: JSON.stringify({ ok: true, data: [{ status: "up-to-date", worktreeUpdated: false }, { status: "pulled", worktreeUpdated: true }] }),
+            stdout: JSON.stringify({ ok: true, data: [{ status: "up-to-date", worktree: false }, { status: "pulled", worktree: true }] }),
             stderr: "",
           };
         }
@@ -117,7 +117,7 @@ describe("update", () => {
           return { stdout: JSON.stringify({ ok: true, data: { summary: { initialized: true } } }), stderr: "" };
         }
         if (command === "sd" && args.join(" ") === "pull") {
-          return { stdout: JSON.stringify({ ok: true, data: [{ status: "up-to-date", worktreeUpdated: false }] }), stderr: "" };
+          return { stdout: JSON.stringify({ ok: true, data: [{ status: "up-to-date", worktree: false }] }), stderr: "" };
         }
         return { stdout: "ok\n", stderr: "" };
       },

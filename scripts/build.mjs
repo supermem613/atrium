@@ -65,4 +65,4 @@ if (hasAddon && !addonIsStale) {
   });
 }
 
-    execSync("bunx tsc", { stdio: "inherit" });
+    execSync("bun run tsc", { stdio: "inherit" });
