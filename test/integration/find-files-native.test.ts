@@ -93,6 +93,25 @@ test("filters files by glob patterns", async () => {
   }
 });
 
+test("accepts Windows-style separators in file globs", async () => {
+  const root = await mkdtemp(join(tmpdir(), "atrium-native-windows-glob-"));
+  try {
+    await mkdir(join(root, "test", "component"), { recursive: true });
+    await writeFile(join(root, "test", "component", "fixture.test.ts"), "fixture\n", "utf8");
+
+    const result = await runNativeFileSearch({
+      root,
+      all: true,
+      globs: ["test\\component\\*.test.ts"],
+      max: 10,
+    });
+
+    assert.deepEqual(paths(result), ["test/component/fixture.test.ts"], JSON.stringify(result));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("caps results and warns when the native output is truncated", async () => {
   const root = await mkdtemp(join(tmpdir(), "atrium-native-cap-"));
   try {
