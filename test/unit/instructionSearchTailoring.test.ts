@@ -22,6 +22,8 @@ describe("search surface tailoring", () => {
       "grep-code for git-aware code content search",
       "Do not fall back to a separate shell search",
       "On a timeout, retry narrower",
+      "prefer Atrium search primitives for repository path and content discovery",
+      "use the host tool-search mechanism to surface the exact primitive",
     ]) {
       assert.ok(text.includes(phrase), `missing search guardrail: ${phrase}`);
     }

@@ -97,8 +97,8 @@ export interface InstructionHookResult {
 export function composeReminderForSelection(selection: readonly string[] | undefined): string {
   const reminderParts = [
     "Atrium guardrails remain in effect.",
-    "Shells are denied: call the target binary directly with an args vector, never a shell command string.",
-    "A run or search that returns status running with an operationId is not a result: reissue operation-wait until terminal.",
+    "Shells are denied: call binaries directly with args, never a shell command string.",
+    "A running run or search with an operationId is not a result: call operation-wait to terminal.",
   ];
 
   if (isReadSurfaceEnabled(selection)) {
@@ -113,9 +113,15 @@ export function composeReminderForSelection(selection: readonly string[] | undef
     );
   }
 
+  if (isReadSurfaceEnabled(selection) || isSearchSurfaceEnabled(selection)) {
+    reminderParts.push(
+      "If an Atrium primitive is deferred, use tool search to surface it; if callable, use it directly. Fall back only when its surface is unavailable.",
+    );
+  }
+
   reminderParts.push(`Active ${describeEnabledSurfaces(selection)}.`);
   reminderParts.push(
-    "The full contract was injected at session start; call the schema tool for exact invocation shapes.",
+    "The full contract is injected at session start; call schema for exact shapes.",
   );
 
   return reminderParts.join(" ");
