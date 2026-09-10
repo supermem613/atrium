@@ -7,6 +7,15 @@ use napi::Result;
 use crate::common::{build_overrides, configure_ignore, relative_display, safe_walk_root, Control};
 use crate::{NativeFilesSearchOptions, NativeSearchMetrics};
 
+fn normalize_glob_separators(patterns: &Option<Vec<String>>) -> Option<Vec<String>> {
+  patterns.as_ref().map(|patterns| {
+    patterns
+      .iter()
+      .map(|pattern| pattern.replace('\\', "/"))
+      .collect()
+  })
+}
+
 pub struct FilesSearchOutcome {
   pub paths: Vec<String>,
   pub truncated: bool,
@@ -20,6 +29,8 @@ pub fn search(options: &NativeFilesSearchOptions) -> Result<FilesSearchOutcome> 
   let root_is_file = options.root_is_file.unwrap_or(false);
   let all = options.all.unwrap_or(false);
   let want_perf = options.perf.unwrap_or(false);
+  let globs = normalize_glob_separators(&options.globs);
+  let excludes = normalize_glob_separators(&options.excludes);
 
   // For a file root, ripgrep runs with cwd = dirname and `-- <basename>`; the
   // addon receives `root` = that dirname and lists only the named file.
@@ -29,10 +40,10 @@ pub fn search(options: &NativeFilesSearchOptions) -> Result<FilesSearchOutcome> 
       None => base_dir.clone(),
     }
   } else {
-    safe_walk_root(&base_dir, &options.globs)
+    safe_walk_root(&base_dir, &globs)
   };
 
-  let overrides = build_overrides(&base_dir, &options.globs, &options.excludes)?;
+  let overrides = build_overrides(&base_dir, &globs, &excludes)?;
 
   let mut builder = WalkBuilder::new(&walk_root);
   builder.overrides(overrides);
