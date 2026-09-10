@@ -20,6 +20,7 @@ type SodaEnvelope<TData> = {
 type SodaPullOutcome = {
   status?: string;
   worktreeUpdated?: boolean;
+  worktree?: boolean;
 };
 
 export type UpdateDeps = {
@@ -140,7 +141,7 @@ function parseSodaPull(stdout: string): boolean {
   if (!Array.isArray(envelope.data)) {
     throw new Error("sd pull failed: missing pull outcomes");
   }
-  return envelope.data.some((outcome) => outcome.worktreeUpdated === true);
+  return envelope.data.some((outcome) => outcome.worktreeUpdated === true || outcome.worktree === true);
 }
 
 async function pullWithSoda(execCommand: NonNullable<UpdateDeps["execCommand"]>, repoRoot: string): Promise<boolean> {
