@@ -155,6 +155,12 @@ in FIFO order for a slot. This limit is intentionally per-process, not
 machine-wide; separate Copilot tabs can still have separate Atrium server
 processes.
 
+Child stdin write errors stay local to that execution. Atrium waits for the child
+to close and retains its stdout, stderr, and exit status. A timeout still returns
+`Timeout`, and a nonzero exit still returns `NonZeroExit`. If the child exits zero
+but the stdin write failed, the result is `ok: false` with `error.code: "StdinError"`.
+The queue slot is released normally and subsequent MCP requests can run.
+
 `run` starts the process once and waits inside the fixed 10-second request-safe
 response budget. If the process finishes before that budget expires, Atrium
 returns the normal compact result. Otherwise Atrium adopts it into the durable
