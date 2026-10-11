@@ -8,6 +8,8 @@
         "@modelcontextprotocol/sdk": "^1.30.0",
         "chalk": "^5.6.2",
         "commander": "^13.1.0",
+        "stream-chain": "^4.2.5",
+        "stream-json": "^3.7.0",
         "zod": "^3.25.76",
       },
       "devDependencies": {
@@ -605,6 +607,10 @@
     "signal-exit": ["signal-exit@4.1.0", "https://ms-feed-25.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/signal-exit/-/signal-exit-4.1.0.tgz", {}, "sha1-lSGIwcvVRgcOLdIND0HArgUwywQ="],
 
     "statuses": ["statuses@2.0.2", "https://ms-feed-2.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/statuses/-/statuses-2.0.2.tgz", {}, "sha1-j3XuzvdlteHPzcCA2llAntQk44I="],
+
+    "stream-chain": ["stream-chain@4.2.6", "https://ms-feed-25.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/stream-chain/-/stream-chain-4.2.6.tgz", {}, "sha512-1zeJ8CrtJfmiba26ui8jXkq/xLRFvhzkdH02D5QLO9Cnovgeb28IJxg88DdraWnjnkbOol/++uIAybJbJhk7ig=="],
+
+    "stream-json": ["stream-json@3.7.0", "https://ms-feed-25.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/stream-json/-/stream-json-3.7.0.tgz", { "dependencies": { "stream-chain": "^4.2.5" } }, "sha512-rCSBdcBP/bPk6T8QFcxAj1MSzAuc5i49cYW6IE7sYObNEPccBJIUiL6fU9c9BWt40aJK0siVynLX7lWaW8alXw=="],
 
     "strip-json-comments": ["strip-json-comments@3.1.1", "https://ms-feed-25.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/strip-json-comments/-/strip-json-comments-3.1.1.tgz", {}, "sha1-MfEoGzgyYwQ0gxwxDAHMzajL4AY="],
 

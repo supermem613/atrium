@@ -2,7 +2,6 @@
 
 import { Command } from "commander";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -26,6 +25,7 @@ import {
   registerTransportDiagnostics,
   type DiagnosticSink,
 } from "./mcp/transportDiagnostics.js";
+import { RecoveringStdioTransport } from "./mcp/recoveringStdioTransport.js";
 
 const packageVersion = (JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version: string }).version;
 
@@ -80,7 +80,7 @@ export function createAtriumServer(options: AtriumServerOptions = {}): McpServer
 }
 
 export async function startAtriumServer(options: AtriumServerOptions = {}): Promise<void> {
-  const transport: Transport = options.transport ?? new StdioServerTransport();
+  const transport: Transport = options.transport ?? new RecoveringStdioTransport();
   const sink = options.sink ?? defaultStderrSink;
   const server = createAtriumServer(options);
 
