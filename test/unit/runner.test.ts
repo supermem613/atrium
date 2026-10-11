@@ -78,7 +78,7 @@ describe("runner", () => {
         stderr.resume = () => {};
         child.stdout = stdout;
         child.stderr = stderr;
-        child.stdin = { end() {} };
+        child.stdin = Object.assign(new EventEmitter(), { end() {} });
         child.kill = () => {};
         queueMicrotask(() => {
           if (stdoutText.length > 0) {
@@ -174,6 +174,55 @@ describe("runner", () => {
     assert.equal(result.stderr, "bad");
     assert.equal(result.metrics.exitCode, 7);
     assert.equal(result.metrics.stderrBytes, 3);
+  });
+
+  it("reports incomplete stdin delivery on exit zero and releases the queue for a complete input", () => {
+    // Use the measured input size from session dfe8f83e, not a guessed pipe limit.
+    const inputBytes = 5_597_908;
+    const childScript = `
+      import { startExecutableRun } from "./src/core/runner.ts";
+      import { ExecutionQueue } from "./src/core/executionQueue.ts";
+      const queue = new ExecutionQueue(1);
+      const stdin = "x".repeat(${inputBytes});
+      const first = await startExecutableRun({
+        tool: process.execPath,
+        args: ["-e", "process.stdout.write('early-output'); process.stderr.write('early-error');"],
+        stdin,
+      }, { executionQueue: queue });
+      const second = await startExecutableRun({
+        tool: process.execPath,
+        args: ["-e", "let bytes = 0; process.stdin.on('data', chunk => bytes += chunk.length); process.stdin.on('end', () => process.stdout.write(String(bytes)));"],
+        stdin,
+      }, { executionQueue: queue });
+      process.stdout.write(JSON.stringify([await first.result, await second.result]));
+    `;
+    const stdout = execFileSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", childScript], {
+      cwd: process.cwd(),
+      encoding: "utf8",
+    });
+    const [first, second] = JSON.parse(stdout) as RunExecutableResult[];
+
+    assert.deepEqual({
+      ok: first.ok,
+      code: first.error?.code,
+      exitCode: first.metrics.exitCode,
+      stdout: first.stdout,
+      stderr: first.stderr,
+      stdinBytes: first.metrics.stdinBytes,
+      nextOk: second.ok,
+      nextStdout: second.stdout,
+      nextActive: second.metrics.queueActiveAtStart,
+    }, {
+      ok: false,
+      code: "StdinError",
+      exitCode: 0,
+      stdout: "early-output",
+      stderr: "early-error",
+      stdinBytes: inputBytes,
+      nextOk: true,
+      nextStdout: String(inputBytes),
+      nextActive: 1,
+    });
   });
 
   it("limits concurrent executable starts and records queue metrics", async () => {

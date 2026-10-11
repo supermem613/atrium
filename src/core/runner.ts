@@ -94,6 +94,7 @@ interface SpawnAttempt {
   signal: NodeJS.Signals | null;
   timedOut: boolean;
   spawnError?: NodeJS.ErrnoException;
+  stdinError?: NodeJS.ErrnoException;
 }
 
 interface PreparedSpawn {
@@ -168,17 +169,24 @@ export async function startExecutableRun(input: RunExecutableInput, options: Sta
       const stderr = attempt.stderr;
       const output = await materializeRunOutput(stdout, stderr, defaultInlineOutputLimitBytes);
       const timingMs = Date.now() - startedAt;
+      const error = attempt.timedOut ? {
+        code: "Timeout",
+        message: `Process exceeded timeoutMs=${timeoutMs}.`,
+      } : attempt.exitCode !== 0 ? {
+        code: "NonZeroExit",
+        message: `Process exited with code ${String(attempt.exitCode)}.`,
+      } : attempt.stdinError !== undefined ? {
+        code: "StdinError",
+        message: `Failed to write child stdin: ${attempt.stdinError.message}`,
+      } : undefined;
 
       return {
-        ok: attempt.exitCode === 0 && !attempt.timedOut,
+        ok: error === undefined,
         tool: input.tool,
         timingMs,
         metrics: buildRunMetrics(input, args, stdin, attempt, timingMs, permit?.metrics),
         ...output,
-        error: attempt.exitCode === 0 && !attempt.timedOut ? undefined : {
-          code: attempt.timedOut ? "Timeout" : "NonZeroExit",
-          message: attempt.timedOut ? `Process exceeded timeoutMs=${timeoutMs}.` : `Process exited with code ${String(attempt.exitCode)}.`,
-        },
+        error,
       };
     } finally {
       permit?.release();
@@ -227,6 +235,7 @@ async function spawnOnce(input: RunExecutableInput, tool: string, args: string[]
 
   let timedOut = false;
   let spawnError: NodeJS.ErrnoException | undefined;
+  let stdinError: NodeJS.ErrnoException | undefined;
   const timeout = setTimeout(() => {
     timedOut = true;
     child.kill();
@@ -234,6 +243,11 @@ async function spawnOnce(input: RunExecutableInput, tool: string, args: string[]
 
   child.once("error", (error) => {
     spawnError = toErrnoException(error);
+  });
+  // A child can exit before consuming stdin. Its stream error is not a spawn
+  // error, and must not bypass output drainage or terminate the MCP server.
+  child.stdin.on("error", (error) => {
+    stdinError = toErrnoException(error);
   });
   child.stdout.on("data", (chunk: Buffer) => {
     stdoutChunks.push(chunk);
@@ -274,6 +288,7 @@ async function spawnOnce(input: RunExecutableInput, tool: string, args: string[]
     signal,
     timedOut,
     spawnError,
+    stdinError,
   };
 }
 
