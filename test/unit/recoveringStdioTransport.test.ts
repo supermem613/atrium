@@ -440,50 +440,52 @@ test("close during queued sends settles every write and permits no later output"
   assert.equal(stdout.listenerCount("error"), 0);
 });
 
+// Keep these tests top-level. Nesting them under another test caused Node 22
+// to cancel them when the parent settled (CI run 38174353508).
+test("a serialization failure rejects only that send and later output remains usable", async () => {
+  const stdin = new PassThrough();
+  const stdout = new PassThrough();
+  const transport = new RecoveringStdioTransport(stdin, stdout);
+  const nextLine = readLine(stdout);
+  const circular: Record<string, unknown> = {};
+  circular.self = circular;
+  await transport.start();
+  await assert.rejects(transport.send({ jsonrpc: "2.0", id: 1, result: circular }), /circular/i);
+  await transport.send({ jsonrpc: "2.0", id: 2, result: { recovered: true } });
+  assert.deepEqual(JSON.parse(await nextLine()), { jsonrpc: "2.0", id: 2, result: { recovered: true } });
+  await transport.close();
+});
+
+test("EOF drains the last coalesced input chunk before notifying close", async () => {
+  const stdin = new PassThrough();
+  const stdout = new PassThrough();
+  const transport = new RecoveringStdioTransport(stdin, stdout);
+  const frame = request(1);
+  const count = Math.ceil(stdin.readableHighWaterMark / frame.length) + 1;
+  let received = 0;
+  let receivedAtClose = 0;
+  transport.onmessage = () => {
+    received += 1; 
+  };
+  const closed = new Promise<void>((resolve) => {
+    transport.onclose = () => {
+      receivedAtClose = received;
+      resolve();
+    };
+  });
+  await transport.start();
+  stdin.end(Buffer.concat(Array.from({ length: count }, () => frame)));
+  await waitFor(closed, "EOF did not complete transport lifecycle");
+  assert.equal(receivedAtClose, count);
+  await transport.close();
+});
+
 test("output close without an error settles pending sends and closes once", async () => {
   const stdin = new PassThrough();
   const stdout = new Writable({
     write() {
       // Keep the write pending so output close owns settlement.
     },
-  });
-
-  test("a serialization failure rejects only that send and later output remains usable", async () => {
-    const stdin = new PassThrough();
-    const stdout = new PassThrough();
-    const transport = new RecoveringStdioTransport(stdin, stdout);
-    const nextLine = readLine(stdout);
-    const circular: Record<string, unknown> = {};
-    circular.self = circular;
-    await transport.start();
-    await assert.rejects(transport.send({ jsonrpc: "2.0", id: 1, result: circular }), /circular/i);
-    await transport.send({ jsonrpc: "2.0", id: 2, result: { recovered: true } });
-    assert.deepEqual(JSON.parse(await nextLine()), { jsonrpc: "2.0", id: 2, result: { recovered: true } });
-    await transport.close();
-  });
-
-  test("EOF drains the last coalesced input chunk before notifying close", async () => {
-    const stdin = new PassThrough();
-    const stdout = new PassThrough();
-    const transport = new RecoveringStdioTransport(stdin, stdout);
-    const frame = request(1);
-    const count = Math.ceil(stdin.readableHighWaterMark / frame.length) + 1;
-    let received = 0;
-    let receivedAtClose = 0;
-    transport.onmessage = () => {
-      received += 1; 
-    };
-    const closed = new Promise<void>((resolve) => {
-      transport.onclose = () => {
-        receivedAtClose = received;
-        resolve();
-      };
-    });
-    await transport.start();
-    stdin.end(Buffer.concat(Array.from({ length: count }, () => frame)));
-    await waitFor(closed, "EOF did not complete transport lifecycle");
-    assert.equal(receivedAtClose, count);
-    await transport.close();
   });
   const transport = new RecoveringStdioTransport(stdin, stdout);
   let closeCount = 0;
