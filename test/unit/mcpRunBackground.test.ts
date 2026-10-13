@@ -1,7 +1,7 @@
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
 import { setImmediate } from "node:timers/promises";
-import { mkdir, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
@@ -13,9 +13,10 @@ describe("MCP run handoff", () => {
   it("hands off a durable operation with a prescriptive operation-wait nextCheck when the command is still running past the handoff window", async () => {
     await withGate(async (gatePath) => {
       await withInMemoryClient(async (client) => {
+        const args = gateKeptNodeArgs(gatePath, "process.stdout.write('handoff-ok');");
         const started = await callJson(client, "run", {
           tool: process.execPath,
-          args: gateKeptNodeArgs(gatePath, "process.stdout.write('handoff-ok');"),
+          args,
         });
 
         assert.equal(started.ok, true);
@@ -37,6 +38,13 @@ describe("MCP run handoff", () => {
         assert.equal(completed.status, "completed");
         assert.equal(result.ok, true);
         assert.equal(result.stdout, "handoff-ok");
+        const recovered = JSON.parse(await readFile(started.resultPath, "utf8")) as Record<string, unknown>;
+        assertRecord(recovered.result);
+        const invocation = { tool: process.execPath, args };
+        assert.deepEqual(
+          [started.invocation, result.invocation, recovered.result.invocation],
+          [invocation, invocation, invocation],
+        );
       }, { backgroundHandoffAfterMs: 5 });
     });
   });

@@ -265,7 +265,9 @@ Flow:
 
 Alongside this resolution and npm shim handling, the runner inspects the resolved tool basename before spawning. When it is a Python interpreter (`python`, `python3`, or `pythonX.Y`, with or without `.exe`) and the caller has not already passed `-X utf8`, the runner injects `-X utf8` ahead of the caller arguments. This forces the Python child to use UTF-8 for stdin and stdout instead of the Windows ANSI code page, so non-ASCII bytes survive a round trip through a Python child. The injection is argv-only and reads or writes no environment variable.
 
-Atrium intentionally does not return debug-only fields such as resolved executable path, argv echo, cwd echo, stdout preview, stderr preview, warnings, or hints by default. Queue metrics are included because they are needed to dogfood and tune the execution limiter.
+The MCP run surface adds `invocation: { tool, args, cwd? }` to these results and to initial handoff handles. It records the original caller values after scalar argument normalization, not resolved executable paths or injected arguments. File arguments remain `{ file }` references, and stdin is excluded. Direct argument values are disclosed without redaction. The surface enriches the completion promise before handing it to the background-run store, so terminal waits and persisted terminal snapshots retain `result.invocation`. Continue snapshots stay compact. MCP validation and file-input errors retain the SDK error format. The executable runner itself remains unchanged, including its results used for schema discovery.
+
+Resolved executable paths, stdout previews, stderr previews, warnings, and hints are not added by this invocation echo. Queue metrics are included because they are needed to dogfood and tune the execution limiter.
 
 ## Output and artifact policy
 

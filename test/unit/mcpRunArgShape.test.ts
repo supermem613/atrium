@@ -9,6 +9,32 @@ import { createAtriumServer } from "../../src/server.js";
 import { atriumTempPath } from "../../src/core/tempPaths.js";
 
 describe("run args string shape", () => {
+  it("discloses the original invocation in results without substituting file contents or stdin", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "atrium-invocation-"));
+    const argumentFile = join(directory, "argument.txt");
+    await writeFile(argumentFile, "resolved argument", "utf8");
+    const args = [
+      "-e",
+      "process.stdin.resume()",
+      "two words",
+      "--token=disclosed",
+      { file: argumentFile },
+    ];
+    try {
+      await withInMemoryClient(async (client) => {
+        const result = await callRun(client, {
+          tool: process.execPath,
+          args,
+          cwd: directory,
+          stdin: "private stdin",
+        });
+        assert.deepEqual(result.invocation, { tool: process.execPath, args, cwd: directory });
+      });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it("executes a lone string arg as exactly one argument and never splits a spaced path", async () => {
     const directory = atriumTempPath("arg shape dir");
     await mkdir(directory, { recursive: true });
@@ -20,6 +46,7 @@ describe("run args string shape", () => {
         const result = await callRun(client, { tool: process.execPath, args: script });
         assert.equal(result.ok, true);
         assert.equal(result.stdout, "0");
+        assert.deepEqual(result.invocation, { tool: process.execPath, args: [script] });
       });
     } finally {
       await rm(directory, { recursive: true, force: true });
@@ -80,6 +107,11 @@ describe("run args string shape", () => {
           const result = await callRun(client, args);
           assert.equal(result.ok, false, JSON.stringify(args));
           assert.equal((result.error as { code: string }).code, "SpawnError");
+          assert.deepEqual(result.invocation, {
+            tool: args.tool,
+            args: "args" in args ? args.args : [],
+            ...("cwd" in args ? { cwd: args.cwd } : {}),
+          });
           const next = await callRun(client, { tool: process.execPath, args: ["-e", "process.stdout.write('alive')"] });
           assert.deepEqual({ ok: next.ok, stdout: next.stdout }, { ok: true, stdout: "alive" });
         }

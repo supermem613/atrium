@@ -23,7 +23,7 @@ Copilot CLI on Windows often wraps simple CLI calls in PowerShell. That adds pro
 - supports `{ "file": "..." }` input values for UTF-8 file content in `args[]` and `stdin`
 - accepts `args` as a single value or an array of values; a lone value becomes exactly one argument and is never shell-split, so the `{file}` variant and the no-shell rule still hold
 - returns stdout/stderr and read content with a fixed heuristic: empty omitted when applicable, 1-8192 bytes inline, larger output as `{ "file": "...", "bytes": n }`
-- trims agent-facing results to the fields needed for routing: `ok`, `tool`, `timingMs`, stdout/stderr, and errors
+- returns routing fields plus the original invocation in MCP run results: `ok`, `tool`, `timingMs`, `invocation`, stdout/stderr, and errors
 - limits one MCP server process to 4 concurrent child executions and reports queue metrics in run results
 - discovers tool schemas by trying `<tool> schema`, then falls back to `<tool> --help`
 - keeps PowerShell available only for real scripting, control flow, pipelines, and interactive commands
@@ -225,6 +225,21 @@ MCP callers can use the same compact file-value contract for inputs and outputs:
 ```
 
 Small stdout/stderr and read content up to 8192 bytes are returned inline as strings. Larger output is returned as `{ "file": "...", "bytes": n }`.
+
+MCP run results disclose the original executable and argument vector in `invocation`, so the expanded Copilot CLI result shows argument values even when its input header shows only an item count:
+
+```json
+{
+  "invocation": {
+    "tool": "gh",
+    "args": ["issue", "create", "--body", { "file": "C:\\temp\\body.md" }]
+  }
+}
+```
+
+`invocation` also includes `cwd` when supplied. A single argument becomes a one-item array; omitted arguments become `[]`. Direct arguments are not redacted, including credentials supplied as arguments. File references remain references: resolved file contents and stdin are not echoed. Treat returned results and persisted operation artifacts accordingly. This is the caller's invocation, not the resolved executable path or any arguments Atrium injects internally.
+
+Inline results and returned execution failures include `invocation`. An initial running handle includes it too, and the final `operation-wait` response preserves it inside `result.invocation`. Continue responses retain their existing compact shape. MCP input-validation and file-input errors retain the SDK error format. Search results and schema-discovery subprocess results do not gain this field.
 
 `atrium.run` and the search MCP tools have one execution behavior. They return the normal result when the work completes inside the fixed 10-second request-safe response budget. If the work is still running when that budget expires, Atrium returns a durable `operationId`, a `resultPath`, and a prescriptive `nextCheck` object. `nextCheck` names exactly what to call next: the `atrium.operation-wait` tool with that `operationId`. Call `atrium.operation-wait`, then repeat while it returns `status: "continue"`. Each `operation-wait` call uses the same fixed 10-second response budget. Running and continue payloads may include bounded cumulative stdout, stderr, and a progress snapshot, while the terminal completed response still preserves the final complete result. Each progress update uses a monotonic revision, so a later `operation-wait` waits for completion, a newer progress revision, or the fixed request-safe window rather than spinning on the same snapshot. Terminal waits return `status: "completed"` or `status: "failed"` with the final `result` or `error`. Agents do not control operation or wait timeouts: executable runs retain their fixed four-hour timeout, while native searches retain their fixed 59-second timeout.
 

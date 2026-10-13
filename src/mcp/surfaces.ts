@@ -230,18 +230,29 @@ function resolveSearchQuery(
   return { query: patterns.map(escapeRegExp).join("|"), regex: true };
 }
 
+type RunInvocation = Pick<RunExecutableInput, "tool" | "cwd"> & {
+  args: NonNullable<RunExecutableInput["args"]>;
+};
+
 async function runWithHandoff(
   input: RunExecutableInput,
   backgroundHandoffAfterMs: number,
   executionOptions: { executionQueue?: ExecutionQueue | false } = {},
-): Promise<RunExecutableResult | Awaited<ReturnType<typeof adoptBackgroundRun>>> {
+): Promise<(RunExecutableResult | Awaited<ReturnType<typeof adoptBackgroundRun>>) & { invocation: RunInvocation }> {
+  // Echo the caller's file references, not resolved contents or stdin.
+  const invocation: RunInvocation = {
+    tool: input.tool,
+    args: input.args ?? [],
+    ...(input.cwd === undefined ? {} : { cwd: input.cwd }),
+  };
   const running = await startExecutableRun(withLongRunningDefault(input), executionOptions);
-  const result = await waitForResultOrTimeout(running.result, backgroundHandoffAfterMs);
+  const completion = running.result.then((result) => ({ ...result, invocation }));
+  const result = await waitForResultOrTimeout(completion, backgroundHandoffAfterMs);
   if (result !== undefined) {
     return result;
   }
 
-  return adoptBackgroundRun(running);
+  return { ...await adoptBackgroundRun({ ...running, result: completion }), invocation };
 }
 
 async function runSearchWithHandoff(
@@ -435,7 +446,7 @@ function coreTools(deps: SurfaceDeps): ToolRegistration[] {
       "run",
       {
         title: "Run a CLI or executable",
-        description: "Execute named CLIs with structured args and structured JSON returns. Returns the normal result when the command finishes inside the handoff window, otherwise returns a durable operationId and a prescriptive nextCheck instruction telling you to call operation-wait.",
+        description: "Execute named CLIs with structured args and structured JSON returns. Results and initial handoffs disclose the original tool, args, and optional cwd in invocation without redaction. File references stay references; stdin and resolved file contents are not echoed. Returns the normal result when the command finishes inside the handoff window, otherwise returns a durable operationId and a prescriptive nextCheck instruction telling you to call operation-wait.",
         inputSchema: {
           tool: z.string().min(1).describe("Binary name on PATH or executable path. Shells such as pwsh, powershell, bash, cmd, sh, and zsh are denied."),
           args: scalarOrArray(z.union([z.string(), z.object({ file: z.string().min(1) })])).optional().describe("Argument vector. Accepts a single value coerced to exactly one argument, never shell-split, or an array of values. Use {file} to replace that argument with UTF-8 file contents. Do not pass a shell command string. Example: \"status\" or [\"status\"]."),
