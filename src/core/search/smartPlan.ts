@@ -60,6 +60,11 @@ export function planSmartSearch(options: SmartPlanOptions): SmartPlan {
     return buildPlan("sequential", "regex search uses one ripgrep walk", [], false, false);
   }
 
+  // Positive override globs bypass native type filters, so every lane searches the same files.
+  if (options.globs?.some((glob) => !glob.startsWith("!") && !glob.startsWith("#") && /[^\p{White_Space}]/u.test(glob))) {
+    return buildPlan("sequential", "positive globs use one ripgrep walk", [], false, true);
+  }
+
   const lane = laneForExtensionLikeQuery(options.query);
   if (lane !== null) {
     return buildPlan("narrowed", `extension-like query uses ${lane} lane`, [LANES[lane]], true, true);

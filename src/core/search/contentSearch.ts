@@ -58,7 +58,7 @@ export async function runContentSearch(options: ContentSearchOptions): Promise<C
     ? await resolveContentSearchRoot(options.root)
     : { cwd: options.root, rootIsFile: false, rootName: undefined };
 
-  const plan = planSmartSearch({ query, regex });
+  const plan = planSmartSearch({ query, regex, globs });
   const laneArgSets = plan.strategy === "sequential"
     ? [[] as string[]]
     : plan.lanes.map((lane) => lane.args);

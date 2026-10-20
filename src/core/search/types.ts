@@ -168,6 +168,7 @@ export interface SmartPlan {
 export interface SmartPlanOptions {
   query: string;
   regex?: boolean;
+  globs?: readonly string[];
 }
 
 export interface ContentSearchRunMetrics {

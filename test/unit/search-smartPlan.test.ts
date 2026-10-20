@@ -30,3 +30,19 @@ test("smart plan keeps regex searches sequential", () => {
   assert.deepEqual(plan.lanes, []);
   assert.equal(plan.reason, "regex search uses one ripgrep walk");
 });
+
+test("smart plan uses one fixed-string walk when positive globs override type lanes", () => {
+  for (const query of ["needle", "README.md", "package.json"]) {
+    const plan = planSmartSearch({ query, globs: ["!**/vendor/**", "**/*.ts"] });
+    assert.equal(plan.strategy, "sequential");
+    assert.equal(plan.fixedString, true);
+    assert.equal(plan.fallbackOnZero, false);
+    assert.deepEqual(plan.lanes, []);
+  }
+});
+
+test("smart plan preserves type lanes for negation-only globs", () => {
+  const plan = planSmartSearch({ query: "needle", globs: ["!**/vendor/**", "#comment", "", " \u0085"] });
+  assert.equal(plan.strategy, "fanout");
+  assert.deepEqual(plan.lanes.map((lane) => lane.name), ["markdown", "code", "everything"]);
+});

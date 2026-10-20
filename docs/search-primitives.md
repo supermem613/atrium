@@ -75,6 +75,7 @@ Optional:
 - `root` for `grep` and `grep-code` when the search is a directory walk or a relative `path`.
 - `glob`: constrain searched paths.
 - `exclude`: skip matching paths, applied as a negated glob.
+- Literal content searches with a positive `glob` use one native walk. Positive globs override native file-type filters, so separate type lanes would repeat the same search. Searches with only negated globs keep their existing type lanes.
 - `max`: native produced-result cap. The native search stops after producing `max` matches or paths, and truncation is surfaced in warnings. It does not bound files visited or work for sparse or zero-match searches. Lower `max` is only useful when enough results are already being produced to reach the cap; otherwise narrow the query, glob, or path. Accepts an integer or a numeric string such as `"20"`.
 
 ## Choosing a tool

@@ -125,6 +125,44 @@ test("content search deduplicates matches and caps the global result set", async
   assert.ok(result.warnings.some((warning) => warning.includes("search output was truncated")));
 });
 
+test("content search performs one produced-result search for positive globs", async () => {
+  const expected = [{ path: "src/a.ts", line: 1, text: "needle" }];
+  let calls = 0;
+  const runner: ContentSearchRunner = async (args) => {
+    calls += 1;
+    return { args, matches: expected, metrics: { searches: 1 } };
+  };
+  const result = await runContentSearch({
+    root: "/tmp", query: "needle", globs: ["**/*.ts"], perf: true, runner,
+  });
+  assert.deepEqual(result.matches, expected);
+  assert.equal(result.metrics?.searches, 1);
+  assert.equal(calls, 1);
+});
+
+test("native positive-glob search reads each selected file once and reads fresh content", async () => {
+  const root = await mkdtemp(join(tmpdir(), "atrium-content-one-walk-"));
+  try {
+    for (const name of ["a.ts", "b.md", "c.data", "skip.ts"]) {
+      await writeFile(join(root, name), `needle ${name}\n`);
+    }
+    const options = {
+      root, query: "needle", globs: ["*"], excludes: ["skip.ts"],
+      all: true, perf: true,
+    };
+    const first = await runContentSearch(options);
+    assert.deepEqual(first.matches.map((match) => match.path).sort(), ["a.ts", "b.md", "c.data"]);
+    assert.equal(first.metrics?.searches, 3);
+
+    await writeFile(join(root, "a.ts"), "needle updated\n");
+    const second = await runContentSearch(options);
+    assert.equal(second.matches.find((match) => match.path === "a.ts")?.text, "needle updated\n");
+    assert.equal(second.metrics?.searches, 3);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("content search surfaces timeout warnings and aggregates ripgrep metrics across lanes", async () => {
   const runner: ContentSearchRunner = async () => ({
     args: [],
