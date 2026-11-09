@@ -55,6 +55,7 @@ const GOLDEN_DEFAULT_INSTRUCTIONS = [
   "",
   "Read contract:",
   "- The read tool takes a path plus optional startLine/endLine or count for line-mode reads, or startByte/countBytes with an optional snapshot for byte-mode paging. Line numbers are 1-based and positive.",
+  '- Prefer separate line fields, for example {"path":"file.txt","startLine":2,"endLine":3}. startLine also accepts [start, end] as an inclusive range of exactly two positive integers in ascending order. Do not combine that range with endLine or count.',
   "- A successful read returns ok, path, range, meta, content, and nextRead. nextRead is nullable: null means no continuation, otherwise it is the next request to issue.",
   "- If a line-mode selection is oversized, keep the materialized artifact in content and return nextRead targeting content.file with startByte 0, countBytes 8192, and snapshot. Callers follow the continuation in byte mode against the materialized artifact, reconstruct only from page content strings, and stop when nextRead is null.",
   "- Issue a nextRead continuation by passing its path, startByte, countBytes, and snapshot back to this read tool. There is no separate continuation tool, and nextRead does not name one.",

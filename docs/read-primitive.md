@@ -14,6 +14,8 @@
 
 `path` is required. `startLine` defaults to `1`. Provide either `endLine` or `count`, not both. When neither is provided, Atrium serves up to 120 lines. `startLine`, `endLine`, `count`, `startByte`, and `countBytes` each accept either an integer or a numeric string such as `"2"`.
 
+Prefer the separate `startLine` and `endLine` fields shown above. MCP `read` also accepts `"startLine": [2, 99]` as an inclusive range alias. The array must contain exactly two positive integers, with the end greater than or equal to the start. Numeric strings inside the array are not accepted. Do not combine the alias with `endLine` or `count`, even if they agree with the range. Other fields do not gain array support.
+
 ### Byte paging inputs
 
 Byte paging uses `startByte` and `countBytes` instead of line inputs. `startByte` and `countBytes` are 0-based half-open byte paging inputs: `startByte` is the first byte to return and `countBytes` is the number of bytes to return in the page, so the page covers bytes `[startByte, startByte + countBytes)`. `startByte`/`countBytes` are mutually exclusive with `startLine`, `endLine`, and `count`. `snapshot` is an optional opaque continuation token from a prior byte read. It protects against stale continuation by rejecting a request if the source has been mutated since the snapshot was created; that mutation rejection returns `ok: false`, `status: "mutation_rejected"`, and no stale content.
@@ -109,3 +111,5 @@ Expected failures return `ok:false` instead of throwing MCP tool errors:
 ```
 
 Statuses are `not-found`, `unsupported`, `invalid-args`, and `mutation_rejected`. `status` and `hint` are for non-content outcomes only.
+
+An array range combined with `endLine` or `count` returns `ok: false`, `status: "invalid-args"`, and a `hint`. It also returns `correctedRequest`, a canonical request containing only `path`, scalar `startLine`, and scalar `endLine` from the array. Retry that request to read the array's range. Malformed arrays fail MCP input validation with a canonical scalar example. Successful reads and their pagination are unchanged.
