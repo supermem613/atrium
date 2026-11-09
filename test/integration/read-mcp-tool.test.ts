@@ -8,6 +8,122 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { createAtriumServer } from "../../src/server.js";
 
 describe("read MCP tool", () => {
+  it("reads an inclusive startLine range alias through MCP", async () => {
+    const server = createAtriumServer();
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const client = new Client({ name: "test-client", version: "1.0.0" });
+
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+
+    try {
+      const dir = await mkdtemp(join(tmpdir(), "atrium-read-range-"));
+      const filePath = join(dir, "sample.txt");
+      await writeFile(filePath, "one\ntwo\nthree\n");
+
+      for (const { startLine, range, content } of [
+        { startLine: [2, 3], range: [2, 3], content: "two\nthree\n" },
+        { startLine: [2, 2], range: [2, 2], content: "two\n" },
+        { startLine: [2, 99], range: [2, 3], content: "two\nthree\n" },
+        { startLine: [99, 100], range: [2, 3], content: "two\nthree\n" },
+      ]) {
+        const response = await client.callTool({ name: "read", arguments: { path: filePath, startLine } });
+        const result = response.isError ? response : JSON.parse((response.content as Array<{ text: string }>)[0].text) as Record<string, unknown>;
+        assert.deepEqual(
+          { range: result.range, content: result.content, nextRead: result.nextRead },
+          { range, content, nextRead: null },
+        );
+      }
+    } finally {
+      await client.close();
+      await serverTransport.close();
+    }
+  });
+
+  it("advertises scalar and two-integer startLine inputs in ListTools", async () => {
+    const server = createAtriumServer();
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const client = new Client({ name: "test-client", version: "1.0.0" });
+
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+
+    try {
+      const { tools } = await client.listTools();
+      const readTool = tools.find((tool) => tool.name === "read");
+      const properties = readTool?.inputSchema.properties as Record<string, Record<string, unknown>>;
+      const alternatives = properties.startLine.anyOf as Array<Record<string, unknown>> | undefined;
+      assert.deepEqual(
+        alternatives?.map(({ type, items, minItems, maxItems }) => ({ type, items, minItems, maxItems })),
+        [
+          { type: "integer", items: undefined, minItems: undefined, maxItems: undefined },
+          {
+            type: "array",
+            items: [{ type: "integer", exclusiveMinimum: 0 }, { type: "integer", exclusiveMinimum: 0 }],
+            minItems: 2,
+            maxItems: 2,
+          },
+        ],
+      );
+    } finally {
+      await client.close();
+      await serverTransport.close();
+    }
+  });
+
+  it("returns a canonical retry request for conflicting range controls", async () => {
+    const server = createAtriumServer();
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const client = new Client({ name: "test-client", version: "1.0.0" });
+
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+
+    try {
+      const dir = await mkdtemp(join(tmpdir(), "atrium-read-conflict-"));
+      const filePath = join(dir, "sample.txt");
+      await writeFile(filePath, "one\ntwo\nthree\n");
+
+      for (const extra of [{ endLine: 3 }, { endLine: 2 }, { count: 2 }]) {
+        const response = await client.callTool({ name: "read", arguments: { path: filePath, startLine: [2, 3], ...extra } });
+        const result = response.isError ? response : JSON.parse((response.content as Array<{ text: string }>)[0].text) as Record<string, unknown>;
+        assert.deepEqual(
+          { status: result.status, hint: result.hint, correctedRequest: result.correctedRequest },
+          {
+            status: "invalid-args",
+            hint: "startLine: [start, end] cannot be combined with endLine or count. Retry with correctedRequest to read the tuple range.",
+            correctedRequest: { path: filePath, startLine: 2, endLine: 3 },
+          },
+        );
+        const recovered = await callJson(client, "read", result.correctedRequest as Record<string, unknown>);
+        assert.equal(recovered.content, "two\nthree\n");
+      }
+    } finally {
+      await client.close();
+      await serverTransport.close();
+    }
+  });
+
+  it("explains how to correct malformed startLine arrays", async () => {
+    const server = createAtriumServer();
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const client = new Client({ name: "test-client", version: "1.0.0" });
+
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+
+    try {
+      for (const startLine of [[], [2], [2, 3, 4], [0, 2], [2, 1], [1.5, 2], ["2", "3"], [true, 3]]) {
+        const response = await client.callTool({ name: "read", arguments: { path: "sample.txt", startLine } });
+        const text = (response.content as Array<{ text: string }>)[0].text;
+        assert.match(text, /Use separate fields, for example: \{"startLine":2,"endLine":3\}/, JSON.stringify(startLine));
+      }
+    } finally {
+      await client.close();
+      await serverTransport.close();
+    }
+  });
+
   it("exposes the lean read contract with deterministic range clamping", async () => {
     const server = createAtriumServer();
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
@@ -106,6 +222,9 @@ describe("read MCP tool", () => {
       const oversizedMultiLine = await callJson(client, "read", { path: oversizedMultiLinePath, startLine: 1, endLine: 4 });
       assert.equal(oversizedMultiLine.ok, true);
       await verifyLineModeContinuationChain(client, oversizedMultiLine, oversizedMultiLineContent, 8192, "oversized multi-line");
+
+      const rangeAlias = await callJson(client, "read", { path: oversizedMultiLinePath, startLine: [2, 4] });
+      await verifyLineModeContinuationChain(client, rangeAlias, oversizedMultiLineContent.slice("prefix-\n".length), 8192, "range alias");
     } finally {
       await client.close();
       await serverTransport.close();

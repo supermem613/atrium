@@ -471,6 +471,13 @@ function coreTools(deps: SurfaceDeps): ToolRegistration[] {
 }
 
 function readTools(): ToolRegistration[] {
+  const rangeHint = 'startLine must be a positive integer or [start, end] containing exactly two positive integers in ascending order. Use separate fields, for example: {"startLine":2,"endLine":3}';
+  const lineRange = z.tuple([
+    z.number().int(rangeHint).positive(rangeHint),
+    z.number().int(rangeHint).positive(rangeHint),
+  ], { errorMap: () => ({ message: rangeHint }) })
+    .refine(([start, end]) => end >= start, { message: rangeHint });
+
   return [
     defineTool(
       "read",
@@ -479,7 +486,9 @@ function readTools(): ToolRegistration[] {
         description: "Read a UTF-8 text file with deterministic line-range clamping or byte-range paging. Successful reads always return ok, path, range, meta, content, and nextRead; nextRead is null when there is no continuation. Oversized line-mode results preserve the file-backed artifact in content and return a byte-mode nextRead against content.file with startByte 0, countBytes 8192, and snapshot. The read payload stays inline when it fits the output contract and otherwise uses Atrium's {file, bytes} value contract.",
         inputSchema: {
           path: z.string().min(1).describe("File path to read."),
-          startLine: lenientInt({ positive: true }).optional().describe("First 1-based line to read. Accepts an integer or a numeric string. Defaults to 1."),
+          startLine: z.union([lenientInt({ positive: true }), lineRange], {
+            errorMap: () => ({ message: rangeHint }),
+          }).optional().describe('First 1-based line to read. Accepts an integer, a numeric string, or [start, end] as an inclusive range of two positive integers. Defaults to 1. A range cannot be combined with endLine or count. Canonical example: {"startLine":2,"endLine":3}.'),
           endLine: lenientInt({ positive: true }).optional().describe("Last 1-based line to read. Accepts an integer or a numeric string. Mutually exclusive with count."),
           count: lenientInt({ positive: true }).optional().describe("Maximum number of lines to read. Accepts an integer or a numeric string. Mutually exclusive with endLine."),
           startByte: lenientInt({ nonnegative: true }).optional().describe("First byte offset to read for byte-mode paging. Accepts an integer or a numeric string."),
@@ -487,7 +496,23 @@ function readTools(): ToolRegistration[] {
           snapshot: z.string().optional().describe("Optional snapshot token for stale byte-page continuation rejection."),
         },
       },
-      async (input) => toolTextResult(await readTextFileSlice(input)),
+      async (input) => {
+        const { startLine, ...rest } = input;
+        if (!Array.isArray(startLine)) {
+          return toolTextResult(await readTextFileSlice({ ...rest, startLine }));
+        }
+        const correctedRequest = { path: input.path, startLine: startLine[0], endLine: startLine[1] };
+        if (input.endLine !== undefined || input.count !== undefined) {
+          return toolTextResult({
+            ok: false,
+            status: "invalid-args",
+            path: input.path,
+            hint: "startLine: [start, end] cannot be combined with endLine or count. Retry with correctedRequest to read the tuple range.",
+            correctedRequest,
+          });
+        }
+        return toolTextResult(await readTextFileSlice({ ...rest, startLine: startLine[0], endLine: startLine[1] }));
+      },
     ),
   ];
 }
@@ -650,6 +675,7 @@ const coreInstructionFragment = [
 const readInstructionFragment = [
   "Read contract:",
   "- The read tool takes a path plus optional startLine/endLine or count for line-mode reads, or startByte/countBytes with an optional snapshot for byte-mode paging. Line numbers are 1-based and positive.",
+  '- Prefer separate line fields, for example {"path":"file.txt","startLine":2,"endLine":3}. startLine also accepts [start, end] as an inclusive range of exactly two positive integers in ascending order. Do not combine that range with endLine or count.',
   "- A successful read returns ok, path, range, meta, content, and nextRead. nextRead is nullable: null means no continuation, otherwise it is the next request to issue.",
   "- If a line-mode selection is oversized, keep the materialized artifact in content and return nextRead targeting content.file with startByte 0, countBytes 8192, and snapshot. Callers follow the continuation in byte mode against the materialized artifact, reconstruct only from page content strings, and stop when nextRead is null.",
   "- Issue a nextRead continuation by passing its path, startByte, countBytes, and snapshot back to this read tool. There is no separate continuation tool, and nextRead does not name one.",
