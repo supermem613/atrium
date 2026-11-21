@@ -4,10 +4,10 @@
       "type": "stdio",
       "command": "C:\\Users\\marcusm\\AppData\\Local\\nvs\\default\\node.exe",
       "args": [
-        "C:\\Users\\marcusm\\.sd\\sidequests\\install-atrium-copilot-plugin\\dist\\cli.js",
+        "C:\\Users\\marcusm\\repos\\atrium\\dist\\cli.js",
         "mcp-server"
       ],
-      "cwd": "C:\\Users\\marcusm\\.sd\\sidequests\\install-atrium-copilot-plugin",
+      "cwd": "C:\\Users\\marcusm\\repos\\atrium",
       "tools": [
         "*"
       ]
