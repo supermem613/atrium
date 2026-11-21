@@ -29,6 +29,8 @@ describe("MCP initialize instructions", () => {
       assert.match(text, /\{file: path\}/);
       assert.match(text, /native search/i);
       assert.match(text, /in-process native search engine/i);
+      assert.match(text, /10-second/i);
+      assert.match(text, /background waiter/i);
     } finally {
       await client.close();
     }

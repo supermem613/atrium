@@ -97,8 +97,10 @@ export interface InstructionHookResult {
 export function composeReminderForSelection(selection: readonly string[] | undefined): string {
   const reminderParts = [
     "Atrium guardrails remain in effect.",
-    "Shells are denied: call binaries directly with args, never a shell command string.",
-    "A running run or search with an operationId is not a result: call operation-wait to terminal.",
+    "Shells are denied: call binaries directly with args.",
+    "At the fixed 10-second handoff, do not fixed-poll Atrium or read_agent.",
+    "If atrium-waiter is available, launch one waiter; otherwise call operation-wait directly.",
+    "The waiter never reruns work.",
   ];
 
   if (isReadSurfaceEnabled(selection)) {
@@ -115,14 +117,11 @@ export function composeReminderForSelection(selection: readonly string[] | undef
 
   if (isReadSurfaceEnabled(selection) || isSearchSurfaceEnabled(selection)) {
     reminderParts.push(
-      "If an Atrium primitive is deferred, use tool search to surface it; if callable, use it directly. Fall back only when its surface is unavailable.",
+      "If an Atrium primitive is deferred, use tool search to surface it.",
     );
   }
 
   reminderParts.push(`Active ${describeEnabledSurfaces(selection)}.`);
-  reminderParts.push(
-    "The full contract is injected at session start; call schema for exact shapes.",
-  );
 
   return reminderParts.join(" ");
 }

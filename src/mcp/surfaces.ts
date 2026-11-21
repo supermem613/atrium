@@ -446,7 +446,7 @@ function coreTools(deps: SurfaceDeps): ToolRegistration[] {
       "run",
       {
         title: "Run a CLI or executable",
-        description: "Execute named CLIs with structured args and structured JSON returns. Results and initial handoffs disclose the original tool, args, and optional cwd in invocation without redaction. File references stay references; stdin and resolved file contents are not echoed. Returns the normal result when the command finishes inside the handoff window, otherwise returns a durable operationId and a prescriptive nextCheck instruction telling you to call operation-wait.",
+        description: "Execute named CLIs with structured args and structured JSON returns. Results and initial handoffs disclose the original tool, args, and optional cwd in invocation without redaction. File references stay references; stdin and resolved file contents are not echoed. At the fixed 10-second handoff, returns a durable operationId and nextCheck. When atrium-waiter is available, start one background waiter; otherwise call operation-wait directly to terminal.",
         inputSchema: {
           tool: z.string().min(1).describe("Binary name on PATH or executable path. Shells such as pwsh, powershell, bash, cmd, sh, and zsh are denied."),
           args: scalarOrArray(z.union([z.string(), z.object({ file: z.string().min(1) })])).optional().describe("Argument vector. Accepts a single value coerced to exactly one argument, never shell-split, or an array of values. Use {file} to replace that argument with UTF-8 file contents. Do not pass a shell command string. Example: \"status\" or [\"status\"]."),
@@ -460,7 +460,7 @@ function coreTools(deps: SurfaceDeps): ToolRegistration[] {
       "operation-wait",
       {
         title: "Wait for a durable operation",
-        description: "Wait briefly for a durable operation handed off by any Atrium tool. Returns the terminal result when complete. If still running, returns status continue with the same operationId and a nextCheck instruction to call operation-wait again.",
+        description: "Wait briefly for a durable operation handed off by any Atrium tool. Returns the terminal result when complete. If still running, returns status continue with the same operationId and nextCheck. The parent should use atrium-waiter instead of fixed polling; direct reattachment is the fallback.",
         inputSchema: {
           operationId: z.string().min(1).describe("Durable operationId returned by an Atrium tool handoff."),
         },
@@ -650,7 +650,11 @@ const instructionPreamble = [
 const coreInstructionFragment = [
   "Handoff contract:",
   "- When a tool returns status running with an operationId, it also returns a nextCheck object naming exactly what to call next: the operation-wait tool with that operationId.",
-  "- Repeat operation-wait while it returns status continue. Never report success from a still-running handle.",
+  "- Atrium hands off after a fixed 10-second request-safe wait. Each operation-wait call waits up to 10 seconds and may return status continue with mustReissueWait true and nextWaitAfterMs 0. There is no caller-configurable polling interval.",
+  "- At the first running or continue handoff, do not occupy the parent with repeated operation-wait calls. If the atrium-waiter plugin agent is available in this session, start exactly one background waiter and give it operationId, resultPath, objective, expected result shape, and an observation budget.",
+  "- The waiter owns operation-wait, returns only terminal evidence or waiter_timeout, never reruns the original command, and notifies the parent once. The parent continues independent work and does not fixed-poll Atrium or read_agent.",
+  "- If no atrium-waiter agent is available, use direct pull fallback: call operation-wait until terminal, while keeping the first terminal result as authority.",
+  "- Never report success from a still-running handle. Never rerun work merely to redeliver a terminal result.",
   "",
   "Value contract:",
   "- A plain string argument or stdin is used literally.",

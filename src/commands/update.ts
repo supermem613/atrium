@@ -38,6 +38,7 @@ export type UpdateResult = {
   alreadyUpToDate: boolean;
   installed: boolean;
   built: boolean;
+  pluginInstalled: boolean;
 };
 
 type UpdateOptions = {
@@ -75,7 +76,7 @@ export function hasSodaWorkspaceMarkers(dir: string): boolean {
 async function defaultExecCommand(command: string, args: string[], cwd: string): Promise<CommandResult> {
   // bun, npm, and sd can be Windows .cmd shims. execFile cannot launch those without a shell after CVE-2024-27980.
   // Prefer an explicit cmd.exe argv over shell:true so args are not concatenated under DEP0190.
-  const invocation = process.platform === "win32" && (command === "bun" || command === "npm" || command === "sd")
+  const invocation = process.platform === "win32" && (command === "bun" || command === "npm" || command === "sd" || command === "copilot")
     ? { command: "cmd.exe", args: ["/d", "/s", "/c", command, ...args] }
     : { command, args };
   const result = await execFileAsync(invocation.command, invocation.args, {
@@ -222,6 +223,8 @@ export async function runSelfUpdate(deps: UpdateDeps = {}): Promise<UpdateResult
     : beforeRevision === afterRevision;
 
   if (alreadyUpToDate) {
+    const pluginRoot = join(repoRoot, ".github", "plugin");
+    await execCommand("copilot", ["plugin", "install", pluginRoot], repoRoot);
     return {
       repoRoot,
       beforeRevision,
@@ -230,11 +233,14 @@ export async function runSelfUpdate(deps: UpdateDeps = {}): Promise<UpdateResult
       alreadyUpToDate: true,
       installed: false,
       built: false,
+      pluginInstalled: true,
     };
   }
 
   await execCommand("bun", ["install", "--frozen-lockfile"], repoRoot);
   await execCommand("bun", ["run", "build"], repoRoot);
+  const pluginRoot = join(repoRoot, ".github", "plugin");
+  await execCommand("copilot", ["plugin", "install", pluginRoot], repoRoot);
   return {
     repoRoot,
     beforeRevision,
@@ -243,11 +249,15 @@ export async function runSelfUpdate(deps: UpdateDeps = {}): Promise<UpdateResult
     alreadyUpToDate: false,
     installed: true,
     built: true,
+    pluginInstalled: true,
   };
 }
 
 function writeHuman(result: UpdateResult): void {
   process.stdout.write("atrium repo: " + result.repoRoot + "\n");
+  if (result.pluginInstalled) {
+    process.stdout.write("Copilot plugin reinstalled.\n");
+  }
   if (result.alreadyUpToDate) {
     process.stdout.write("Already up to date. Skipping install and build.\n");
     return;

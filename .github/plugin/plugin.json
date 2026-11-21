@@ -1,0 +1,8 @@
+{
+  "name": "atrium",
+  "description": "Atrium MCP tools and session-only long-running waiter",
+  "version": "2.16.0",
+  "agents": "com.github.copilot/agents/",
+  "skills": ["skills/"],
+  "mcpServers": "mcp.json"
+}
