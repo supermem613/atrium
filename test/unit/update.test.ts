@@ -6,15 +6,45 @@ import {
   isSodaGitInterlockError,
   hasSodaWorkspaceMarkers,
 } from "../../src/commands/update.js";
+import { join } from "node:path";
 
 function recordCall(command: string, args: string[]): string {
   return [command, ...args].join(" ");
 }
+const pluginCall = `copilot plugin install ${join("repo", ".github", "plugin")}`;
 
 const SODA_INTERLOCK_ERROR =
   "Command failed: git pull --ff-only\nsoda: raw git commit blocked in this sd-powered repo\nUse \"sd submit\" instead.";
 
 describe("update", () => {
+  it("reinstalls the local Copilot plugin even when Atrium has no revision update", async () => {
+    const calls: string[] = [];
+    const result = await runSelfUpdate({
+      repoRoot: "repo",
+      isGitRepo: () => true,
+      hasSodaWorkspace: () => false,
+      execCommand: async (command, args) => {
+        calls.push(recordCall(command, args));
+        if (command === "git" && args.join(" ") === "rev-parse HEAD") {
+          return { stdout: "abc123\n", stderr: "" };
+        }
+        if (command === "sd" && args.join(" ") === "status") {
+          return { stdout: JSON.stringify({ ok: true, data: { summary: { initialized: false } } }), stderr: "" };
+        }
+        if (command === "git" && args.join(" ") === "pull --ff-only") {
+          return { stdout: "Already up-to-date.\n", stderr: "" };
+        }
+        return { stdout: "installed\n", stderr: "" };
+      },
+    });
+
+    assert.equal(
+      calls.includes(`copilot plugin install ${join("repo", ".github", "plugin")}`),
+      true,
+    );
+    assert.equal(result.pluginInstalled, true);
+  });
+
   it("skips install and build when pull keeps the same revision", async () => {
     const calls: string[] = [];
     const result = await runSelfUpdate({
@@ -29,7 +59,7 @@ describe("update", () => {
         return { stdout: "Already up to date.\n", stderr: "" };
       },
     });
-    assert.deepEqual(calls, ["git rev-parse HEAD", "sd status", "git pull --ff-only", "git rev-parse HEAD"]);
+    assert.deepEqual(calls, ["git rev-parse HEAD", "sd status", "git pull --ff-only", "git rev-parse HEAD", pluginCall]);
     assert.equal(result.alreadyUpToDate, true);
     assert.equal(result.installed, false);
     assert.equal(result.built, false);
@@ -57,6 +87,7 @@ describe("update", () => {
       "git rev-parse HEAD",
       "bun install --frozen-lockfile",
       "bun run build",
+      pluginCall,
     ]);
     assert.equal(result.installed, true);
     assert.equal(result.built, true);
@@ -94,6 +125,7 @@ describe("update", () => {
       "git rev-parse HEAD",
       "bun install --frozen-lockfile",
       "bun run build",
+      pluginCall,
     ]);
     assert.equal(calls.includes("git pull --ff-only"), false);
     assert.equal(result.pulled, true);
@@ -123,7 +155,7 @@ describe("update", () => {
       },
     });
 
-    assert.deepEqual(calls, ["git rev-parse HEAD", "sd status", "sd pull", "git rev-parse HEAD"]);
+    assert.deepEqual(calls, ["git rev-parse HEAD", "sd status", "sd pull", "git rev-parse HEAD", pluginCall]);
     assert.equal(result.alreadyUpToDate, true);
     assert.equal(result.installed, false);
     assert.equal(result.built, false);
@@ -261,6 +293,7 @@ describe("update", () => {
       "git rev-parse HEAD",
       "bun install --frozen-lockfile",
       "bun run build",
+      pluginCall,
     ]);
     assert.equal(result.pulled, true);
     assert.equal(result.installed, true);

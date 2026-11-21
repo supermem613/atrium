@@ -24,6 +24,7 @@ import {
   surfaceOptionDescription,
 } from "./mcp/surfaces.js";
 import { updateCommand } from "./commands/update.js";
+import { installPluginCommand } from "./commands/plugin.js";
 
 // The MCP SDK costs roughly 400ms to import. ./commands/mcpDebug.js and
 // ./server.js are the only modules that pull it in, so importing them eagerly
@@ -166,6 +167,12 @@ program
   .description("Self-update: pull with sd or git, bun install, and rebuild atrium")
   .option("--json", "Emit machine-readable JSON instead of human output")
   .action(updateCommand);
+
+program
+  .command("install-plugin")
+  .description("Install the Atrium Copilot CLI plugin from this checkout")
+  .option("--json", "Emit machine-readable JSON instead of human output")
+  .action(installPluginCommand);
 
 // Bare `atrium` (no args) prints version + full help. Matches the
 // rotunda/kash/reflux convention. No version banner before sub-commands

@@ -358,6 +358,26 @@ export const commandSpecs: CommandSpec[] = [
     examples: ["mcp-grep-code /tmp --query alpha --max 5", "mcp-grep-code /tmp --perf"],
   },
   {
+    path: ["install-plugin"],
+    summary: "Install the Atrium Copilot CLI plugin from this checkout.",
+    effect: "write",
+    input: {
+      positionals: [],
+      flags: [
+        {
+          name: "--json",
+          type: "boolean",
+          summary: "Emit machine-readable JSON instead of human output.",
+        },
+      ],
+    },
+    output: {
+      documented: true,
+      schema: "PluginInstallResult",
+    },
+    examples: ["install-plugin --json"],
+  },
+  {
     path: ["update"],
     summary: "Self-update this atrium checkout with auto-detected sd or git pull, bun install, and rebuild.",
     effect: "write",

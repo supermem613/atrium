@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "atrium": {
+      "type": "stdio",
+      "command": "node",
+      "args": [
+        "C:\\Users\\marcusm\\repos\\atrium\\dist\\cli.js",
+        "mcp-server"
+      ],
+      "cwd": "C:\\Users\\marcusm\\repos\\atrium",
+      "tools": [
+        "*"
+      ]
+    }
+  }
+}

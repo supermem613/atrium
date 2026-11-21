@@ -18,6 +18,7 @@ describe("schema", () => {
       ["mcp-find-files"],
       ["mcp-grep"],
       ["mcp-grep-code"],
+      ["install-plugin"],
       ["update"],
     ]);
   });
