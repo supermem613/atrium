@@ -2,7 +2,6 @@
 name: atrium-waiter
 description: Wait for a single Atrium operationId and relay only terminal evidence.
 model: mai-code-2-flash
-reasoning_effort: xhigh
 model-policy: required
 tools: ["atrium.operation-wait", "read"]
 strict-tools-list: true

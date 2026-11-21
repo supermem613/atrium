@@ -2,12 +2,12 @@
   "mcpServers": {
     "atrium": {
       "type": "stdio",
-      "command": "node",
+      "command": "C:\\Users\\marcusm\\AppData\\Local\\nvs\\default\\node.exe",
       "args": [
-        "C:\\Users\\marcusm\\repos\\atrium\\dist\\cli.js",
+        "C:\\Users\\marcusm\\.sd\\sidequests\\install-atrium-copilot-plugin\\dist\\cli.js",
         "mcp-server"
       ],
-      "cwd": "C:\\Users\\marcusm\\repos\\atrium",
+      "cwd": "C:\\Users\\marcusm\\.sd\\sidequests\\install-atrium-copilot-plugin",
       "tools": [
         "*"
       ]

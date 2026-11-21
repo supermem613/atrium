@@ -1,11 +1,25 @@
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
-import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pluginRootFromRepo, runPluginInstall } from "../../src/commands/plugin.js";
 
 describe("plugin install", () => {
+  it("keeps the Atrium waiter agent metadata in supported frontmatter", async () => {
+    const agentPath = join(
+      process.cwd(),
+      ".github",
+      "plugin",
+      "com.github.copilot",
+      "agents",
+      "atrium-waiter.agent.md",
+    );
+    const agent = await readFile(agentPath, "utf8");
+    assert.match(agent, /^---\r?\n[\s\S]*model: mai-code-2-flash[\s\S]*model-policy: required[\s\S]*---/);
+    assert.equal(agent.includes("reasoning_effort:"), false);
+  });
+
   it("writes an MCP config that points to this checkout and invokes one plugin install", async () => {
     const repoRoot = await mkdtemp(join(tmpdir(), "atrium-plugin-"));
     await mkdir(join(repoRoot, ".github", "plugin"), { recursive: true });

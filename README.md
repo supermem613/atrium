@@ -62,6 +62,7 @@ atrium mcp-schema reflux # debug MCP schema through a local MCP client
 atrium mcp-run node -- --version
 atrium mcp-run node -- -e "setTimeout(() => console.log('done'), 90000)"
 atrium mcp-operation-wait <operationId>
+atrium install-plugin   # install the Atrium agent, skill, MCP config, and extension assets
 atrium update          # pull with sd or git, install dependencies, and rebuild
 ```
 
@@ -85,6 +86,18 @@ Or inspect the JSON config Atrium emits:
 ```bash
 atrium mcp-config
 ```
+
+To install the Copilot plugin package once, build Atrium and run:
+
+```bash
+atrium install-plugin
+```
+
+The command invokes `copilot plugin install` for the local
+`.github/plugin` directory. It refreshes the cached plugin when it is
+available and keeps the MCP server pointed at this Atrium checkout. Run
+`atrium update` after pulling changes to rebuild Atrium and reinstall the
+plugin.
 
 ## Surfaces
 
@@ -242,6 +255,19 @@ MCP run results disclose the original executable and argument vector in `invocat
 Inline results and returned execution failures include `invocation`. An initial running handle includes it too, and the final `operation-wait` response preserves it inside `result.invocation`. Continue responses retain their existing compact shape. MCP input-validation and file-input errors retain the SDK error format. Search results and schema-discovery subprocess results do not gain this field.
 
 `atrium.run` and the search MCP tools have one execution behavior. They return the normal result when the work completes inside the fixed 10-second request-safe response budget. If the work is still running when that budget expires, Atrium returns a durable `operationId`, a `resultPath`, and a prescriptive `nextCheck` object. `nextCheck` names exactly what to call next: the `atrium.operation-wait` tool with that `operationId`. Call `atrium.operation-wait`, then repeat while it returns `status: "continue"`. Each `operation-wait` call uses the same fixed 10-second response budget. Running and continue payloads may include bounded cumulative stdout, stderr, and a progress snapshot, while the terminal completed response still preserves the final complete result. Each progress update uses a monotonic revision, so a later `operation-wait` waits for completion, a newer progress revision, or the fixed request-safe window rather than spinning on the same snapshot. Terminal waits return `status: "completed"` or `status: "failed"` with the final `result` or `error`. Agents do not control operation or wait timeouts: executable runs retain their fixed four-hour timeout, while native searches retain their fixed 59-second timeout.
+
+Do not use fixed waits in the parent to poll Atrium. After the first
+`operationId` handoff, if the `atrium-waiter` plugin agent is available,
+start exactly one background waiter and give it `operationId`, `resultPath`,
+the objective, the expected result shape, and an observation budget. The waiter
+reissues `operation-wait` until it reaches terminal, failed, or its own budget;
+it never reruns the original command. The parent consumes the result once and
+continues independent work.
+
+There is no caller-configurable polling interval. The initial run and each
+`operation-wait` use the fixed 10-second response budget, while
+`nextWaitAfterMs` is 0. Direct `operation-wait` calls remain the fallback when
+the waiter agent is unavailable or lost.
 
 All target executable calls share one in-memory execution queue per Atrium MCP server process, including `atrium.run` and `atrium.schema` discovery probes. The default queue allows multiple concurrent child executions. Additional calls wait for a slot before spawning the child process. Background runs count against the queue until their child process completes, so background work cannot accumulate unbounded child processes. The queue is intentionally per-process, not machine-wide; separate Copilot tabs can still have separate Atrium server processes.
 
