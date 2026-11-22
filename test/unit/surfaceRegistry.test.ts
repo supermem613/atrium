@@ -16,12 +16,10 @@ const introspectionDeps = {
   searchClient: { run: async () => ({}) } as unknown as SearchClientLike,
 };
 
-// Golden characterization snapshot of the advertised instructions as of the
-// behavior-preserving surface-registry refactor. This is the equivalence oracle:
-// the composed default instructions must stay byte-identical to this literal so
-// the refactor provably preserves what the client sees at the initialize
-// handshake. It is authored independently of the code under test, not derived
-// from it.
+// Independent oracle for the supported MCP initialize instructions. Intentional
+// contract changes must update this literal while preserving byte equality.
+// CI run 45057496124 caught the stale direct-wait-only oracle after the waiter
+// contract changed.
 const GOLDEN_DEFAULT_INSTRUCTIONS = [
   "Atrium runs named CLIs and executables with structured JSON results. It is not a shell.",
   "",
@@ -35,7 +33,11 @@ const GOLDEN_DEFAULT_INSTRUCTIONS = [
   "",
   "Handoff contract:",
   "- When a tool returns status running with an operationId, it also returns a nextCheck object naming exactly what to call next: the operation-wait tool with that operationId.",
-  "- Repeat operation-wait while it returns status continue. Never report success from a still-running handle.",
+  "- Atrium hands off after a fixed 10-second request-safe wait. Each operation-wait call waits up to 10 seconds and may return status continue with mustReissueWait true and nextWaitAfterMs 0. There is no caller-configurable polling interval.",
+  "- At the first running or continue handoff, do not occupy the parent with repeated operation-wait calls. If the atrium-waiter plugin agent is available in this session, start exactly one background waiter and give it operationId, resultPath, objective, expected result shape, and an observation budget.",
+  "- The waiter owns operation-wait, returns only terminal evidence or waiter_timeout, never reruns the original command, and notifies the parent once. The parent continues independent work and does not fixed-poll Atrium or read_agent.",
+  "- If no atrium-waiter agent is available, use direct pull fallback: call operation-wait until terminal, while keeping the first terminal result as authority.",
+  "- Never report success from a still-running handle. Never rerun work merely to redeliver a terminal result.",
   "",
   "Value contract:",
   "- A plain string argument or stdin is used literally.",
