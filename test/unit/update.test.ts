@@ -12,6 +12,15 @@ function recordCall(command: string, args: string[]): string {
   return [command, ...args].join(" ");
 }
 const pluginCall = `copilot plugin install ${join("repo", ".github", "plugin")}`;
+const pluginListCall = "copilot plugin list --json";
+const enabledPluginList = JSON.stringify([{ name: "atrium", enabled: true }]);
+
+function mockPluginList(command: string, args: string[]): { stdout: string; stderr: string } | null {
+  if (command === "copilot" && args.join(" ") === "plugin list --json") {
+    return { stdout: enabledPluginList, stderr: "" };
+  }
+  return null;
+}
 
 const SODA_INTERLOCK_ERROR =
   "Command failed: git pull --ff-only\nsoda: raw git commit blocked in this sd-powered repo\nUse \"sd submit\" instead.";
@@ -25,6 +34,10 @@ describe("update", () => {
       hasSodaWorkspace: () => false,
       execCommand: async (command, args) => {
         calls.push(recordCall(command, args));
+        const pluginList = mockPluginList(command, args);
+        if (pluginList) {
+          return pluginList;
+        }
         if (command === "git" && args.join(" ") === "rev-parse HEAD") {
           return { stdout: "abc123\n", stderr: "" };
         }
@@ -53,13 +66,17 @@ describe("update", () => {
       hasSodaWorkspace: () => false,
       execCommand: async (command, args) => {
         calls.push(recordCall(command, args));
+        const pluginList = mockPluginList(command, args);
+        if (pluginList) {
+          return pluginList;
+        }
         if (command === "git" && args.join(" ") === "rev-parse HEAD") {
           return { stdout: "abc123\n", stderr: "" };
         }
         return { stdout: "Already up to date.\n", stderr: "" };
       },
     });
-    assert.deepEqual(calls, ["git rev-parse HEAD", "sd status", "git pull --ff-only", "git rev-parse HEAD", pluginCall]);
+    assert.deepEqual(calls, ["git rev-parse HEAD", "sd status", "git pull --ff-only", "git rev-parse HEAD", pluginCall, pluginListCall]);
     assert.equal(result.alreadyUpToDate, true);
     assert.equal(result.installed, false);
     assert.equal(result.built, false);
@@ -74,6 +91,10 @@ describe("update", () => {
       hasSodaWorkspace: () => false,
       execCommand: async (command, args) => {
         calls.push(recordCall(command, args));
+        const pluginList = mockPluginList(command, args);
+        if (pluginList) {
+          return pluginList;
+        }
         if (command === "git" && args.join(" ") === "rev-parse HEAD") {
           return { stdout: revisions.shift() ?? "def456\n", stderr: "" };
         }
@@ -88,6 +109,7 @@ describe("update", () => {
       "bun install --frozen-lockfile",
       "bun run build",
       pluginCall,
+      pluginListCall,
     ]);
     assert.equal(result.installed, true);
     assert.equal(result.built, true);
@@ -102,6 +124,10 @@ describe("update", () => {
       hasSodaWorkspace: () => false,
       execCommand: async (command, args) => {
         calls.push(recordCall(command, args));
+        const pluginList = mockPluginList(command, args);
+        if (pluginList) {
+          return pluginList;
+        }
         if (command === "git" && args.join(" ") === "rev-parse HEAD") {
           return { stdout: revisions.shift() ?? "def456\n", stderr: "" };
         }
@@ -126,6 +152,7 @@ describe("update", () => {
       "bun install --frozen-lockfile",
       "bun run build",
       pluginCall,
+      pluginListCall,
     ]);
     assert.equal(calls.includes("git pull --ff-only"), false);
     assert.equal(result.pulled, true);
@@ -142,6 +169,10 @@ describe("update", () => {
       hasSodaWorkspace: () => false,
       execCommand: async (command, args) => {
         calls.push(recordCall(command, args));
+        const pluginList = mockPluginList(command, args);
+        if (pluginList) {
+          return pluginList;
+        }
         if (command === "git" && args.join(" ") === "rev-parse HEAD") {
           return { stdout: revisions.shift() ?? "def456\n", stderr: "" };
         }
@@ -155,7 +186,7 @@ describe("update", () => {
       },
     });
 
-    assert.deepEqual(calls, ["git rev-parse HEAD", "sd status", "sd pull", "git rev-parse HEAD", pluginCall]);
+    assert.deepEqual(calls, ["git rev-parse HEAD", "sd status", "sd pull", "git rev-parse HEAD", pluginCall, pluginListCall]);
     assert.equal(result.alreadyUpToDate, true);
     assert.equal(result.installed, false);
     assert.equal(result.built, false);
@@ -190,6 +221,10 @@ describe("update", () => {
         hasSodaWorkspace: () => false,
         execCommand: async (command, args) => {
           calls.push(recordCall(command, args));
+          const pluginList = mockPluginList(command, args);
+          if (pluginList) {
+            return pluginList;
+          }
           if (command === "git" && args.join(" ") === "rev-parse HEAD") {
             return { stdout: "abc123\n", stderr: "" };
           }
@@ -214,6 +249,10 @@ describe("update", () => {
       hasSodaWorkspace: () => true,
       execCommand: async (command, args) => {
         calls.push(recordCall(command, args));
+        const pluginList = mockPluginList(command, args);
+        if (pluginList) {
+          return pluginList;
+        }
         if (command === "git" && args.join(" ") === "rev-parse HEAD") {
           return { stdout: revisions.shift() ?? "def456\n", stderr: "" };
         }
@@ -266,6 +305,10 @@ describe("update", () => {
       hasSodaWorkspace: () => false,
       execCommand: async (command, args) => {
         calls.push(recordCall(command, args));
+        const pluginList = mockPluginList(command, args);
+        if (pluginList) {
+          return pluginList;
+        }
         if (command === "git" && args.join(" ") === "rev-parse HEAD") {
           return { stdout: revisions.shift() ?? "def456\n", stderr: "" };
         }
@@ -294,6 +337,7 @@ describe("update", () => {
       "bun install --frozen-lockfile",
       "bun run build",
       pluginCall,
+      pluginListCall,
     ]);
     assert.equal(result.pulled, true);
     assert.equal(result.installed, true);

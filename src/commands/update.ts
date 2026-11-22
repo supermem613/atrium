@@ -3,6 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+import { installAndVerifyPlugin } from "./plugin.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -223,8 +224,7 @@ export async function runSelfUpdate(deps: UpdateDeps = {}): Promise<UpdateResult
     : beforeRevision === afterRevision;
 
   if (alreadyUpToDate) {
-    const pluginRoot = join(repoRoot, ".github", "plugin");
-    await execCommand("copilot", ["plugin", "install", pluginRoot], repoRoot);
+    await installAndVerifyPlugin(execCommand, repoRoot);
     return {
       repoRoot,
       beforeRevision,
@@ -239,8 +239,7 @@ export async function runSelfUpdate(deps: UpdateDeps = {}): Promise<UpdateResult
 
   await execCommand("bun", ["install", "--frozen-lockfile"], repoRoot);
   await execCommand("bun", ["run", "build"], repoRoot);
-  const pluginRoot = join(repoRoot, ".github", "plugin");
-  await execCommand("copilot", ["plugin", "install", pluginRoot], repoRoot);
+  await installAndVerifyPlugin(execCommand, repoRoot);
   return {
     repoRoot,
     beforeRevision,

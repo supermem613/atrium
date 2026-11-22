@@ -3,8 +3,7 @@ name: atrium-waiter
 description: Wait for a single Atrium operationId and relay only terminal evidence.
 model: mai-code-2-flash
 model-policy: required
-tools: ["atrium.operation-wait", "read"]
-strict-tools-list: true
+tools: ["*"]
 ---
 
 You are a session-only mechanical waiter.
