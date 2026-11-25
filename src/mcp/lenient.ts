@@ -11,12 +11,12 @@ import { z } from "zod";
 export function scalarOrArray<Item extends z.ZodTypeAny>(
   item: Item,
   options: { nonEmpty?: boolean } = {},
-): z.ZodEffects<z.ZodUnion<[Item, z.ZodArray<Item>]>, z.infer<Item>[], unknown> {
+): z.ZodType<z.infer<Item>[], unknown> {
   const array = options.nonEmpty ? z.array(item).min(1) : z.array(item);
   return z.preprocess(
     (value) => (Array.isArray(value) ? value : [value]),
     z.union([item, array]),
-  ) as z.ZodEffects<z.ZodUnion<[Item, z.ZodArray<Item>]>, z.infer<Item>[], unknown>;
+  ) as unknown as z.ZodType<z.infer<Item>[], unknown>;
 }
 
 export function scalarOrArrayInput<Item extends z.ZodTypeAny>(

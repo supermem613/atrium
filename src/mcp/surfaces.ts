@@ -48,7 +48,7 @@ export interface ToolRegistration {
   name: string;
   title: string;
   description: string;
-  inputSchema: z.ZodRawShape;
+  inputSchema: Record<string, z.ZodType>;
   register: (server: McpServer) => void;
 }
 
@@ -68,7 +68,7 @@ export interface Surface {
 // so an object-level effect makes ListTools emit an empty schema while runtime
 // parsing still passes, which hides the loss until a client inspects the schema.
 // Apply leniency with the field-level codecs in ./lenient.js instead.
-function defineTool<Args extends z.ZodRawShape>(
+function defineTool<Args extends Record<string, z.ZodType>>(
   name: string,
   config: { title: string; description: string; inputSchema: Args },
   handler: ToolCallback<Args>,
@@ -475,7 +475,7 @@ function readTools(): ToolRegistration[] {
   const lineRange = z.tuple([
     z.number().int(rangeHint).positive(rangeHint),
     z.number().int(rangeHint).positive(rangeHint),
-  ], { errorMap: () => ({ message: rangeHint }) })
+  ], { error: rangeHint })
     .refine(([start, end]) => end >= start, { message: rangeHint });
 
   return [
@@ -487,7 +487,7 @@ function readTools(): ToolRegistration[] {
         inputSchema: {
           path: z.string().min(1).describe("File path to read."),
           startLine: z.union([lenientInt({ positive: true }), lineRange], {
-            errorMap: () => ({ message: rangeHint }),
+            error: rangeHint,
           }).optional().describe('First 1-based line to read. Accepts an integer, a numeric string, or [start, end] as an inclusive range of two positive integers. Defaults to 1. A range cannot be combined with endLine or count. Canonical example: {"startLine":2,"endLine":3}.'),
           endLine: lenientInt({ positive: true }).optional().describe("Last 1-based line to read. Accepts an integer or a numeric string. Mutually exclusive with count."),
           count: lenientInt({ positive: true }).optional().describe("Maximum number of lines to read. Accepts an integer or a numeric string. Mutually exclusive with endLine."),

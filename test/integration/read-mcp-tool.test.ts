@@ -59,7 +59,10 @@ describe("read MCP tool", () => {
           { type: "integer", items: undefined, minItems: undefined, maxItems: undefined },
           {
             type: "array",
-            items: [{ type: "integer", exclusiveMinimum: 0 }, { type: "integer", exclusiveMinimum: 0 }],
+            items: [
+              { type: "integer", exclusiveMinimum: 0, maximum: Number.MAX_SAFE_INTEGER },
+              { type: "integer", exclusiveMinimum: 0, maximum: Number.MAX_SAFE_INTEGER },
+            ],
             minItems: 2,
             maxItems: 2,
           },
